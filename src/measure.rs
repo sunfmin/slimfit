@@ -756,12 +756,7 @@ fn reached(
             at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
         }
     }
-    // Every function by its whole demangled path, `crate::module::name`.
-    let paths: Vec<(String, &Function)> = functions
-        .values()
-        .flatten()
-        .filter_map(|f| Some((format!("{:#}", rustc_demangle::try_demangle(&f.symbol).ok()?), f)))
-        .collect();
+    let fns = fn_lines(totals, resolver);
     let every: Vec<(String, u32)> =
         reach.functions.iter().flat_map(|(f, ls)| ls.keys().map(|l| (f.clone(), *l))).collect();
     for (i, t) in tests.into_iter().enumerate() {
@@ -787,33 +782,65 @@ fn reached(
         }
         lines.retain(|_, ls| !ls.is_empty());
         reach.lines.as_mut().expect("set above").push(lines);
-        let source = test_function(&paths, &t.binary, &t.name).and_then(|f| test_source(f, resolver));
+        let source = test_function(&fns, &t.name).and_then(|(file, line)| test_source(file, line, resolver));
         reach.tests.push(ReachTest { binary: t.binary, name: t.name, source });
     }
     reach
 }
 
-/// The function of test `name` in nextest binary `binary`: the one whose
-/// path ends in `::name`; of several, the one in the binary's crate.
-fn test_function<'a>(paths: &[(String, &'a Function)], binary: &str, name: &str) -> Option<&'a Function> {
-    let suffix = format!("::{name}");
-    let found: Vec<&(String, &Function)> = paths.iter().filter(|(p, _)| p.ends_with(&suffix)).collect();
-    if let [(_, f)] = found.as_slice() {
-        return Some(f);
+/// Every `fn` of the suite's Rust files, by name: where each is. The
+/// coverage report cannot say: cargo llvm-cov leaves integration tests out.
+fn fn_lines(totals: &Totals, resolver: &Resolver) -> BTreeMap<String, Vec<(String, u32)>> {
+    let mut out: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
+    for file in totals.files.keys().filter(|f| f.ends_with(".rs")) {
+        let Some(text) = resolver.read(file) else { continue };
+        for (i, line) in text.lines().enumerate() {
+            if let Some(name) = fn_name(line) {
+                out.entry(name.to_string()).or_default().push((file.clone(), i as u32 + 1));
+            }
+        }
     }
-    // nextest names a binary `package`, `package::target` or `package::kind/target`.
-    let target = binary.rsplit("::").next().unwrap_or(binary);
-    let krate = target.rsplit('/').next().unwrap_or(target).replace('-', "_");
-    let mine: Vec<&&(String, &Function)> = found.iter().filter(|(p, _)| *p == format!("{krate}{suffix}")).collect();
-    if let [(_, f)] = mine.as_slice() { Some(f) } else { None }
+    out
 }
 
-/// Where test function `f` is and the hash of its text: from its `fn` line
-/// to the brace that closes it, found as rustfmt places it (alone on its
-/// line, indented as the `fn`), or on the `fn` line itself.
-fn test_source(f: &Function, resolver: &Resolver) -> Option<TestSource> {
-    let text = resolver.read(&f.file)?;
-    let lines: Vec<&str> = text.lines().skip(f.line.checked_sub(1)? as usize).collect();
+/// The name a line declares a function of: `fn x(`, after any of `pub`,
+/// `async`, `unsafe`, `const`, `extern`.
+fn fn_name(line: &str) -> Option<&str> {
+    let mut words = line.split_whitespace();
+    let rest = loop {
+        match words.next()? {
+            "fn" => break words.next()?,
+            w if w.starts_with("pub") || ["async", "unsafe", "const", "extern"].contains(&w) => {}
+            _ => return None,
+        }
+    };
+    let name = &rest[..rest.find(['(', '<']).unwrap_or(rest.len())];
+    (!name.is_empty()).then_some(name)
+}
+
+/// Where test `name` (nextest's: `module::path::function`) is: the one `fn`
+/// of its last segment; of several, the one whose file's path names the
+/// most of its modules (`queue::x` in `tests/scenarios/queue.rs`).
+fn test_function<'a>(fns: &'a BTreeMap<String, Vec<(String, u32)>>, name: &str) -> Option<(&'a str, u32)> {
+    let mut segments: Vec<&str> = name.split("::").collect();
+    let found = fns.get(segments.pop()?)?;
+    let named = |file: &str| {
+        let parts: Vec<&str> = file.trim_end_matches(".rs").split('/').collect();
+        segments.iter().filter(|m| parts.contains(m)).count()
+    };
+    let best = found.iter().map(|(f, _)| named(f)).max()?;
+    match found.iter().filter(|(f, _)| named(f) == best).collect::<Vec<_>>().as_slice() {
+        [(file, line)] => Some((file, *line)),
+        _ => None,
+    }
+}
+
+/// Where the test function at `file:line` is and the hash of its text: from
+/// its `fn` line to the brace that closes it, found as rustfmt places it
+/// (alone on its line, indented as the `fn`), or on the `fn` line itself.
+fn test_source(file: &str, line: u32, resolver: &Resolver) -> Option<TestSource> {
+    let text = resolver.read(file)?;
+    let lines: Vec<&str> = text.lines().skip(line.checked_sub(1)? as usize).collect();
     let first = lines.first()?;
     let indent = &first[..first.len() - first.trim_start().len()];
     let one_line = first.contains('{') && first.matches('{').count() == first.matches('}').count();
@@ -823,7 +850,7 @@ fn test_source(f: &Function, resolver: &Resolver) -> Option<TestSource> {
     for b in lines[..=n].join("\n").bytes() {
         hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
     }
-    Some(TestSource { file: f.file.clone(), line: f.line, hash: format!("{hash:016x}") })
+    Some(TestSource { file: file.into(), line, hash: format!("{hash:016x}") })
 }
 
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
@@ -1101,13 +1128,31 @@ pub(crate) mod t {
         // The hash is of the function's text: an edit inside it changes it, one outside does not.
         let hash = |text: &str| {
             std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
-            test_source(&Function { file: "src/a.rs".into(), ..f("t", 5, t_symbol) }, &resolver).map(|s| s.hash)
+            test_source("src/a.rs", 5, &resolver).map(|s| s.hash)
         };
         assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
         assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash));
         assert!(hash("fn a() {}\n").is_none(), "no line 5");
         assert!(hash(&text.replace("    }\n}", "  }\n}")).is_none(), "no closing brace");
         assert!(hash("\n\n\n\n    fn t() { a(); }\n").is_some(), "one line");
+    }
+
+    /// A test is found by its function's name; of two of that name, by the
+    /// modules its path names; when that does not tell them apart, not at all.
+    #[test]
+    fn a_test_is_found_by_its_name_and_modules() {
+        assert_eq!(fn_name("    pub(crate) async fn x<T>(t: T) {"), Some("x"));
+        assert_eq!(fn_name("    let fn_x = 1;"), None);
+        let at = |f: &str, l| (f.to_string(), l);
+        let fns: BTreeMap<String, Vec<(String, u32)>> = [
+            ("a".to_string(), vec![at("src/lib.rs", 3)]),
+            ("b".to_string(), vec![at("tests/s/queue.rs", 5), at("tests/s/line.rs", 9)]),
+        ]
+        .into();
+        assert_eq!(test_function(&fns, "tests::a"), Some(("src/lib.rs", 3)));
+        assert_eq!(test_function(&fns, "line::b"), Some(("tests/s/line.rs", 9)));
+        assert_eq!(test_function(&fns, "b"), None);
+        assert_eq!(test_function(&fns, "c"), None);
     }
 
     /// No reach_report configured, or none written: nothing is recorded,

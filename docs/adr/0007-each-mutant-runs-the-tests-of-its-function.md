@@ -24,17 +24,20 @@ the same verdicts, 5 caught, 12 unviable, 0 missed:
   process the test starts inherits it, so spawned binaries count. cargo
   llvm-cov merges every profile of its directory, so the merged coverage is
   unchanged (on the Rust sample, the LCOV of a run with and without the
-  runner differs in no `DA`, `FNDA` or `LF`/`LH` line). After the run, `llvm-profdata show --all-functions
-  --counts` of each test's profiles goes to `reach.txt` (`reach_report`,
-  format `llvm-profdata`). A function ran when any of its counters is above
-  0. Profiles name functions by symbol, which the LCOV report's `FN`
+  runner differs in no `DA`, `FNDA` or `LF`/`LH` line). After the run,
+  each test's profiles are read into `reach.txt` (`reach_report`). As first
+  built, by `llvm-profdata show --all-functions --counts`, a function ran
+  when any of its counters was above 0; since slimfit#32 (ADR 0006), by
+  `llvm-cov export -format=lcov` of the test's merged profiles (format
+  `lcov`), which gives its lines too: a function ran when its `FNDA` count
+  is above 0. Both name functions by symbol, which the LCOV report's `FN`
   records map to a file and a first line (`Function.symbol`).
 - **One per-test record.** The measurement keeps it as `reach`: the tests
   (nextest's binary id and name), and per source file, per function's first
   line, the tests that ran it. Every function of the coverage report is
   there, those no test ran with none. `reach.lines`, the lines each test
   ran, replaces ADR 0006's `test_lines` in the same record; slimfit#32
-  fills it.
+  fills it (ADR 0006, Built).
 - **Each mutant runs the tests of its function.** `check --mutants` first
   lists the change's mutants (`cargo mutants ... --list --json`, the same
   command and diff), and plans for each listed function (its span,
@@ -91,7 +94,9 @@ selected run with fail-fast is all the verdicts need.
 - A mutated function that nearly every test runs (factorium's daemon tick)
   gains nothing from the selection: its cost is B1's.
 - The Rust test run writes one profile per test process: more files and
-  one `llvm-profdata show` per profile after the run (Measured).
+  one read of them per test after the run (Measured; since slimfit#32 an
+  `llvm-profdata merge` and an `llvm-cov export` per test, as many at once
+  as there are cores: ADR 0006, Measured).
 - A repository with a target runner of its own: `--config` on the command
   line takes precedence for `cfg(all())`, but a runner set for its target
   triple wins over it; then no test writes its own profile, no reach is
