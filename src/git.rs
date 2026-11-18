@@ -103,11 +103,11 @@ fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<Vec<Stri
 /// as a tree object, through a copy of the index kept in the git directory:
 /// the real index is not touched.
 pub fn write_tree(repo: &Path) -> Result<String> {
-    let path = |name: &str| -> Result<std::path::PathBuf> {
-        Ok(run(repo, &["rev-parse", "--path-format=absolute", "--git-path", name])?.trim().into())
-    };
-    let scratch = path("slimfit-index")?;
-    match std::fs::copy(path("index")?, &scratch) {
+    let paths =
+        run(repo, &["rev-parse", "--path-format=absolute", "--git-path", "index", "--git-path", "slimfit-index"])?;
+    let mut paths = paths.lines().map(std::path::PathBuf::from);
+    let (index, scratch) = (paths.next().context("git's index path")?, paths.next().context("a scratch index path")?);
+    match std::fs::copy(index, &scratch) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&scratch),
         Err(e) => return Err(e.into()),

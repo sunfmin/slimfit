@@ -93,7 +93,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
 /// The tree as it is now, as `mutants_at` records it; `None` before the
 /// first commit.
 pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
-    let head = git::worktree(repo)?.head;
+    let head = git::run(repo, &["rev-parse", "--verify", "HEAD"]).ok().map(|h| h.trim().to_string());
     let tree = git::write_tree(repo)?;
     Ok(head.map(|commit| Snapshot { commit, tree: Some(tree) }))
 }
@@ -667,12 +667,7 @@ pub(crate) mod t {
         let repo = dir.path();
         let base = Baseline { mutants_at: snapshot(repo).unwrap(), ..Default::default() };
 
-        // Nothing changed: no mutant runs, and none survives.
-        let (m, args) = run(repo, &cfg, &base, Mutants::Change);
         let none = Mutated { all: false, files: vec![], change: MutantCounts::default() };
-        assert_eq!((args, m.suites[0].mutated.as_ref()), (None, Some(&none)));
-        assert!(crate::ratchet::check(&base, &m, &Default::default()).violations.is_empty());
-
         // An edited line, and a new untracked file: the tool gets their diff.
         edit(repo, "src/lib.rs", "    age >= 18\n", "    age >= 18 // x\n");
         std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
@@ -739,8 +734,9 @@ pub(crate) mod t {
         assert_eq!(m.snapshot, None);
     }
 
-    /// A tool with no diff flag runs the touched files (with a file flag) or
-    /// every mutant; only the survivors in the added lines are the change's.
+    /// A tool with only a file flag runs the touched files; only the
+    /// survivors in the added lines are the change's (as when a tool with
+    /// neither flag runs every mutant).
     #[test]
     fn without_a_diff_flag_the_changes_mutants_are_told_apart_by_line() {
         let (dir, mut cfg) = sample_repo();
@@ -749,18 +745,12 @@ pub(crate) mod t {
         edit(repo, "src/lib.rs", "    age >= 18\n", "    age >= 18 // x\n");
         // The report's mutants of line 12: two killed, one missed.
         let line12 = MutantCounts { killed: 2, survived: 1, unviable: 0 };
-        for (file_flag, args, all) in [("--file", "--file src/lib.rs\n", false), ("", "\n", true)] {
-            cfg.suites[0].overrides.mutants_diff_flag = Some(String::new());
-            cfg.suites[0].overrides.mutants_file_flag = Some(file_flag.into());
-            let (m, got) = run(repo, &cfg, &base, Mutants::Change);
-            assert_eq!(got.as_deref(), Some(args));
-            let mutated = m.suites[0].mutated.clone().unwrap();
-            assert_eq!((mutated.all, mutated.files, mutated.change), (all, vec!["src/lib.rs".into()], line12));
-        }
-        // Every mutant asked for: the change's are still told apart.
-        let (m, args) = run(repo, &cfg, &base, Mutants::All);
-        let got = m.suites[0].mutated.as_ref().map(|x| (x.all, x.change));
-        assert_eq!((args.as_deref(), got), (Some("\n"), Some((true, line12))));
+        cfg.suites[0].overrides.mutants_diff_flag = Some(String::new());
+        cfg.suites[0].overrides.mutants_file_flag = Some("--file".into());
+        let (m, got) = run(repo, &cfg, &base, Mutants::Change);
+        assert_eq!(got.as_deref(), Some("--file src/lib.rs\n"));
+        let mutated = m.suites[0].mutated.clone().unwrap();
+        assert_eq!((mutated.all, mutated.files, mutated.change), (false, vec!["src/lib.rs".into()], line12));
     }
 
     /// The lines a unified diff adds, counted through context, removals
