@@ -9,9 +9,9 @@
       "covered_lines": 1396,
       "uncovered_lines": 328,
       "mutants": {
-        "killed": 456,
-        "survived": 141,
-        "unviable": 46
+        "killed": 460,
+        "survived": 139,
+        "unviable": 47
       },
       "mutant_files": {
         "src/config.rs": {
@@ -40,9 +40,9 @@
           "unviable": 0
         },
         "src/git.rs": {
-          "killed": 15,
-          "survived": 11,
-          "unviable": 1
+          "killed": 19,
+          "survived": 9,
+          "unviable": 2
         },
         "src/load.rs": {
           "killed": 9,
@@ -104,6 +104,6 @@
     }
   ],
   "mutants_at": {
-    "commit": "2bdaa4ab6c9cf0ba6b936075f92ec38e6652de5d"
+    "commit": "3482346bf5764e042c95f9e00bd9de702bf791ea"
   }
 }
