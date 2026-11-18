@@ -238,7 +238,7 @@ pub fn preset(p: Preset) -> Suite {
         test_command: String::new(),
         tests_report: report(TestsFormat::Junit, ""),
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
-        reach_report: report(ReachFormat::LlvmProfdata, ""),
+        reach_report: report(ReachFormat::Lcov, ""),
         mutants_command: String::new(),
         mutants_report: report(MutantsFormat::Stryker, ""),
         mutants_diff_flag: String::new(),
@@ -250,7 +250,7 @@ pub fn preset(p: Preset) -> Suite {
             inline_tests: true,
             test_command: RUST_TEST.replace("{NEXTEST_JUNIT}", NEXTEST_JUNIT).replace("{REACH}", REACH),
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
-            reach_report: report(ReachFormat::LlvmProfdata, &format!("$SLIMFIT_OUT/{REACH}")),
+            reach_report: report(ReachFormat::Lcov, &format!("$SLIMFIT_OUT/{REACH}")),
             // nextest stops a mutant's tests at its first failure: only whether a
             // mutant is caught is read (ADR 0006). No baseline: the test run
             // already showed the tree green (ADR 0007).
@@ -469,7 +469,7 @@ mod tests {
             preset = "go"
             root = "core"
             test_command = "make test"
-            reach_report = { format = "llvm-profdata", path = "reach.txt" }
+            reach_report = { format = "lcov", path = "reach.txt" }
             mutants_tests = "all"
             "#,
         )

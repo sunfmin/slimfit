@@ -58,16 +58,20 @@ fn measure_with_coverage(
     let mut suite = preset(p);
     suite.name = lang.into();
     let totals = Classifier::new(&suite).unwrap().count(&files, |f| std::fs::read_to_string(dir.join(f)).ok());
-    let resolver = Resolver::new(Path::new("/REPO"), &totals);
+    // The reports' `/REPO` is the sample's directory, where its files are read.
+    let resolver = Resolver::new(&dir, &totals);
+    let here = |texts: Vec<String>| -> Vec<String> {
+        texts.into_iter().map(|t| t.replace("/REPO", &dir.to_string_lossy())).collect()
+    };
     let t = formats::read_tests(tests.0, &read(lang, tests.1)).unwrap();
-    let c = formats::read_coverage(coverage.0, &coverage.1).unwrap();
-    let mut m = formats::read_mutants(mutants.0, &read(lang, mutants.1)).unwrap();
+    let c = formats::read_coverage(coverage.0, &here(coverage.1)).unwrap();
+    let mut m = formats::read_mutants(mutants.0, &here(read(lang, mutants.1))).unwrap();
     for x in &mut m {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
     // The Rust sample's test run also records which functions each test ran.
-    let reach = (p == Preset::Rust)
-        .then(|| formats::read_reach(ReachFormat::LlvmProfdata, &read(lang, &["reach.txt"])).unwrap());
+    let reach =
+        (p == Preset::Rust).then(|| formats::read_reach(ReachFormat::Lcov, &here(read(lang, &["reach.txt"]))).unwrap());
     reduce(
         &suite,
         &totals,
@@ -84,7 +88,7 @@ fn measure_with_coverage(
 fn assert_the_five_situations(s: &SuiteMeasurement, source: &str, adult_line: u32) {
     assert_eq!(s.metrics.failures, 0, "{}: no failures", s.suite);
     assert!(s.metrics.tests >= 4, "{}: four tests, got {:?}", s.suite, s.tests);
-    let tasks = of_measurement(s);
+    let tasks = of_measurement(s, &[]);
     let kinds: Vec<TaskKind> = tasks.iter().map(|t| t.kind).collect();
 
     let unused = s.uncovered.iter().find(|sp| sp.file == source && sp.lines >= 3);
@@ -126,6 +130,14 @@ fn rust_sample() {
     add.sort();
     assert_eq!(add, ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"]);
     assert_eq!((ran(5), ran(11)), (vec![], vec!["calc::tests::adult".to_string()]));
+    // And which source lines each ran, its own test code left out; each
+    // test's own function is found, from its `fn` line.
+    let lines = reach.lines.as_ref().expect("the Rust sample records lines");
+    let of = |id: &str| reach.tests.iter().position(|t| t.id() == id).unwrap();
+    assert_eq!(lines[of("calc::tests::adds")], [("src/lib.rs".to_string(), vec![1, 2, 3])].into());
+    assert_eq!(lines[of("calc::tests::adult")], [("src/lib.rs".to_string(), vec![11, 12, 13])].into());
+    let source = reach.tests[of("calc::tests::adds")].source.as_ref().unwrap();
+    assert_eq!((source.file.as_str(), source.line), ("src/lib.rs", 20));
 }
 
 /// Coverage that depends on timing reaches a line in one run and misses it

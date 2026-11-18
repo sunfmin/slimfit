@@ -628,6 +628,11 @@ impl Resolver {
         Self { repo: format!("{}/", repo.to_string_lossy()), files: totals.files.keys().cloned().collect() }
     }
 
+    /// The text of `file`, a path in the repository.
+    pub fn read(&self, file: &str) -> Option<String> {
+        std::fs::read_to_string(format!("{}{file}", self.repo)).ok()
+    }
+
     pub fn resolve(&self, raw: &str) -> Option<String> {
         let p = raw.strip_prefix("file://").unwrap_or(raw);
         let p = p.strip_prefix(&self.repo).unwrap_or(p).trim_start_matches("./");
@@ -697,7 +702,7 @@ pub(crate) fn reduce(
             functions.entry(file.clone()).or_default().push(Function { file, ..f });
         }
     }
-    let reach = reach.map(|r| reached(r, &functions, totals));
+    let reach = reach.map(|r| reached(r, &functions, totals, resolver));
     let covered = lines.values().flat_map(|l| l.values()).filter(|h| **h > 0).count() as u64;
     let uncovered_total = lines.values().flat_map(|l| l.values()).filter(|h| **h == 0).count() as u64;
     let mut uncovered = Vec::new();
@@ -734,9 +739,15 @@ pub(crate) fn reduce(
 
 /// Which tests ran each source function, from what each test ran by symbol:
 /// every function the coverage report names in a source file, outside
-/// tests, keyed by its first line.
-fn reached(tests: Vec<formats::TestReach>, functions: &BTreeMap<String, Vec<Function>>, totals: &Totals) -> Reach {
-    let mut reach = Reach::default();
+/// tests, keyed by its first line; and the source lines each ran, outside
+/// tests. Each test's own function is located by its path, and hashed.
+fn reached(
+    tests: Vec<formats::TestReach>,
+    functions: &BTreeMap<String, Vec<Function>>,
+    totals: &Totals,
+    resolver: &Resolver,
+) -> Reach {
+    let mut reach = Reach { lines: Some(Vec::new()), ..Reach::default() };
     let mut at: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
     for (file, fs) in functions {
         let Some((Kind::Source, fl)) = totals.files.get(file) else { continue };
@@ -745,6 +756,12 @@ fn reached(tests: Vec<formats::TestReach>, functions: &BTreeMap<String, Vec<Func
             at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
         }
     }
+    // Every function by its whole demangled path, `crate::module::name`.
+    let paths: Vec<(String, &Function)> = functions
+        .values()
+        .flatten()
+        .filter_map(|f| Some((format!("{:#}", rustc_demangle::try_demangle(&f.symbol).ok()?), f)))
+        .collect();
     let every: Vec<(String, u32)> =
         reach.functions.iter().flat_map(|(f, ls)| ls.keys().map(|l| (f.clone(), *l))).collect();
     for (i, t) in tests.into_iter().enumerate() {
@@ -759,9 +776,54 @@ fn reached(tests: Vec<formats::TestReach>, functions: &BTreeMap<String, Vec<Func
             Some(names) => names.iter().filter_map(|n| at.get(n.as_str())).for_each(|(f, l)| ran(f, *l)),
             None => every.iter().for_each(|(f, l)| ran(f, *l)),
         }
-        reach.tests.push(ReachTest { binary: t.binary, name: t.name });
+        let mut lines: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+        for (raw, ls) in &t.lines {
+            let Some(file) = resolver.resolve(raw) else { continue };
+            let Some((Kind::Source, fl)) = totals.files.get(&file) else { continue };
+            let entry = lines.entry(file).or_default();
+            entry.extend(ls.iter().filter(|n| !fl.is_test_line(**n)));
+            entry.sort_unstable();
+            entry.dedup();
+        }
+        lines.retain(|_, ls| !ls.is_empty());
+        reach.lines.as_mut().expect("set above").push(lines);
+        let source = test_function(&paths, &t.binary, &t.name).and_then(|f| test_source(f, resolver));
+        reach.tests.push(ReachTest { binary: t.binary, name: t.name, source });
     }
     reach
+}
+
+/// The function of test `name` in nextest binary `binary`: the one whose
+/// path ends in `::name`; of several, the one in the binary's crate.
+fn test_function<'a>(paths: &[(String, &'a Function)], binary: &str, name: &str) -> Option<&'a Function> {
+    let suffix = format!("::{name}");
+    let found: Vec<&(String, &Function)> = paths.iter().filter(|(p, _)| p.ends_with(&suffix)).collect();
+    if let [(_, f)] = found.as_slice() {
+        return Some(f);
+    }
+    // nextest names a binary `package`, `package::target` or `package::kind/target`.
+    let target = binary.rsplit("::").next().unwrap_or(binary);
+    let krate = target.rsplit('/').next().unwrap_or(target).replace('-', "_");
+    let mine: Vec<&&(String, &Function)> = found.iter().filter(|(p, _)| *p == format!("{krate}{suffix}")).collect();
+    if let [(_, f)] = mine.as_slice() { Some(f) } else { None }
+}
+
+/// Where test function `f` is and the hash of its text: from its `fn` line
+/// to the brace that closes it, found as rustfmt places it (alone on its
+/// line, indented as the `fn`), or on the `fn` line itself.
+fn test_source(f: &Function, resolver: &Resolver) -> Option<TestSource> {
+    let text = resolver.read(&f.file)?;
+    let lines: Vec<&str> = text.lines().skip(f.line.checked_sub(1)? as usize).collect();
+    let first = lines.first()?;
+    let indent = &first[..first.len() - first.trim_start().len()];
+    let one_line = first.contains('{') && first.matches('{').count() == first.matches('}').count();
+    let close = format!("{indent}}}");
+    let n = if one_line { 0 } else { lines.iter().position(|l| l.trim_end() == close)? };
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in lines[..=n].join("\n").bytes() {
+        hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    Some(TestSource { file: f.file.clone(), line: f.line, hash: format!("{hash:016x}") })
 }
 
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
@@ -990,36 +1052,62 @@ pub(crate) mod t {
 
     /// Every function of a source file's coverage is keyed by its first
     /// line, with the tests that ran it by symbol; a test whose profile was
-    /// unreadable ran them all; test code is left out.
+    /// unreadable ran them all; test code is left out, of functions and of
+    /// lines. A test's own function is found by its path and hashed.
     #[test]
     fn reach_keys_each_source_function_by_its_first_line() {
+        let repo = tempfile::tempdir().unwrap();
         let mut totals = Totals::default();
         let classifier = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
-        let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
+        let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {\n        a();\n    }\n}\n";
+        std::fs::create_dir(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
         totals.files = classifier.count(&["src/a.rs".to_string()], |_| Some(text.into())).files;
-        let f = |name: &str, line| Function {
-            file: "/r/src/a.rs".into(),
+        let at = format!("{}/src/a.rs", repo.path().display());
+        let f = |name: &str, line, symbol: &str| Function {
+            file: at.clone(),
             name: name.into(),
             line,
             hits: 0,
-            symbol: format!("_R{name}"),
+            symbol: symbol.into(),
         };
         // Two symbols of one line: a generic function's instantiations.
-        let functions = vec![f("a", 1), f("a2", 1), f("b", 2), f("t", 5)];
+        let t_symbol = "_ZN4calc5tests1t17h0123456789abcdefE";
+        let functions = vec![f("a", 1, "_Ra"), f("a2", 1, "_Ra2"), f("b", 2, "_Rb"), f("t", 5, t_symbol)];
         let coverage = Coverage { lines: Default::default(), functions };
-        let t = |name: &str, ran: Option<&[&str]>| formats::TestReach {
+        let t = |name: &str, ran: Option<&[&str]>, lines: &[u32]| formats::TestReach {
             binary: "calc".into(),
             name: name.into(),
             functions: ran.map(|r| r.iter().map(|s| s.to_string()).collect()),
+            lines: [(at.clone(), lines.iter().copied().collect())].into(),
         };
-        let reach = vec![t("x", Some(&["_Ra", "_Ra2", "_Rt"])), t("y", None), t("z", Some(&["_Rgone"]))];
+        let reach = vec![
+            t("tests::t", Some(&["_Ra", "_Ra2", t_symbol]), &[1, 5, 6, 7]),
+            t("y", None, &[]),
+            t("z", Some(&["_Rgone"]), &[2]),
+        ];
         let timing = Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 };
         let suite = crate::config::preset(crate::config::Preset::Rust);
-        let resolver = Resolver::new(Path::new("/r"), &totals);
+        let resolver = Resolver::new(repo.path(), &totals);
         let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);
         let reach = m.reach.unwrap();
         assert_eq!(reach.functions["src/a.rs"], [(1, vec![0, 1]), (2, vec![1])].into());
-        assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::x", "calc::y", "calc::z"]);
+        assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::tests::t", "calc::y", "calc::z"]);
+        let lines = |ls: &[u32]| BTreeMap::from([("src/a.rs".to_string(), ls.to_vec())]);
+        assert_eq!(reach.lines.unwrap(), [lines(&[1]), BTreeMap::new(), lines(&[2])]);
+        let source = reach.tests[0].source.clone().unwrap();
+        assert_eq!((source.file.as_str(), source.line), ("src/a.rs", 5));
+        assert_eq!(reach.tests[1].source, None);
+        // The hash is of the function's text: an edit inside it changes it, one outside does not.
+        let hash = |text: &str| {
+            std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
+            test_source(&Function { file: "src/a.rs".into(), ..f("t", 5, t_symbol) }, &resolver).map(|s| s.hash)
+        };
+        assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
+        assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash));
+        assert!(hash("fn a() {}\n").is_none(), "no line 5");
+        assert!(hash(&text.replace("    }\n}", "  }\n}")).is_none(), "no closing brace");
+        assert!(hash("\n\n\n\n    fn t() { a(); }\n").is_some(), "one line");
     }
 
     /// No reach_report configured, or none written: nothing is recorded,
@@ -1035,7 +1123,7 @@ pub(crate) mod t {
         assert_eq!(read(&suite).unwrap().unwrap().len(), 1);
         std::fs::write(dir.path().join(crate::tools::REACH), "garbled\n").unwrap();
         let f = crate::fault::of(read(&suite).unwrap_err());
-        assert!(f[0].fault.starts_with("its reach_report is not llvm-profdata"), "{f:?}");
+        assert!(f[0].fault.starts_with("its reach_report is not lcov"), "{f:?}");
         suite.reach_report.path = String::new();
         assert!(read(&suite).unwrap().is_none());
     }

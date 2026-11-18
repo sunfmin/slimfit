@@ -147,9 +147,9 @@ pub struct Reach {
     /// none. A test whose profile could not be read counts as running every
     /// function.
     pub functions: BTreeMap<String, BTreeMap<u32, Vec<u32>>>,
-    /// The source lines each test ran, by file, in the order of `tests`:
-    /// what redundant-test candidates are found from (ADR 0006). `None`
-    /// until the test run records lines (slimfit#32).
+    /// The source lines each test ran (test code left out), by file, in the
+    /// order of `tests`: what redundant-test candidates are found from (ADR
+    /// 0006). `None` when the test run records functions only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<Vec<BTreeMap<String, Vec<u32>>>>,
 }
@@ -159,6 +159,20 @@ pub struct ReachTest {
     /// The test binary's id: the JUnit report's classname.
     pub binary: String,
     pub name: String,
+    /// Where the test's own function is, and a hash of its text: what a
+    /// keep verdict is recorded against. `None` when the coverage report
+    /// names no function of the test's path, or its end is not found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<TestSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TestSource {
+    pub file: String,
+    /// The line of its `fn`.
+    pub line: u32,
+    /// FNV-1a 64 of its lines, from its `fn` to its closing brace, in hex.
+    pub hash: String,
 }
 
 impl ReachTest {

@@ -53,8 +53,8 @@ pub enum MutantsFormat {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReachFormat {
-    /// `test <binary>\t<name>` lines, each followed by `llvm-profdata show
-    /// --all-functions --counts` of the profiles that test wrote: the Rust
-    /// preset's test command writes it (ADR 0007).
-    LlvmProfdata,
+    /// `test <binary>\t<name>` lines, each followed by the LCOV of what that
+    /// test's profiles ran (`llvm-cov export -format=lcov`, records of counts
+    /// above 0 only): the Rust preset's test command writes it (ADR 0007).
+    Lcov,
 }

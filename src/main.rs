@@ -116,7 +116,7 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_file_flag` (the flag that limits it to one file; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_file_flag` (the flag that limits it to one file; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
@@ -153,7 +153,7 @@ enum Cmd {
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it).
+    /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it; {const:PER_TEST}'s test run records it).
     /// - `next`: what to do now.
     ///
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
@@ -292,6 +292,44 @@ enum Cmd {
         #[arg(long, verbatim_doc_comment)]
         dry_run: bool,
     },
+    /// Records that a redundant-test candidate is kept: it is not proposed again until its text changes.
+    ///
+    /// ## When to run it
+    ///
+    /// When a `redundant-test` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over. Then commit `.slimfit/baseline.json`.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, and the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept`: the test, that hash and the reason, replacing an earlier verdict on the same test. `slimfit ratchet` drops a verdict whose test changed or is gone.
+    ///
+    /// ## What it answers
+    ///
+    /// - `kept`: every keep verdict in the baseline, {const:KEPT}.
+    /// - `next`: commit `.slimfit/baseline.json`, then `slimfit next`.
+    ///
+    /// ## What it may refuse
+    ///
+    /// It writes nothing when it refuses.
+    ///
+    /// - No `--reason`.
+    /// - No suite's test run recorded the test (its `test` id is a redundant-test task's `test`).
+    /// - Its own function was not found, so there is no text to hold the verdict to.
+    /// - {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - The verdict holds against the test's text only: a change to the other test, or to the code both run, does not bring it back. Any edit inside the test does, a reformat included.
+    #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
+    Keep {
+        #[command(flatten)]
+        at: At,
+        /// The test kept: a redundant-test task's `test`.
+        #[arg(verbatim_doc_comment)]
+        test: String,
+        /// Why it stays: what it checks that the other test does not, kept in the baseline.
+        #[arg(long, verbatim_doc_comment)]
+        reason: Option<String>,
+    },
     /// Current metrics against the baseline, and line counts over git history.
     ///
     /// ## When to run it
@@ -385,6 +423,7 @@ fn help() -> Help {
         .constant("LANGUAGES", languages("and"))
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
         .constant("REACHED", languages_where(|s| s.mutants_tests == config::MutantTests::Reached))
+        .constant("PER_TEST", languages_where(|s| !s.reach_report.path.is_empty()))
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
@@ -397,6 +436,7 @@ fn help() -> Help {
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
+        .constant("KEPT", ratchet::KEPT_HELP)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
         .constant("CACHE_PITFALL", measure::CACHE_HELP)
 }
@@ -478,6 +518,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         | Cmd::Next { at, .. }
         | Cmd::Check { at, .. }
         | Cmd::Ratchet { at, .. }
+        | Cmd::Keep { at, .. }
         | Cmd::Report { at, .. } => at,
         Cmd::Help { .. } => unreachable!("`parse` answers it"),
     };
@@ -523,6 +564,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
                 loosened: old.loosened,
                 mutants_at,
+                kept: old.kept,
             };
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
@@ -543,7 +585,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &base,
                 &measure::Options { mutants: scope(mutants), fresh, dry_run: false },
             )?;
-            let mut list = tasks::all(&repo, &cfg, &m)?;
+            let mut list = tasks::all(&repo, &cfg, &m, &base.kept)?;
             if let Some(k) = kind {
                 list.retain(|t| t.kind == k);
             }
@@ -632,6 +674,41 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 })),
                 EXIT_OK,
             ))
+        }
+        Cmd::Keep { test, reason, .. } => {
+            let (cfg, mut base) = loaded(&repo)?;
+            let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
+                return Err(fault::fault(
+                    "keep without --reason",
+                    "add `--reason \"<what it checks that the other test does not>\"`: it is kept in the baseline",
+                ));
+            };
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &base,
+                &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false },
+            )?;
+            let found = m.suites.iter().find_map(|s| {
+                let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == test)?;
+                Some((s.suite.clone(), t.source.clone()))
+            });
+            let Some((suite, source)) = found else {
+                return Err(fault::fault(
+                    format!("no suite's test run recorded a test {test}"),
+                    "name it as the redundant-test task's `test` does: `slimfit next --all --kind redundant-test` lists them",
+                ));
+            };
+            let Some(source) = source else {
+                return Err(fault::fault(
+                    format!("{test}'s own function was not found, so there is no text to hold the verdict to"),
+                    "delete or merge it instead, as the task's steps say",
+                ));
+            };
+            base.kept.retain(|k| !(k.suite == suite && k.test == test));
+            base.kept.push(ratchet::Kept { suite, test, hash: source.hash, reason });
+            std::fs::write(repo.join(ratchet::FILE), ratchet::render(&base)?)?;
+            Ok((json!({ "kept": base.kept, "next": "commit .slimfit/baseline.json; then `slimfit next`" }), EXIT_OK))
         }
         Cmd::Doctor { .. } => {
             let host = doctor::Host::current();

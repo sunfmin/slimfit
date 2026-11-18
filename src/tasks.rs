@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::git;
 use crate::loc::{Classifier, Kind};
 use crate::model::{Measurement, MutantStatus, ReachTest, SuiteMeasurement};
+use crate::ratchet::Kept;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -20,7 +21,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test that runs no source line another test does not run too, or whose lines mostly overlap another's. Read both tests' assertions and decide: delete it, merge the two, or keep it. Needs a test run that records coverage per test; runs no mutant.
+    /// Coverage proposes a test that runs no source line another test does not run too, or whose lines mostly overlap another's. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
@@ -109,10 +110,10 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
         .collect()
 }
 
-pub fn all(repo: &Path, cfg: &Config, m: &Measurement) -> Result<Vec<Task>> {
+pub fn all(repo: &Path, cfg: &Config, m: &Measurement, kept: &[Kept]) -> Result<Vec<Task>> {
     let mut out = Vec::new();
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
-        out.extend(of_measurement(s));
+        out.extend(of_measurement(s, kept));
         out.extend(deepen(repo, &Classifier::new(&sc.resolve())?, s)?);
     }
     out.sort_by_key(|t| t.kind);
@@ -120,9 +121,9 @@ pub fn all(repo: &Path, cfg: &Config, m: &Measurement) -> Result<Vec<Task>> {
 }
 
 /// The tasks a suite's measurement alone shows (everything but `deepen`,
-/// which reads git history).
-pub fn of_measurement(s: &SuiteMeasurement) -> Vec<Task> {
-    [failing(s), uncovered(s), redundant(s), slow(s), surviving(s)].concat()
+/// which reads git history), less the redundant tests `kept`.
+pub fn of_measurement(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
+    [failing(s), uncovered(s), redundant(s, kept), slow(s), surviving(s)].concat()
 }
 
 fn failing(s: &SuiteMeasurement) -> Vec<Task> {
@@ -178,8 +179,9 @@ pub const MERGE_OVERLAP: f64 = 0.8;
 /// of the lines either runs with another (the slower of the two is
 /// proposed). Each is named once, with the other test it most overlaps;
 /// the slowest first. Coverage only proposes:
-/// the steps decide by reading the assertions.
-fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
+/// the steps decide by reading the assertions. A test kept, unchanged since,
+/// is not proposed.
+fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     let Some((reach, per_test)) = s.reach.as_ref().and_then(|r| Some((r, r.lines.as_ref()?))) else { return vec![] };
     let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.seconds);
     let ids: Vec<String> = reach.tests.iter().map(ReachTest::id).collect();
@@ -194,8 +196,12 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
         })
         .filter(|(_, ls, _)| !ls.is_empty())
         .collect();
+    let at = |id: &str| reach.tests.iter().find(|t| t.id() == id);
     let mut out: Vec<(f64, Task)> = Vec::new();
     for (t, mine, secs) in &lines {
+        if at(t).is_some_and(|rt| kept.iter().any(|k| k.holds(&s.suite, rt))) {
+            continue;
+        }
         // The other test with the most overlap; its share and whether it runs all of mine.
         let best = lines
             .iter()
@@ -222,7 +228,7 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
                 } else {
                     format!("{t} shares {:.0}% of its lines with {other}", share * 100.0)
                 },
-                files: vec![],
+                files: [at(t), at(other)].into_iter().flatten().filter_map(|rt| Some(rt.source.as_ref()?.file.clone())).collect::<BTreeSet<_>>().into_iter().collect(),
                 evidence: json!({ "test": t, "seconds": secs, "lines": mine.len(), "other_test": other }),
                 steps: "Coverage only proposes; the assertions decide. Read both tests. For every assertion of `test`, find the \
                         assertion in `other_test` (or another test you name) that checks the same outcome on the same setup. Then do one: \
@@ -230,7 +236,9 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
                         MERGE when some assertion does not map but the two build compatible setups: fold the unmapped assertions, and the setup they need, \
                         into one test, or turn both into one test over a table of cases, so the setup is paid once; the merged test keeps every \
                         assertion of both, each failing with its own message, and the commit message lists where each assertion went. \
-                        KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed. \
+                        KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed: \
+                        record it with `slimfit keep <test> --reason \"<why>\"` and commit `.slimfit/baseline.json`, so `test` is not proposed again \
+                        until its text changes. \
                         No mutant is run for this: the accept command holds that no line becomes uncovered, no test fails and test time does not \
                         rise; after a merge, `test_seconds` must fall."
                     .into(),
@@ -356,7 +364,8 @@ mod t {
         let mut reach = crate::model::Reach { lines: Some(vec![]), ..Default::default() };
         let mut cases = Vec::new();
         for (name, secs, lines) in tests {
-            reach.tests.push(ReachTest { binary: "t".into(), name: name.into() });
+            let source = crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into() };
+            reach.tests.push(ReachTest { binary: "t".into(), name: name.into(), source: Some(source) });
             reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.collect())].into());
             cases.push(TestCase { id: format!("t::{name}"), seconds: secs, passed: true, start: None });
         }
@@ -371,13 +380,31 @@ mod t {
             command_seconds: 0.0,
             load_slowdown: 1.0,
         };
-        let got: Vec<(String, String)> = redundant(&s)
-            .into_iter()
-            .map(|t| (t.evidence["test"].as_str().unwrap().into(), t.evidence["other_test"].as_str().unwrap().into()))
-            .collect();
+        let got = |kept: &[Kept]| {
+            redundant(&s, kept)
+                .into_iter()
+                .map(|t| {
+                    (
+                        t.evidence["test"].as_str().unwrap().to_string(),
+                        t.evidence["other_test"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
         let want = [("near2", "near"), ("inside", "twin"), ("twin", "wide")];
-        assert_eq!(got, want.map(|(a, b)| (format!("t::{a}"), format!("t::{b}"))));
+        assert_eq!(got(&[]), want.map(|(a, b)| (format!("t::{a}"), format!("t::{b}"))));
+        assert_eq!(redundant(&s, &[])[0].files, ["tests/near.rs", "tests/near2.rs"]);
+        // Kept, it is not proposed again until its text changes.
+        let keep = |suite: &str, hash: &str| Kept {
+            suite: suite.into(),
+            test: "t::near2".into(),
+            hash: hash.into(),
+            reason: "r".into(),
+        };
+        assert_eq!(got(&[keep("s", "h")]).len(), 2);
+        assert_eq!(got(&[keep("s", "changed")]).len(), 3);
+        assert_eq!(got(&[keep("other suite", "h")]).len(), 3);
         let functions_only = crate::model::Reach { lines: None, ..s.reach.clone().unwrap() };
-        assert!(redundant(&SuiteMeasurement { reach: Some(functions_only), ..s }).is_empty());
+        assert!(redundant(&SuiteMeasurement { reach: Some(functions_only), ..s }, &[]).is_empty());
     }
 }
