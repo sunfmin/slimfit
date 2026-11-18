@@ -74,11 +74,26 @@ WHAT IS MUTATED
                     unchanged files' counts: --all-mutants is.
   The output's `mutated` says, per suite, \"all\" or the files mutated.
 
+A LARGE WORKSPACE: BUILD THE MUTANTS BASELINE IN PIECES
+  slimfit ratchet --pending-seconds 1500
+                    one bounded piece: mutates the files changed since the
+                    baseline's mutants were measured (as --mutants does), then
+                    files with no count yet, one tool run per file, starting
+                    none that would end past the budget (at least one per
+                    piece), and ratchets them in. Commit the baseline; repeat
+                    until `check --mutants` lists no `mutants_pending`.
+                    --pending-files <n> caps the piece at n files instead or
+                    as well. A suite with no mutants yet starts with all its
+                    source files pending. Until then `check --mutants` holds
+                    only the files that have a count; a new file is mutated
+                    as a changed one, not left pending.
+
 SET UP
   slimfit init                detect suites (Rust, Go, Swift, Kotlin, TypeScript),
                               write slimfit.toml, measure, write the baseline
   In factorium.toml:          fast = \"slimfit check\", slow = \"slimfit check --mutants\"
-                              (ratchet once with --all-mutants first)
+                              (ratchet once with --all-mutants first, or build
+                              the baseline in pieces, above)
 
 OUTPUT
   Every command prints JSON on stdout with a `next` field: the command to run
@@ -146,6 +161,14 @@ enum Cmd {
         mutants: bool,
         #[arg(long)]
         all_mutants: bool,
+        /// Build the mutants baseline in pieces: as --mutants, then also measure
+        /// files with no mutant count yet, while the command has run less than
+        /// this many seconds (at least one file).
+        #[arg(long, conflicts_with = "all_mutants")]
+        pending_seconds: Option<u64>,
+        /// As --pending-seconds, but at most this many files with no count yet.
+        #[arg(long, conflicts_with = "all_mutants", value_parser = clap::value_parser!(u64).range(1..))]
+        pending_files: Option<u64>,
         #[arg(long)]
         fresh: bool,
     },
@@ -284,16 +307,26 @@ fn run() -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Cmd::Ratchet { loosen, reason, mutants, all_mutants, fresh } => {
+        Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh } => {
             let cfg = config::load(&repo)?;
             let old = ratchet::load(&repo)?;
-            let m =
-                measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(mutants, all_mutants), fresh })?;
+            let scope = if pending_seconds.is_some() || pending_files.is_some() {
+                measure::Mutants::Fill(measure::Budget {
+                    files: pending_files.map(|n| n as usize),
+                    seconds: pending_seconds,
+                })
+            } else {
+                scope(mutants, all_mutants)
+            };
+            let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh })?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             ratchet::save(&repo, &new)?;
-            print(
-                json!({ "baseline": new.suites, "loosened": new.loosened, "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next`" }),
-            );
+            print(json!({
+                "baseline": new.suites,
+                "loosened": new.loosened,
+                "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
+                         (while a suite lists mutants_pending, a --pending-seconds piece again)",
+            }));
         }
         Cmd::Report { commits, points, fresh } => {
             let cfg = config::load(&repo)?;

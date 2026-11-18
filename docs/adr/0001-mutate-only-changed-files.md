@@ -21,6 +21,7 @@ gate running `slimfit check --mutants` over every mutant can never pass.
   baseline count, and `survived_mutants` is held against the sum, as before.
   Ratcheting the result moves `mutants_at` to the tree just measured.
 - `--all-mutants` mutates every file. `init --mutants` does a full run. A
+  baseline too large for one full run is built in pieces instead (ADR 0002). A
   `--mutants` run also falls back to a full run, saying why on stderr, when
   any of these holds:
   - the baseline has no `mutants_at`;
