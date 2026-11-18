@@ -35,7 +35,7 @@ impl Default for CheckConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Preset {
     Rust,
@@ -43,6 +43,24 @@ pub enum Preset {
     Swift,
     Kotlin,
     Typescript,
+}
+
+impl Preset {
+    /// Every preset, in declaration order.
+    pub fn all() -> &'static [Preset] {
+        <Preset as clap::ValueEnum>::value_variants()
+    }
+
+    /// The language's name, as a reader writes it.
+    pub fn language(self) -> &'static str {
+        match self {
+            Preset::Rust => "Rust",
+            Preset::Go => "Go",
+            Preset::Swift => "Swift",
+            Preset::Kotlin => "Kotlin",
+            Preset::Typescript => "TypeScript",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +213,7 @@ pub fn preset(p: Preset) -> Suite {
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
             // nextest without fail-fast runs every test on every mutant, so each
             // mutant's log names all its killers (docs/adr/0004).
-            mutants_command: "cargo mutants --workspace --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
+            mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
                 --output \"$SLIMFIT_OUT\""
                 .into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),

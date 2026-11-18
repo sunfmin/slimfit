@@ -10,6 +10,9 @@ pub struct TestCase {
     pub id: String,
     pub seconds: f64,
     pub passed: bool,
+    /// When it started, in seconds since the Unix epoch, when the report says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<f64>,
 }
 
 /// Line hits per file, plus the functions the report names (some formats

@@ -1,0 +1,21 @@
+
+*** baseline
+
+*** cargo nextest run --no-run --verbose --package=core-lib@0.1.0
+   Compiling core-lib v0.1.0 (/REPO/core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+*** result: Success
+
+*** cargo nextest run --verbose --package=core-lib@0.1.0 --no-fail-fast
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+────────────
+ Nextest run ID 8fdb1c74-32dc-4177-b8fe-704a6d874544 with nextest profile: default
+    Starting 1 test across 1 binary
+       START [         ] (1/1) core-lib tests::names
+             command: /REPO/target/debug/build/core-lib/6f484d51f6f66fc0/out/core_lib-6f484d51f6f66fc0 --exact tests::names --nocapture
+        PASS [   0.005s] (1/1) core-lib tests::names
+────────────
+     Summary [   0.005s] 1 test run: 1 passed, 0 skipped
+
+*** result: Success

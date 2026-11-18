@@ -1,0 +1,66 @@
+
+*** core/src/lib.rs:4:7: replace * with / in double
+
+*** mutation diff:
+--- core/src/lib.rs
++++ replace * with / in double
+@@ -1,12 +1,12 @@
+ // `double` has no test in this package: only the `app` package's test
+ // reaches it. `name` is tested here, so this package has a test to run.
+ pub fn double(x: i64) -> i64 {
+-    x * 2
++    x / /* ~ changed by cargo-mutants ~ */ 2
+ }
+ 
+ pub fn name() -> &'static str {
+     "core"
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+
+
+*** cargo nextest run --no-run --verbose --workspace
+   Compiling core-lib v0.1.0 (/REPO/core)
+   Compiling app v0.1.0 (/REPO/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+*** result: Success
+
+*** cargo nextest run --verbose --workspace --no-fail-fast
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+────────────
+ Nextest run ID 03335056-1756-41d4-92a0-2b6e4b53d3fc with nextest profile: default
+    Starting 2 tests across 3 binaries
+       START [         ] (1/2) core-lib tests::names
+             command: /REPO/target/debug/build/core-lib/6f484d51f6f66fc0/out/core_lib-6f484d51f6f66fc0 --exact tests::names --nocapture
+       START [         ] (1/2) app::double doubles
+             command: /REPO/target/debug/build/app/9401a3664ccd68ab/out/double-9401a3664ccd68ab --exact doubles --nocapture
+        PASS [   0.006s] (1/2) core-lib tests::names
+        FAIL [   0.006s] (2/2) app::double doubles
+  stdout ───
+
+    running 1 test
+    test doubles ... FAILED
+
+    failures:
+
+    failures:
+        doubles
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'doubles' (690674698) panicked at app/tests/double.rs:3:5:
+    assertion `left == right` failed
+      left: 1
+     right: 6
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [   0.007s] 2 tests run: 1 passed, 1 failed, 0 skipped
+        FAIL [   0.006s] (2/2) app::double doubles
+error: test run failed
+
+*** result: Failure(100)

@@ -187,15 +187,15 @@ impl Sample {
 
     /// A dry run: it answers, as `would_write`, the files named in `files`
     /// and no others, and leaves the tree as it was, byte for byte.
-    fn dry_run(&self, args: &[&str], files: &[&str]) -> serde_json::Map<String, Value> {
+    fn dry_run(&self, args: &[&str], files: &[&str]) -> Value {
         let before = snapshot(&self.repo);
         let answer = self.ok(args);
         let after = snapshot(&self.repo);
         let changed: Vec<_> = before.keys().chain(after.keys()).filter(|p| before.get(*p) != after.get(*p)).collect();
         assert!(changed.is_empty(), "slimfit {args:?} wrote {changed:?}");
-        let would = answer["would_write"].as_object().unwrap_or_else(|| panic!("{answer:#}")).clone();
+        let would = answer["would_write"].as_object().unwrap_or_else(|| panic!("{answer:#}"));
         assert_eq!(would.keys().collect::<Vec<_>>(), files, "slimfit {args:?}");
-        would
+        answer
     }
 
     fn read(&self, path: &str) -> String {
@@ -256,37 +256,99 @@ impl Sample {
     }
 }
 
+/// Every sample in turn, in one test: one process. A freshly built binary's
+/// first run waits while macOS checks it (0.17-0.34s at load ~20), and every
+/// process that runs it meanwhile waits too; a test per sample, all started
+/// at once, each counted that wait (slimfit#27). The Rust sample also serves
+/// `doctor` before `init`, and every command's printed keys.
+#[test]
+fn every_preset_through_its_standins() {
+    let s = Sample::new(&RUST);
+    let doctor = doctor_names_each_fix_and_changes_nothing(&s);
+    let mut printed = measures_through_its_tools(&s, &RUST, true);
+    printed.push(("doctor", doctor));
+    rust(&s, &mut printed);
+    every_printed_key_is_on_its_page(&printed);
+    faults_reach_the_agent(&s, &RUST);
+
+    go();
+    for lang in [&TYPESCRIPT, &KOTLIN, &SWIFT] {
+        let s = Sample::new(lang);
+        measures_through_its_tools(&s, lang, false);
+        faults_reach_the_agent(&s, lang);
+    }
+}
+
+/// `doctor` reads and writes nothing: on a fresh sample it says to run
+/// `init` and names the tools the detected suite needs that are not on
+/// PATH (the stand-in is `cargo` alone), and exits 0. The load is the
+/// host's own, so a `host_busy` finding is left out.
+fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
+    let status = || {
+        let out =
+            Command::new("git").args(["status", "--porcelain", "--ignored"]).current_dir(&s.repo).output().unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let before = status();
+    let found = |doctor: &Value| -> Vec<(String, String)> {
+        doctor["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["kind"] != "host_busy")
+            .map(|f| {
+                (f["kind"].as_str().unwrap().into(), f["what"].as_str().unwrap().split(' ').next().unwrap().into())
+            })
+            .collect()
+    };
+    let doctor = s.ok(&["doctor"]);
+    let tool = |exe: &str| ("tool_missing".to_string(), exe.to_string());
+    let want = vec![
+        ("no_config".to_string(), "no".to_string()),
+        tool("cargo-llvm-cov"),
+        tool("cargo-nextest"),
+        tool("cargo-mutants"),
+    ];
+    assert_eq!(found(&doctor), want, "{doctor:#}");
+    assert!(doctor["next"].as_str().unwrap().contains("slimfit init"), "{doctor:#}");
+    assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
+    assert_eq!(status(), before, "doctor changed the working tree");
+    assert_eq!(s.steps(), Vec::<String>::new(), "doctor ran a tool");
+    doctor
+}
+
 /// `init --mutants` runs the preset's tools once each and measures what
 /// they wrote; `next` and `check` then work from that measurement. With
 /// `dry`, `init` and `ratchet` are each asked first with `--dry-run`, which
 /// writes nothing and answers what the real run then writes (on one
-/// sample: what a dry run writes does not depend on the language).
-fn measures_through_its_tools(lang: &Lang, dry: bool) -> Sample {
-    let s = Sample::new(lang);
+/// sample: what a dry run writes does not depend on the language). What
+/// each command printed, by command.
+fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'static str, Value)> {
+    let mut printed = Vec::new();
     // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
     // other tools are made to fail all the same.
     let exit = if lang.name == "rust" { 2 } else { 3 };
     s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
-    let would = dry.then(|| {
-        let w =
-            s.dry_run(&["init", "--mutants", "--dry-run"], &[".gitignore", ".slimfit/baseline.json", "slimfit.toml"]);
+    if dry {
+        let files = [".gitignore", ".slimfit/baseline.json", "slimfit.toml"];
+        printed.push(("init", s.dry_run(&["init", "--mutants", "--dry-run"], &files)));
         s.take();
-        w
-    });
+    }
     let (code, init, stderr) = s.slimfit(&["init", "--mutants"]);
     assert_eq!(code, 0, "{}: {init:#}\n{stderr}", lang.name);
-    // What the dry run said it would write, but for `test_seconds`: the host's load moves it.
-    let baseline = |text: &str| {
-        let mut b: Value = serde_json::from_str(text).unwrap();
-        b["suites"][lang.name]["test_seconds"] = Value::Null;
-        b
-    };
     let base = s.read(".slimfit/baseline.json");
-    if let Some(would) = would {
+    if let Some((_, dry)) = printed.first() {
+        // What the dry run said it would write, but for `test_seconds`: the host's load moves it.
+        let would = &dry["would_write"];
         for f in [".gitignore", "slimfit.toml"] {
             assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
         }
-        assert_eq!(baseline(&base), baseline(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
+        let held = |text: &str| {
+            let mut b: Value = serde_json::from_str(text).unwrap();
+            b["suites"][lang.name]["test_seconds"] = Value::Null;
+            b
+        };
+        assert_eq!(held(&base), held(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
     }
     assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
     s.fault(lang.mutants_step, None);
@@ -303,27 +365,29 @@ fn measures_through_its_tools(lang: &Lang, dry: bool) -> Sample {
     let of = |k: &'static str| tasks.iter().filter(move |t| t["kind"] == k);
     assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);
     assert!(of("surviving-mutant").next().is_some(), "{}: {next:#}", lang.name);
-    s.ok(&["check"]);
+    let check = s.ok(&["check"]);
     if dry {
-        dry_ratchet(&s, lang, &base);
+        printed.extend(dry_ratchet(s, lang, &base));
     }
     assert_eq!(s.steps(), Vec::<String>::new(), "{}: the commands after init reuse its measurement", lang.name);
-    s
+    printed.extend([("init", init), ("next", next), ("check", check)]);
+    printed
 }
 
 /// A bound with room to tighten: `ratchet --dry-run` answers exactly the
 /// baseline `ratchet` then writes, and nothing once it is written.
-fn dry_ratchet(s: &Sample, lang: &Lang, base: &str) {
+fn dry_ratchet(s: &Sample, lang: &Lang, base: &str) -> Vec<(&'static str, Value)> {
     let b: Value = serde_json::from_str(base).unwrap();
     let mut looser = b.clone();
     looser["suites"][lang.name]["uncovered_lines"] =
         (b["suites"][lang.name]["uncovered_lines"].as_u64().unwrap() + 5).into();
     std::fs::write(s.repo.join(".slimfit/baseline.json"), serde_json::to_string_pretty(&looser).unwrap()).unwrap();
     let would = s.dry_run(&["ratchet", "--dry-run"], &[".slimfit/baseline.json"]);
-    s.ok(&["ratchet"]);
-    assert_eq!(s.read(".slimfit/baseline.json"), would[".slimfit/baseline.json"], "{}", lang.name);
+    let ratchet = s.ok(&["ratchet"]);
+    assert_eq!(s.read(".slimfit/baseline.json"), would["would_write"][".slimfit/baseline.json"], "{}", lang.name);
     assert_eq!(s.read(".slimfit/baseline.json"), base, "{}", lang.name);
-    s.dry_run(&["ratchet", "--dry-run"], &[]);
+    let none = s.dry_run(&["ratchet", "--dry-run"], &[]);
+    vec![("ratchet", would), ("ratchet", ratchet), ("ratchet", none)]
 }
 
 /// An error's faults, one per line, each followed by its fix; a fault
@@ -377,78 +441,18 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     }
 }
 
-#[test]
-fn rust() {
-    let s = measures_through_its_tools(&RUST, true);
-    // Killers come from nextest's logs: the redundant tests are found.
-    let next = s.ok(&["next", "--all", "--all-mutants", "--kind", "redundant-test"]);
-    let mut redundant: Vec<&str> =
-        next["tasks"].as_array().unwrap().iter().map(|t| t["evidence"]["test"].as_str().unwrap()).collect();
-    redundant.sort();
-    assert!(
-        redundant == ["calc::tests::adds", "calc::tests::slow"]
-            || redundant == ["calc::tests::adds_again", "calc::tests::slow"],
-        "{next:#}"
-    );
-    // A changed file: cargo-mutants is limited to it.
-    let lib = s.repo.join("src/lib.rs");
-    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
-    s.ok(&["check", "--mutants"]);
-    let calls = s.take();
-    let mutants = calls.iter().find(|c| c.step == "cargo mutants").unwrap();
-    assert!(mutants.args.ends_with(&["--file".into(), "src/lib.rs".into()]), "{:?}", mutants.args);
-    faults_reach_the_agent(&s, &RUST);
-}
-
-#[test]
-fn go() {
-    let s = measures_through_its_tools(&GO, false);
-    faults_reach_the_agent(&s, &GO);
-    // A command line the tool would not take is refused by its stand-in, so
-    // a preset that drifts from its tool fails here, not on a user's host.
-    let cfg = std::fs::read_to_string(s.repo.join("slimfit.toml")).unwrap();
-    let cfg = cfg.replace(
-        "preset = \"go\"",
-        "preset = \"go\"\ntest_command = \"go test ./... > \\\"$SLIMFIT_OUT/test.json\\\"\"",
-    );
-    std::fs::write(s.repo.join("slimfit.toml"), cfg).unwrap();
-    s.error(
-        &["check", "--fresh"],
-        &["_report at", "fix: fix the command's failure in its log", "standin go test: no -json"],
-    );
-}
-
-#[test]
-fn typescript() {
-    faults_reach_the_agent(&measures_through_its_tools(&TYPESCRIPT, false), &TYPESCRIPT);
-}
-
-#[test]
-fn kotlin() {
-    faults_reach_the_agent(&measures_through_its_tools(&KOTLIN, false), &KOTLIN);
-}
-
-#[test]
-fn swift() {
-    faults_reach_the_agent(&measures_through_its_tools(&SWIFT, false), &SWIFT);
-}
-
-/// Every key a command prints is named on its own page (`slimfit <command>
-/// --help`), as `` `key` ``: the agent reads the page, never the source.
-/// Keys that are names (a suite's, a file's) are not keys to name. Each
-/// command runs on the Rust sample in the states that make it print its
-/// optional keys: violations, improvements, loosenings, a piece's
-/// not-recorded bounds, pending mutants, mutated files.
-#[test]
-fn every_printed_key_is_on_its_page() {
-    let s = Sample::new(&RUST);
-    let mut printed: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
-    let mut run = |cmd: &'static str, args: &[&str], code: i32| {
+/// The Rust sample, measured, in the states that make each command print
+/// its optional keys: violations, improvements, loosenings, a piece's
+/// not-recorded bounds, pending mutants, mutated files. Killers come from
+/// nextest's logs, and a changed file limits cargo-mutants to it.
+fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
+    let mut run = |cmd: &'static str, args: &[&str], code: i32| -> Value {
         let mut all = vec![cmd];
         all.extend(args);
         let (got, json, stderr) = s.slimfit(&all);
         assert_eq!(got, code, "slimfit {all:?}: {json:#}\n{stderr}");
-        printed.entry(cmd).or_default().push(json);
+        printed.push((cmd, json.clone()));
+        json
     };
     let baseline = s.repo.join(".slimfit/baseline.json");
     let edit = |f: &dyn Fn(&mut Value)| {
@@ -457,12 +461,23 @@ fn every_printed_key_is_on_its_page() {
         std::fs::write(&baseline, serde_json::to_string(&b).unwrap()).unwrap();
     };
 
-    run("init", &["--mutants"], 0);
     run("next", &[], 0);
-    run("next", &["--all", "--all-mutants"], 0);
-    run("check", &[], 0);
+    // The redundant tests are found.
+    let next = run("next", &["--all", "--all-mutants"], 0);
+    let mut redundant: Vec<&str> = next["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["kind"] == "redundant-test")
+        .map(|t| t["evidence"]["test"].as_str().unwrap())
+        .collect();
+    redundant.sort();
+    assert!(
+        redundant == ["calc::tests::adds", "calc::tests::slow"]
+            || redundant == ["calc::tests::adds_again", "calc::tests::slow"],
+        "{next:#}"
+    );
     run("report", &["--points", "1"], 0);
-    run("doctor", &[], 0);
     // Better than the baseline: improved.
     edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
     run("check", &[], 0);
@@ -470,13 +485,23 @@ fn every_printed_key_is_on_its_page() {
     edit(&|b| b["uncovered_lines"] = 0.into());
     run("check", &[], 1);
     run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
-    // A changed file and a pending one: mutated, mutants_pending.
+    // A changed file and a new one pending: mutated, mutants_pending;
+    // cargo-mutants is limited to the changed file.
     let lib = s.repo.join("src/lib.rs");
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
-    edit(&|b| b["mutants_pending"] = serde_json::json!(["src/lib.rs"]));
+    std::fs::write(s.repo.join("src/pending.rs"), "pub fn p() -> u8 {\n    1\n}\n").unwrap();
+    edit(&|b| b["mutants_pending"] = serde_json::json!(["src/pending.rs"]));
+    s.take();
     run("check", &["--mutants"], 0);
+    let calls = s.take();
+    let mutants = calls.iter().find(|c| c.step == "cargo mutants").unwrap();
+    assert!(mutants.args.ends_with(&["--file".into(), "src/lib.rs".into()]), "{:?}", mutants.args);
     // A piece over its time bound, with no slack: not_recorded.
-    edit(&|b| b["test_seconds"] = 0.into());
+    std::fs::remove_file(s.repo.join("src/pending.rs")).unwrap();
+    edit(&|b| {
+        b["test_seconds"] = 0.into();
+        b["mutants_pending"] = serde_json::json!(["src/lib.rs"]);
+    });
     let cfg = s.repo.join("slimfit.toml");
     let text = std::fs::read_to_string(&cfg).unwrap();
     let text =
@@ -484,7 +509,12 @@ fn every_printed_key_is_on_its_page() {
     std::fs::write(&cfg, text).unwrap();
     run("ratchet", &["--pending-files", "1", "--fresh"], 0);
     run("report", &["--points", "1"], 0);
+}
 
+/// Every key a command prints is named on its own page (`slimfit <command>
+/// --help`), as `` `key` ``: the agent reads the page, never the source.
+/// Keys that are names (a suite's, a file's) are not keys to name.
+fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
     fn keys(v: &Value, out: &mut std::collections::BTreeSet<String>) {
         match v {
             Value::Object(m) => {
@@ -499,12 +529,14 @@ fn every_printed_key_is_on_its_page() {
             _ => {}
         }
     }
+    let mut by_cmd: std::collections::BTreeMap<&str, std::collections::BTreeSet<String>> = Default::default();
+    for (cmd, json) in printed {
+        keys(json, by_cmd.entry(cmd).or_default());
+    }
     let mut missing = Vec::new();
-    for (cmd, outputs) in &printed {
+    for (cmd, ks) in &by_cmd {
         let page = Command::new(env!("CARGO_BIN_EXE_slimfit")).args([cmd, "--help"]).output().unwrap();
         let page = String::from_utf8(page.stdout).unwrap();
-        let mut ks = Default::default();
-        outputs.iter().for_each(|o| keys(o, &mut ks));
         let reached: &[&str] = match *cmd {
             "init" => &["mutants_file_flag", "mutant_files"],
             "next" => &["also_killed_by", "survivors", "start", "counts", "remaining"],
@@ -520,44 +552,25 @@ fn every_printed_key_is_on_its_page() {
             missing.push(format!("{cmd}: {k}"));
         }
     }
+    assert_eq!(by_cmd.len(), 6, "{:?}", by_cmd.keys());
     assert!(missing.is_empty(), "printed but not named on the command's page:\n{}", missing.join("\n"));
 }
 
-/// `doctor` reads and writes nothing: on a fresh sample it says to run
-/// `init` and names the tools the detected suite needs that are not on
-/// PATH (the stand-in is `cargo` alone), and exits 0. The load is the
-/// host's own, so a `host_busy` finding is left out.
-#[test]
-fn doctor_names_each_fix_and_changes_nothing() {
-    let s = Sample::new(&RUST);
-    let status = || {
-        let out =
-            Command::new("git").args(["status", "--porcelain", "--ignored"]).current_dir(&s.repo).output().unwrap();
-        String::from_utf8(out.stdout).unwrap()
-    };
-    let before = status();
-    let found = |doctor: &Value| -> Vec<(String, String)> {
-        doctor["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|f| f["kind"] != "host_busy")
-            .map(|f| {
-                (f["kind"].as_str().unwrap().into(), f["what"].as_str().unwrap().split(' ').next().unwrap().into())
-            })
-            .collect()
-    };
-    let doctor = s.ok(&["doctor"]);
-    let tool = |exe: &str| ("tool_missing".to_string(), exe.to_string());
-    let want = vec![
-        ("no_config".to_string(), "no".to_string()),
-        tool("cargo-llvm-cov"),
-        tool("cargo-nextest"),
-        tool("cargo-mutants"),
-    ];
-    assert_eq!(found(&doctor), want, "{doctor:#}");
-    assert!(doctor["next"].as_str().unwrap().contains("slimfit init"), "{doctor:#}");
-    assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
-    assert_eq!(status(), before, "doctor changed the working tree");
-    assert_eq!(s.steps(), Vec::<String>::new(), "doctor ran a tool");
+/// Go's sample also: a command line the tool would not take is refused by
+/// its stand-in, so a preset that drifts from its tool fails here, not on
+/// a user's host.
+fn go() {
+    let s = Sample::new(&GO);
+    measures_through_its_tools(&s, &GO, false);
+    faults_reach_the_agent(&s, &GO);
+    let cfg = std::fs::read_to_string(s.repo.join("slimfit.toml")).unwrap();
+    let cfg = cfg.replace(
+        "preset = \"go\"",
+        "preset = \"go\"\ntest_command = \"go test ./... > \\\"$SLIMFIT_OUT/test.json\\\"\"",
+    );
+    std::fs::write(s.repo.join("slimfit.toml"), cfg).unwrap();
+    s.error(
+        &["check", "--fresh"],
+        &["_report at", "fix: fix the command's failure in its log", "standin go test: no -json"],
+    );
 }
