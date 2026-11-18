@@ -1,4 +1,5 @@
 mod config;
+mod fault;
 #[cfg(test)]
 mod fixtures;
 mod formats;
@@ -149,7 +150,12 @@ SET UP
 
 OUTPUT
   Every command prints JSON on stdout with a `next` field: the command to run
-  next. Progress goes to stderr. `check` exits 1 when a bound is violated.
+  next. Progress goes to stderr. `check` exits 1 when a bound is violated;
+  each violation carries its `fix`. Nothing left to do (no task, nothing
+  to ratchet) is an answer and exits 0. A command that cannot finish exits
+  2 with `{\"error\": [{\"fault\": ..., \"fix\": ...}, ...]}`: every fault it
+  found, each with the command or edit that fixes it. Do every fix, then run
+  the command again.
   Measurements are cached per working tree in .slimfit/out/; --fresh re-runs.";
 
 #[derive(Parser)]
@@ -237,19 +243,38 @@ enum Cmd {
     },
 }
 
-fn print(v: serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(&v).expect("json"));
-}
-
 fn main() {
-    if let Err(e) = run() {
-        print(json!({ "error": format!("{e:#}") }));
-        std::process::exit(2);
-    }
+    let (answer, code) = match run(std::env::args_os()) {
+        Ok(done) => done,
+        Err(e) => (json!({ "error": fault::of(e) }), 2),
+    };
+    println!("{}", serde_json::to_string_pretty(&answer).expect("json"));
+    std::process::exit(code);
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+/// The command line's answer and exit code (help and version print and exit
+/// here, as clap does).
+fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(e) if !e.use_stderr() || e.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+            e.exit()
+        }
+        Err(e) => {
+            let text = e.render().to_string();
+            let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("For more"));
+            let first = lines.next().unwrap_or_default().trim_start_matches("error: ").to_string();
+            let hints: Vec<&str> = lines.collect();
+            return Err(fault::fault(
+                first,
+                format!(
+                    "correct the command line{}; `slimfit --help` is the manual, `slimfit <command> --help` lists a \
+                     command's flags",
+                    hints.iter().map(|h| format!(" ({h})")).collect::<String>()
+                ),
+            ));
+        }
+    };
     let start = cli.repo.clone().unwrap_or(std::env::current_dir()?);
     let repo = git::toplevel(&start)?;
     match cli.command {
@@ -258,17 +283,20 @@ fn run() -> Result<()> {
             if created {
                 let suites = config::detect(&git::worktree(&repo)?.files);
                 if suites.is_empty() {
-                    anyhow::bail!(
-                        "no Rust, Go, Swift, Kotlin or TypeScript project found; write {} by hand",
-                        config::FILE
-                    );
+                    return Err(fault::fault(
+                        format!("no Rust, Go, Swift, Kotlin or TypeScript project found in {}", repo.display()),
+                        format!(
+                            "write {} by hand: a `[[suite]]` with name, preset (the language nearest yours) and \
+                             root, overriding test_command, tests_report and coverage_report; then `slimfit init`",
+                            config::FILE
+                        ),
+                    ));
                 }
                 let cfg = config::Config { suites, check: Default::default() };
                 std::fs::write(repo.join(config::FILE), toml::to_string_pretty(&cfg)?)?;
             }
             ensure_gitignore(&repo)?;
-            let cfg = config::load(&repo)?;
-            let old = ratchet::load(&repo)?;
+            let (cfg, old) = loaded(&repo)?;
             let m =
                 measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(false, mutants), fresh: true })?;
             let base = ratchet::Baseline {
@@ -277,16 +305,18 @@ fn run() -> Result<()> {
                 mutants_at: if mutants { m.snapshot.clone() } else { None },
             };
             ratchet::save(&repo, &base)?;
-            print(json!({
-                "config": if created { "written" } else { "kept" },
-                "suites": cfg.suites.iter().map(|s| s.resolve()).collect::<Vec<_>>(),
-                "baseline": base.suites,
-                "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
-            }));
+            Ok((
+                json!({
+                    "config": if created { "written" } else { "kept" },
+                    "suites": cfg.suites.iter().map(|s| s.resolve()).collect::<Vec<_>>(),
+                    "baseline": base.suites,
+                    "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
+                }),
+                0,
+            ))
         }
         Cmd::Next { all, kind, mutants, all_mutants, fresh } => {
-            let cfg = config::load(&repo)?;
-            let base = ratchet::load(&repo)?;
+            let (cfg, base) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
                 &cfg,
@@ -330,15 +360,17 @@ fn run() -> Result<()> {
             } else {
                 "do the task, then run its accept command, then `slimfit ratchet` and commit"
             };
-            if all {
-                print(json!({ "tasks": list, "counts": counts, "notes": notes, "next": next }));
-            } else {
-                print(json!({ "task": list.first(), "remaining": counts, "notes": notes, "next": next }));
-            }
+            Ok((
+                if all {
+                    json!({ "tasks": list, "counts": counts, "notes": notes, "next": next })
+                } else {
+                    json!({ "task": list.first(), "remaining": counts, "notes": notes, "next": next })
+                },
+                0,
+            ))
         }
         Cmd::Check { mutants, all_mutants, fresh } => {
-            let cfg = config::load(&repo)?;
-            let base = ratchet::load(&repo)?;
+            let (cfg, base) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
                 &cfg,
@@ -353,15 +385,11 @@ fn run() -> Result<()> {
             } else {
                 "slimfit next"
             };
-            let ok = v.ok;
-            print(json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }));
-            if !ok {
-                std::process::exit(1);
-            }
+            let code = if v.ok { 0 } else { 1 };
+            Ok((json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }), code))
         }
         Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh } => {
-            let cfg = config::load(&repo)?;
-            let old = ratchet::load(&repo)?;
+            let (cfg, old) = loaded(&repo)?;
             let scope = if pending_seconds.is_some() || pending_files.is_some() {
                 measure::Mutants::Fill(measure::Budget {
                     files: pending_files.map(|n| n as usize),
@@ -372,30 +400,52 @@ fn run() -> Result<()> {
             };
             let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh })?;
             let (new, not_recorded) = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
-            ratchet::save(&repo, &new)?;
-            print(json!({
-                "baseline": new.suites,
-                "loosened": new.loosened,
-                "not_recorded": not_recorded,
-                "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
-                         (while a suite lists mutants_pending, a --pending-seconds piece again)",
-            }));
+            // Nothing to ratchet is an answer, not a failure.
+            let changed = new != old;
+            if changed {
+                ratchet::save(&repo, &new)?;
+            }
+            let next = if changed {
+                "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
+                 (while a suite lists mutants_pending, a --pending-seconds piece again)"
+            } else {
+                "nothing to ratchet: the baseline already holds this measurement; `slimfit next`"
+            };
+            Ok((
+                json!({
+                    "changed": changed,
+                    "baseline": new.suites,
+                    "loosened": new.loosened,
+                    "not_recorded": not_recorded,
+                    "next": next,
+                }),
+                0,
+            ))
         }
         Cmd::Report { commits, points, fresh } => {
-            let cfg = config::load(&repo)?;
-            let base = ratchet::load(&repo)?;
+            let (cfg, base) = loaded(&repo)?;
             let m = measure::current(&repo, &cfg, &base, &measure::Options { mutants: measure::Mutants::None, fresh })?;
             let history = report::history(&repo, &cfg, commits, points)?;
-            print(json!({
-                "current": metrics_of(&m),
-                "baseline": base.suites,
-                "loosened": base.loosened,
-                "history": history,
-                "next": "slimfit next",
-            }));
+            Ok((
+                json!({
+                    "current": metrics_of(&m),
+                    "baseline": base.suites,
+                    "loosened": base.loosened,
+                    "history": history,
+                    "next": "slimfit next",
+                }),
+                0,
+            ))
         }
     }
-    Ok(())
+}
+
+/// slimfit.toml and the baseline, or the faults of both.
+fn loaded(repo: &std::path::Path) -> Result<(config::Config, ratchet::Baseline)> {
+    match (config::load(repo), ratchet::load(repo)) {
+        (Ok(c), Ok(b)) => Ok((c, b)),
+        (c, b) => Err(fault::Faults(c.err().into_iter().chain(b.err()).flat_map(fault::of).collect()).into()),
+    }
 }
 
 fn scope(mutants: bool, all_mutants: bool) -> measure::Mutants {
@@ -480,5 +530,62 @@ mod gitignore_tests {
         for kept in [format!("a\n {OUT} \nb"), format!("/{OUT}/\nb\n"), format!("b\n/{OUT}/")] {
             assert_eq!(after(Some(&kept)), kept);
         }
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::{fault::Fault, run};
+    use crate::measure::t::{git, sample_repo};
+    use serde_json::Value;
+    use std::path::Path;
+
+    fn slimfit(repo: &Path, args: &str) -> anyhow::Result<(Value, i32)> {
+        let mut all: Vec<std::ffi::OsString> = vec!["slimfit".into(), "--repo".into(), repo.into()];
+        all.extend(args.split_whitespace().map(Into::into));
+        run(all)
+    }
+
+    fn faults(repo: &Path, args: &str) -> Vec<Fault> {
+        crate::fault::of(slimfit(repo, args).unwrap_err())
+    }
+
+    /// Each fault of a command line, a place and a repo carries its fix;
+    /// slimfit.toml's and the baseline's are named together.
+    #[test]
+    fn a_failure_names_every_fault_with_its_fix() {
+        let gone = faults(Path::new("/nonexistent"), "next");
+        assert_eq!(gone[0].fault, "/nonexistent is not a directory");
+        assert!(gone[0].fix.starts_with("run slimfit inside the repository, or pass `--repo <its path>`"));
+        let dir = tempfile::tempdir().unwrap();
+        let f = faults(dir.path(), "next");
+        assert!(f[0].fault.contains("is not inside a git repository") && f[0].fix == gone[0].fix, "{f:?}");
+        let f = faults(dir.path(), "nxt");
+        assert_eq!(f[0].fault, "unrecognized subcommand 'nxt'");
+        assert!(f[0].fix.starts_with("correct the command line (tip: some similar subcommands exist: 'init', 'next')"));
+
+        git(dir.path(), &["init", "-q"]);
+        let f = faults(dir.path(), "init");
+        assert!(f[0].fault.starts_with("no Rust, Go, Swift, Kotlin or TypeScript project found"), "{f:?}");
+        assert!(f[0].fix.starts_with("write slimfit.toml by hand: a `[[suite]]` with name, preset"), "{f:?}");
+        std::fs::create_dir(dir.path().join(".slimfit")).unwrap();
+        std::fs::write(dir.path().join(".slimfit/baseline.json"), "[]").unwrap();
+        let f: Vec<String> = faults(dir.path(), "check").into_iter().map(|f| f.fix).collect();
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert!(f[0].starts_with("`slimfit init` writes it") && f[1].starts_with("restore it: `git checkout"));
+    }
+
+    /// No task left of a kind, and nothing to ratchet, are answers: exit 0.
+    #[test]
+    fn nothing_to_do_is_an_answer() {
+        let (dir, cfg) = sample_repo();
+        std::fs::write(dir.path().join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        let (first, code) = slimfit(dir.path(), "ratchet").unwrap();
+        assert_eq!((first["changed"].as_bool(), code), (Some(true), 0));
+        let (again, code) = slimfit(dir.path(), "ratchet").unwrap();
+        assert_eq!((again["changed"].as_bool(), code), (Some(false), 0));
+        assert!(again["next"].as_str().unwrap().starts_with("nothing to ratchet"));
+        let (none, code) = slimfit(dir.path(), "next --kind deepen").unwrap();
+        assert_eq!((none["task"].clone(), code), (Value::Null, 0));
     }
 }
