@@ -5,4 +5,4 @@ How to place slimfit in a repo's gates, with factorium as the example.
 3. Mutants never go in `fast` or `slow`. In factorium they go in idle work, which runs only while the host is idle: `[idle] steps = ["slimfit check --mutants"]` holds the changes since the baseline's `mutants_at`; `slimfit next --all-mutants` there measures every mutant for tasks.
 4. A change accepted with `slimfit check --mutants` is ratcheted (`slimfit ratchet`) and committed with its baseline, so the next run measures only what changed after it (see [mutants scope](help:mutants-scope)).
 
-Time it first: [costs](help:costs) says how.
+Time it first: [costs](help:costs) says how. Then `slimfit doctor` names whatever in this placement is off, each with its fix.

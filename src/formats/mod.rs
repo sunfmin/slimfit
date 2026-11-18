@@ -47,3 +47,14 @@ pub enum MutantsFormat {
     /// muter `--format json`.
     Muter,
 }
+
+impl MutantsFormat {
+    /// Whether the report names the tests that kill each mutant: without
+    /// that no test can be found redundant.
+    pub fn records_killers(self) -> bool {
+        match self {
+            MutantsFormat::CargoMutants | MutantsFormat::Stryker | MutantsFormat::Pitest => true,
+            MutantsFormat::Gremlins | MutantsFormat::Muter => false,
+        }
+    }
+}

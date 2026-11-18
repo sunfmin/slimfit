@@ -152,6 +152,8 @@ impl Sample {
             .args(args)
             .current_dir(&self.repo)
             .env("PATH", &self.bin)
+            // cargo's own bin directory, where doctor looks for its subcommands: empty.
+            .env("CARGO_HOME", self.bin.with_file_name("cargo-home"))
             .env(state::ENV, &self.state)
             .output()
             .unwrap();
@@ -354,4 +356,125 @@ fn kotlin() {
 #[test]
 fn swift() {
     faults_reach_the_agent(&measures_through_its_tools(&SWIFT), &SWIFT);
+}
+
+/// Every key a command prints is named on its own page (`slimfit <command>
+/// --help`), as `` `key` ``: the agent reads the page, never the source.
+/// Keys that are names (a suite's, a file's) are not keys to name. Each
+/// command runs on the Rust sample in the states that make it print its
+/// optional keys: violations, improvements, loosenings, a piece's
+/// not-recorded bounds, pending mutants, mutated files.
+#[test]
+fn every_printed_key_is_on_its_page() {
+    let s = Sample::new(&RUST);
+    let mut printed: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+    let mut run = |cmd: &'static str, args: &[&str], code: i32| {
+        let mut all = vec![cmd];
+        all.extend(args);
+        let (got, json, stderr) = s.slimfit(&all);
+        assert_eq!(got, code, "slimfit {all:?}: {json:#}\n{stderr}");
+        printed.entry(cmd).or_default().push(json);
+    };
+    let baseline = s.repo.join(".slimfit/baseline.json");
+    let edit = |f: &dyn Fn(&mut Value)| {
+        let mut b: Value = serde_json::from_str(&std::fs::read_to_string(&baseline).unwrap()).unwrap();
+        f(&mut b["suites"]["rust"]);
+        std::fs::write(&baseline, serde_json::to_string(&b).unwrap()).unwrap();
+    };
+
+    run("init", &[], 0);
+    run("next", &[], 0);
+    run("next", &["--all", "--all-mutants"], 0);
+    run("check", &[], 0);
+    run("report", &["--points", "1"], 0);
+    run("doctor", &[], 0);
+    // Better than the baseline: improved.
+    edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
+    run("check", &[], 0);
+    // Worse: violations, then a loosening.
+    edit(&|b| b["uncovered_lines"] = 0.into());
+    run("check", &[], 1);
+    run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
+    // A changed line whose mutants survive: mutated, then accepted with a reason.
+    let lib = s.repo.join("src/lib.rs");
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
+    run("check", &["--mutants"], 1);
+    run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
+    run("report", &["--points", "1"], 0);
+
+    fn keys(v: &Value, out: &mut std::collections::BTreeSet<String>) {
+        match v {
+            Value::Object(m) => {
+                for (k, v) in m {
+                    if k != "rust" && !k.contains('/') && !k.contains('.') {
+                        out.insert(k.clone());
+                    }
+                    keys(v, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|v| keys(v, out)),
+            _ => {}
+        }
+    }
+    let mut missing = Vec::new();
+    for (cmd, outputs) in &printed {
+        let page = Command::new(env!("CARGO_BIN_EXE_slimfit")).args([cmd, "--help"]).output().unwrap();
+        let page = String::from_utf8(page.stdout).unwrap();
+        let mut ks = Default::default();
+        outputs.iter().for_each(|o| keys(o, &mut ks));
+        let reached: &[&str] = match *cmd {
+            "init" => &["mutants_diff_flag", "mutants_file_flag"],
+            "next" => &["also_killed_by", "survivors", "start", "counts", "remaining"],
+            "check" => &["fix", "improved", "mutated", "change", "unviable"],
+            "ratchet" => &["from", "reason", "mutants_at", "tree"],
+            "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
+            _ => &["history", "commit", "from"],
+        };
+        for k in reached {
+            assert!(ks.contains(*k), "{cmd} printed no {k:?}: the states above no longer reach it");
+        }
+        for k in ks.iter().filter(|k| !page.contains(&format!("`{k}`"))) {
+            missing.push(format!("{cmd}: {k}"));
+        }
+    }
+    assert!(missing.is_empty(), "printed but not named on the command's page:\n{}", missing.join("\n"));
+}
+
+/// `doctor` reads and writes nothing: on a fresh sample it says to run
+/// `init` and names the tools the detected suite needs that are not on
+/// PATH (the stand-in is `cargo` alone), and exits 0. The load is the
+/// host's own, so a `host_busy` finding is left out.
+#[test]
+fn doctor_names_each_fix_and_changes_nothing() {
+    let s = Sample::new(&RUST);
+    let status = || {
+        let out =
+            Command::new("git").args(["status", "--porcelain", "--ignored"]).current_dir(&s.repo).output().unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let before = status();
+    let found = |doctor: &Value| -> Vec<(String, String)> {
+        doctor["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["kind"] != "host_busy")
+            .map(|f| {
+                (f["kind"].as_str().unwrap().into(), f["what"].as_str().unwrap().split(' ').next().unwrap().into())
+            })
+            .collect()
+    };
+    let doctor = s.ok(&["doctor"]);
+    let tool = |exe: &str| ("tool_missing".to_string(), exe.to_string());
+    let want = vec![
+        ("no_config".to_string(), "no".to_string()),
+        tool("cargo-llvm-cov"),
+        tool("cargo-nextest"),
+        tool("cargo-mutants"),
+    ];
+    assert_eq!(found(&doctor), want, "{doctor:#}");
+    assert!(doctor["next"].as_str().unwrap().contains("slimfit init"), "{doctor:#}");
+    assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
+    assert_eq!(status(), before, "doctor changed the working tree");
+    assert_eq!(s.steps(), Vec::<String>::new(), "doctor ran a tool");
 }

@@ -1,7 +1,7 @@
 Which mutants `--mutants` runs, and which survivors it holds.
 
 - `--mutants` measures the change: the lines that differ from the tree the baseline's `mutants_at` names, untracked files included. `slimfit init` sets `mutants_at`; a ratchet of a measurement with mutants moves it to the tree measured, so committing what was measured leaves no change behind.
-- The suite's tool runs as few mutants as it can be limited to: Rust's cargo-mutants only those of the changed lines (`--in-diff`, through the suite's `mutants_diff_flag`); a tool with only a file flag (`mutants_file_flag`), those of the files the change touches; a tool with neither (every other preset today), every mutant.
+- The suite's tool runs as few mutants as it can be limited to: {const:DIFF_LIMITED}'s tool only those of the changed lines (through the suite's `mutants_diff_flag`: `--in-diff` for cargo-mutants); a tool with only a file flag (`mutants_file_flag`), those of the files the change touches; a tool with neither, every mutant.
 - Either way only the survivors in the lines the change added are held, at 0: each is the change's own. Survivors elsewhere are surviving-mutant tasks, not violations. No baseline keeps a mutant count.
 - One that changes nothing observable is accepted with `slimfit ratchet --loosen survived_mutants --reason "<why>"`.
 - `slimfit next --all-mutants` runs every mutant, for tasks across the whole suite: its redundant tests too.

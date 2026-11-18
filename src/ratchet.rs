@@ -36,25 +36,32 @@ pub struct Loosening {
 
 /// The bounded metrics. Line counts are recorded but not bounded: code may
 /// grow, as long as every new line is covered and every new mutant killed.
-/// `survived_mutants` is not kept in the baseline: it counts the change's
-/// own survivors, held at 0.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+/// Each variant's help is the rule `check` holds it to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum, agent_help::Help)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
 pub enum Bound {
-    /// Failing tests; never loosened.
+    /// Failing tests: at most the baseline's (none, once every test passes); never loosened.
     #[value(verbatim_doc_comment)]
     Failures,
-    /// The sum of the tests' own durations.
+    /// The sum of the tests' own durations, build time excluded, corrected for the host's load (see [host load](help:host-load)): at most baseline × (1 + `time_tolerance`) + `time_slack` (`slimfit.toml`'s `[check]`; by default {const:TIME_TOLERANCE} and {const:TIME_SLACK} seconds).
     #[value(verbatim_doc_comment)]
     TestSeconds,
-    /// Lines no test runs.
+    /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
     #[value(verbatim_doc_comment)]
     UncoveredLines,
-    /// Mutants no test kills.
+    /// Mutants no test kills in the lines the change added: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
 }
+
+/// What a [`Loosening`] prints, as the command pages name it.
+pub const LOOSENING_HELP: &str =
+    "each with `suite`, `metric`, `from` (the bound before), `to` (the bound after) and `reason`";
+
+/// What a [`Violation`] prints, as the command pages name it.
+pub const VIOLATION_HELP: &str =
+    "each with `suite`, `metric`, `baseline`, `limit` (the most it may be), `current` and `fix` (what to do)";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Violation {
@@ -64,6 +71,21 @@ pub struct Violation {
     pub limit: f64,
     pub current: f64,
     pub fix: String,
+}
+
+#[cfg(test)]
+impl Violation {
+    /// A violation of no substance: what help lists the keys of.
+    pub fn example() -> Self {
+        Violation {
+            suite: String::new(),
+            metric: Bound::Failures,
+            baseline: 0.0,
+            limit: 0.0,
+            current: 0.0,
+            fix: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -160,9 +182,6 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
     }
 }
 
-/// The bounds the baseline keeps a value for.
-const BOUNDS: [Bound; 3] = [Bound::Failures, Bound::TestSeconds, Bound::UncoveredLines];
-
 pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
     let mut v = Verdict {
         ok: true,
@@ -196,7 +215,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
             }
             continue;
         };
-        for bound in BOUNDS {
+        for &bound in <Bound as clap::ValueEnum>::value_variants() {
             let (Some(base_v), Some(cur)) = (value(b, bound), value(&s.metrics, bound)) else { continue };
             let lim = if bound == Bound::Failures { 0.0 } else { limit(cfg, bound, base_v) };
             if cur > lim + 1e-9 {

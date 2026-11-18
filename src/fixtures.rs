@@ -64,6 +64,10 @@ fn measure_with_coverage(
     let reports: Vec<_> = mutants.1.iter().map(|n| sample(lang).join("reports").join(n)).collect();
     let reports: Vec<_> = reports.into_iter().map(|p| (p.clone(), std::fs::read_to_string(p).unwrap())).collect();
     let mut m = formats::read_mutants(mutants.0, &reports).unwrap();
+    if !reports.is_empty() {
+        let recorded = m.tests.is_some() || m.mutants.iter().any(|x| x.killed_by.is_some());
+        assert_eq!(recorded, mutants.0.records_killers(), "{lang}: records_killers");
+    }
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }

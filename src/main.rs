@@ -1,4 +1,5 @@
 mod config;
+mod doctor;
 mod fault;
 #[cfg(test)]
 mod fixtures;
@@ -36,15 +37,15 @@ agent_help::binary!("slimfit");
 ///
 /// 1. `slimfit next`: one task, with its kind, evidence, files, steps and accept command.
 /// 2. Do exactly that task, nothing else.
-/// 3. Run the task's accept command (`slimfit check` or `slimfit check --mutants`).
+/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}).
 /// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json`.
 /// 5. Commit the code and the baseline together (one task, one commit); back to 1.
 ///
-/// Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
+/// When setting up slimfit on a repo or a host, run `slimfit doctor` first and do each finding's `fix`. Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
 ///
 /// ## Output
 ///
-/// Every command prints one JSON object on stdout with a `next` field: the command to run next. Progress goes to stderr. `slimfit check` exits 1 when a bound is violated; each violation carries its `fix`. Nothing left to do (no task, nothing to ratchet) is an answer and exits 0. A command that cannot finish exits 2 with `{"error": [{"fault": "...", "fix": "..."}, ...]}`: every fault it found, each with the command or edit that fixes it. Do every fix, then run the command again. Measurements are cached per working tree in `.slimfit/out/`; `--fresh` measures again.
+/// Every command prints one JSON object on stdout with a `next` field: the command to run next. Progress goes to stderr. `slimfit check` exits {const:EXIT_VIOLATION} when a bound is violated; each violation carries its `fix`. Nothing left to do (no task, nothing to ratchet) is an answer and exits {const:EXIT_OK}. A command that cannot finish exits {const:EXIT_ERROR} with `{"error": [{"fault": "...", "fix": "..."}, ...]}`: every fault it found, each with the command or edit that fixes it. Do every fix, then run the command again. Measurements are cached per working tree in `.slimfit/out/`; `--fresh` measures again.
 #[derive(Parser)]
 #[command(
     name = "slimfit",
@@ -63,40 +64,100 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
+    /// Checks how slimfit is set up here and on this host; changes nothing.
     ///
-    /// Run it once, when adopting slimfit on a repo; time it first (see [costs](help:costs)). It detects Rust, Go, Swift, Kotlin and TypeScript projects, one suite per project found, each from its language's preset; edit `slimfit.toml` to override any preset field.
+    /// ## When to run it
+    ///
+    /// First, when setting up slimfit on a repo or a new host; and whenever a command is slower or stranger than it should be. It runs no tests, so it takes about a second.
     ///
     /// ## What it reads and writes
     ///
-    /// It writes `slimfit.toml` when the repo has none, and keeps it otherwise. It measures every suite once (one instrumented test run, never from the cache) and writes `.slimfit/baseline.json` from that measurement, keeping any loosened bounds already there. It runs no mutant: it records the tree as `mutants_at`, and `--mutants` measures the changes made after it (see [mutants scope](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the gates in `factorium.toml` (each `[gate]` entry and the lines of a repository script it names), the host's load, and whether the tools the suites' commands run are installed (on PATH, or in cargo's bin directory). It writes nothing.
+    ///
+    /// ## What it answers
+    ///
+    /// - `findings`: in the order to fix them, each with `kind`, `suite` (when it concerns one), `what` (what was found, and where) and `fix` (what to do). Empty when nothing is off.
+    /// - `host`: `load` (the 1-minute load average) and `cores`.
+    /// - `next`: the first finding's fix, or `slimfit next` when there is none.
+    ///
+    /// The kinds of finding:
+    ///
+    /// {table:finding}
+    ///
+    /// ## What it may refuse
+    ///
+    /// It exits {const:EXIT_OK} whenever it ran: findings are an answer, not an error. It refuses with exit {const:EXIT_ERROR} only on a bad command line or outside a git repository.
+    ///
+    /// ## What trips you up
+    ///
+    /// - It reads gates only from `factorium.toml`, and only one script deep: a gate defined elsewhere (CI, a Makefile), or a test run in a script that the gate's script calls, is not seen.
+    /// - A tool is found by name, not run: a tool that is installed but broken, or the wrong version, is not a finding.
+    #[command(next_help_heading = "Run first, when setting up on a repo or a host", verbatim_doc_comment)]
+    Doctor,
+    /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
+    ///
+    /// ## When to run it
+    ///
+    /// Once, when adopting slimfit on a repo, on a quiet host; time it first (see [costs](help:costs)). Run it again only to start the baseline over: it overwrites `.slimfit/baseline.json` with what it measures now, worse bounds included.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It records the tree as `mutants_at`, unless the baseline already has one: `--mutants` measures the changes made after it (see [mutants scope](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`.
     ///
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in.
-    /// - `baseline`: per suite, the metrics now held (see `slimfit check --help`).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none) and `mutants_file_flag` (the flag that limits it to one file; empty when it has none).
+    /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     ///
-    /// It refuses when it finds no project of a language it knows: write `slimfit.toml` by hand.
+    /// ## What it may refuse
+    ///
+    /// - No project of a language it knows, and no `slimfit.toml`: write `slimfit.toml` by hand.
+    /// - {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
+    /// - On a busy host its `test_seconds` comes out high, and the baseline holds it from then on: run it on a quiet host (see [host load](help:host-load)).
+    /// - Run again on a baseline that has `mutants_at`, it keeps it: changes since are still measured by the next `--mutants`, not accepted unmeasured.
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init,
     /// The next task to do, with its evidence and accept command.
     ///
-    /// Run it at the start of each turn of the loop. Tasks come cheapest and safest first, in the order of `--kind`'s values below. Each task carries its evidence and the command that accepts it; do exactly that task, then run its accept command, then `slimfit ratchet` and commit.
+    /// ## When to run it
+    ///
+    /// At the start of each turn of the loop, after the last task's change is ratcheted and committed. Do exactly the task it gives, then run its `accept` command, then `slimfit ratchet` and commit. Tasks come cheapest and safest first, in the order of `--kind`'s values below.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and the git history of the last {const:DEEPEN_DAYS} days (for `deepen` tasks). It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken; it writes nothing else.
     ///
     /// ## What it answers
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
-    /// - `remaining` (`counts` with `--all`): how many tasks of each kind there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides, e.g. mutants not run, or a mutation tool that does not record which test kills which mutant (only Rust, TypeScript and Kotlin record it, so only they get redundant-test tasks).
+    /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
+    /// - `notes`: what was not measured and what that hides: mutants not run, only the change's mutants run, or a mutation tool that does not record which test kills which mutant (only {const:KILLERS_RECORDED} record it, so only they get redundant-test tasks).
     /// - `next`: what to do now.
     ///
-    /// A task has `kind`, `suite`, `summary`, `files`, `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after).
+    /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
+    ///
+    /// - `failing-test`: `test` and `log`, the test run's log.
+    /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
+    /// - `redundant-test`: `test`, its `seconds`, `mutants_killed`, and `also_killed_by`, the tests that kill those mutants too.
+    /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
+    /// - `surviving-mutant`: `survivors`, each with its `line` and `mutant` (the change it makes).
+    /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
     ///
-    /// Without `--mutants` or `--all-mutants` there are no surviving-mutant or redundant-test tasks: `notes` says so. `--mutants` runs only the change's mutants, so its tasks name only what they show; `--all-mutants` runs every mutant. Those flags cost what [costs](help:costs) says.
+    /// - Without `--mutants` or `--all-mutants` there are no surviving-mutant or redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says, so never run them in a gate.
+    /// - `--mutants` runs only the change's mutants: its tasks name only what they show, and a test it calls redundant is redundant only among them. `--all-mutants` runs every mutant (see [mutants scope](help:mutants-scope)).
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Next {
         /// List every task, not just the first (at most {const:LISTED_PER_KIND} of each kind per suite, {const:LISTED_DEEPEN} deepen); `counts` counts them all.
@@ -115,27 +176,43 @@ enum Cmd {
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
     },
-    /// Fails if any bound is worse than the baseline; exits 1 on a violation.
+    /// Fails if any bound is worse than the baseline; exits {const:EXIT_VIOLATION} on a violation.
     ///
-    /// Run it after each change, and in the gate in place of the project's own test run: it IS that test run (see [setting up in factorium](help:factorium)). It reads `slimfit.toml` and `.slimfit/baseline.json` and writes nothing but its cache in `.slimfit/out/`.
+    /// ## When to run it
+    ///
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` only on an idle host, never in a gate.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache and the suites' reports and logs beside it. The baseline is never written: `slimfit ratchet` does that.
     ///
     /// ## What it holds
     ///
     /// Per suite, against `.slimfit/baseline.json`:
     ///
-    /// - `failures`: 0.
-    /// - `test_seconds`: at most baseline × (1 + `time_tolerance`) + `time_slack` (`slimfit.toml`'s `[check]`; by default {const:TIME_TOLERANCE} and {const:TIME_SLACK} seconds). It is the sum of the tests' own durations, build time excluded, corrected for the host's load (see [host load](help:host-load)).
-    /// - `uncovered_lines`: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
-    /// - `survived_mutants`: 0 in the lines the change added, checked only with `--mutants`: every mutant of new or edited code is killed. Survivors elsewhere are tasks, not violations; no baseline keeps a count (see [mutants scope](help:mutants-scope)).
+    /// {table:bound}
     ///
     /// Line counts are recorded and reported, not bounded. To raise a bound, see `slimfit ratchet --help`.
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`; `violations`, each with `suite`, `metric`, `baseline`, `limit`, `current` and `fix` (what to do); `improved`, the bounds that got better (`slimfit ratchet` locks them in); `new_suites`, suites with no baseline yet; and `mutants_unchecked`, true when mutants were not measured.
-    /// - `metrics`: per suite, `prod_lines`, `test_lines`, `tests`, `failures`, `test_seconds`, `covered_lines` and `uncovered_lines`.
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; and `mutants_unchecked`, true when mutants were not measured.
+    /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `all` (whether every mutant ran), `files` (the source files the change touches) and `change` (its mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
+    ///
+    /// It exits {const:EXIT_OK} when `ok`, {const:EXIT_VIOLATION} when a bound is violated.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
+    /// - `test_seconds` swells on a busy host. slimfit corrects for load, but a violation on a loaded host is worth one `--fresh` run on a quiet one before you chase it (see [host load](help:host-load)).
+    /// - A change that only deletes code or tests adds no line, so `--mutants` runs no mutant for it: what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Check {
         /// Also check `survived_mutants`: run the mutants of the lines changed since the baseline's `mutants_at`; none may survive (see [mutants scope](help:mutants-scope)). Never in a gate.
@@ -147,17 +224,35 @@ enum Cmd {
     },
     /// Moves the baseline to the current measurement; bounds only tighten.
     ///
-    /// Run it after a task's accept command passes, then commit `.slimfit/baseline.json` with the change it records. It refuses, writing nothing, when a bound got worse, unless `--loosen` allows that bound to rise; `failures` never may. A loosening's reason is kept in the baseline, and every report shows it.
+    /// ## When to run it
     ///
-    /// When the measurement has mutants (`--mutants`, or a cached `slimfit check --mutants` of the same tree), it moves `mutants_at` to the tree measured: its change is accepted, and the next `--mutants` measures only what changed after it. A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
+    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). After `slimfit check --mutants` passes, it reuses that measurement and moves `mutants_at` to the tree measured, so the next `--mutants` measures only what changed after it. A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement has mutants it also records the tree measured as `mutants_at` (see [mutants scope](help:mutants-scope)).
     ///
     /// ## What it answers
     ///
-    /// - `changed`: whether the baseline moved. `false` is nothing to ratchet: an answer (exit 0), and the baseline is not rewritten.
-    /// - `baseline`: per suite, the metrics now held.
-    /// - `loosened`: every loosening kept in the baseline, with its reason.
-    /// - `mutants_at`: the tree the next `--mutants` measures from.
+    /// - `changed`: whether the baseline moved. `false` is nothing to ratchet: an answer (exit {const:EXIT_OK}), and the baseline is not rewritten.
+    /// - `baseline`: per suite, {const:METRICS}.
+    /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
+    /// - `mutants_at`: `commit` and `tree`, what the next `--mutants` measures the change from.
     /// - `next`: commit, then `slimfit next` (or, when nothing changed, just `slimfit next`).
+    ///
+    /// ## What it may refuse
+    ///
+    /// It writes nothing when it refuses.
+    ///
+    /// - A bound got worse: `failures` always; any other unless `--loosen` names it.
+    /// - `--loosen` without `--reason`.
+    /// - {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
+    /// - A plain `ratchet` of a tree last measured without mutants keeps `mutants_at`: the change stays to be measured by the next `--mutants`.
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
         /// Allow this bound to rise (repeatable); needs `--reason`.
@@ -175,15 +270,30 @@ enum Cmd {
     },
     /// Current metrics against the baseline, and line counts over git history.
     ///
-    /// Run it to see where the codebase stands and how its size moved. It measures as `slimfit check` does (from the cache when the tree is unchanged) and reads line counts at commits spread over the history.
+    /// ## When to run it
+    ///
+    /// To see where the codebase stands and how its size moved, e.g. before and after a run of tasks. It decides nothing: `slimfit check` is what holds the bounds.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
     ///
     /// ## What it answers
     ///
-    /// - `current`: per suite, the metrics measured now (see `slimfit check --help`).
-    /// - `baseline`: per suite, the metrics held.
-    /// - `loosened`: every loosening kept in the baseline, with its reason.
-    /// - `history`: oldest first, each point's `commit`, `date` and per suite `prod` and `test` lines.
+    /// - `current`: per suite, the metrics measured now: {const:METRICS}.
+    /// - `baseline`: per suite, {const:METRICS}.
+    /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
+    /// - `history`: oldest first, each point's `commit`, `date` and `suites`: per suite, `prod` and `test` lines.
     /// - `next`: `slimfit next`.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - `history` counts lines with today's `slimfit.toml`: a commit from before a suite existed counts it as it is configured now.
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
         /// How many first-parent commits back to sample line counts from.
@@ -235,17 +345,57 @@ fn help() -> Help {
         .topic::<HostLoad>()
         .topic::<MutantsScope>()
         .topic::<Factorium>()
+        .table::<ratchet::Bound>("bound")
+        .constant("EXIT_OK", EXIT_OK)
+        .constant("EXIT_ERROR", EXIT_ERROR)
+        .constant("EXIT_VIOLATION", EXIT_VIOLATION)
+        .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
+        .constant("LANGUAGES", languages("and"))
+        .constant("KILLERS_RECORDED", languages_where(|s| s.mutants_report.format.records_killers()))
+        .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
+        .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
+        .constant("DEEPEN_DAYS", tasks::DEEPEN_DAYS)
+        .constant("METRICS", model::METRICS_HELP)
+        .constant("VIOLATION", ratchet::VIOLATION_HELP)
+        .constant("LOOSENING", ratchet::LOOSENING_HELP)
+        .constant("MEASURE_REFUSALS", measure::refusals_help())
+        .constant("CACHE_PITFALL", measure::CACHE_HELP)
+}
+
+/// What an answer exits with, nothing left to do included.
+const EXIT_OK: i32 = 0;
+/// What a command that cannot finish exits with.
+const EXIT_ERROR: i32 = 2;
+/// What `check` exits with when a bound is violated.
+const EXIT_VIOLATION: i32 = 1;
+
+/// `items` as prose: `a`, `a and b`, `a, b and c`, with `conjunction` for "and".
+fn prose_list(items: impl IntoIterator<Item = String>, conjunction: &str) -> String {
+    let mut items: Vec<String> = items.into_iter().collect();
+    let last = items.pop().unwrap_or_default();
+    if items.is_empty() { last } else { format!("{} {conjunction} {last}", items.join(", ")) }
+}
+
+/// The languages slimfit has a preset for.
+fn languages(conjunction: &str) -> String {
+    prose_list(config::Preset::all().iter().map(|p| p.language().to_string()), conjunction)
+}
+
+/// The languages whose preset has `property`.
+fn languages_where(property: impl Fn(&config::Suite) -> bool) -> String {
+    let presets = config::Preset::all().iter().filter(|p| property(&config::preset(**p)));
+    prose_list(presets.map(|p| p.language().to_string()), "and")
 }
 
 fn main() {
     let (answer, code) = match run(std::env::args_os()) {
         Ok(done) => done,
-        Err(e) => (json!({ "error": fault::of(e) }), 2),
+        Err(e) => (json!({ "error": fault::of(e) }), EXIT_ERROR),
     };
     println!("{}", serde_json::to_string_pretty(&answer).expect("json"));
     std::process::exit(code);
@@ -284,7 +434,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 let suites = config::detect(&git::worktree(&repo)?.files);
                 if suites.is_empty() {
                     return Err(fault::fault(
-                        format!("no Rust, Go, Swift, Kotlin or TypeScript project found in {}", repo.display()),
+                        format!("no {} project found in {}", languages("or"), repo.display()),
                         format!(
                             "write {} by hand: a `[[suite]]` with name, preset (the language nearest yours) and \
                              root, overriding test_command, tests_report and coverage_report; then `slimfit init`",
@@ -321,7 +471,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "baseline": base.suites,
                     "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
                 }),
-                0,
+                EXIT_OK,
             ))
         }
         Cmd::Next { all, kind, mutants, all_mutants, fresh } => {
@@ -375,7 +525,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 } else {
                     json!({ "task": list.first(), "remaining": counts, "notes": notes, "next": next })
                 },
-                0,
+                EXIT_OK,
             ))
         }
         Cmd::Check { mutants, fresh } => {
@@ -389,7 +539,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             } else {
                 "slimfit next"
             };
-            let code = if v.ok { 0 } else { 1 };
+            let code = if v.ok { EXIT_OK } else { EXIT_VIOLATION };
             Ok((json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }), code))
         }
         Cmd::Ratchet { loosen, reason, mutants, fresh } => {
@@ -414,8 +564,14 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "mutants_at": new.mutants_at,
                     "next": next,
                 }),
-                0,
+                EXIT_OK,
             ))
+        }
+        Cmd::Doctor => {
+            let host = doctor::Host::current();
+            let findings = doctor::diagnose(&repo, &host);
+            let next = findings.first().map_or("slimfit next".to_string(), |f| f.fix.clone());
+            Ok((json!({ "findings": findings, "host": host, "next": next }), EXIT_OK))
         }
         Cmd::Help { .. } => unreachable!("`parse` answers it"),
         Cmd::Report { commits, points, fresh } => {
@@ -430,7 +586,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "history": history,
                     "next": "slimfit next",
                 }),
-                0,
+                EXIT_OK,
             ))
         }
     }
@@ -493,6 +649,60 @@ fn ensure_gitignore(repo: &std::path::Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{config, model, ratchet, tasks};
+
+    /// The keys `value` is written with, in the order written.
+    fn keys(value: &impl serde::Serialize) -> Vec<String> {
+        let text = serde_json::to_string(value).unwrap();
+        let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text).unwrap();
+        let mut keys: Vec<String> = object.keys().cloned().collect();
+        keys.sort_by_key(|k| text.find(&format!("\"{k}\":")));
+        keys
+    }
+
+    /// The names `text` writes in backticks, in order.
+    fn named(text: &str) -> Vec<String> {
+        text.split('`').skip(1).step_by(2).map(String::from).collect()
+    }
+
+    /// The line of `page` that starts with `prefix`.
+    fn line<'a>(page: &'a str, prefix: &str) -> &'a str {
+        page.lines().find(|l| l.starts_with(prefix)).unwrap_or_else(|| panic!("no line {prefix:?}"))
+    }
+
+    /// Every output key help names is one the code writes, and none is left
+    /// out: help describes each key in words, so the list is checked here.
+    #[test]
+    fn help_names_every_output_key_in_order() {
+        assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
+        let violation = ratchet::Violation::example();
+        assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
+        let loosening = ratchet::Loosening {
+            suite: String::new(),
+            metric: ratchet::Bound::Failures,
+            from: 0.0,
+            to: 0.0,
+            reason: String::new(),
+        };
+        assert_eq!(named(ratchet::LOOSENING_HELP), keys(&loosening));
+
+        let help = super::help();
+        let next = help.command_help(&["next"]).unwrap();
+        let task = line(&next, "A task has ");
+        assert_eq!(named(&task[..task.find("Its `evidence`").unwrap()]), keys(&tasks::Task::example()));
+        let init = help.command_help(&["init"]).unwrap();
+        let mut suite = named(line(&init, "- `suites`:"));
+        suite.remove(0);
+        suite.retain(|k| k != "format" && k != "path");
+        assert_eq!(suite, keys(&config::preset(config::Preset::Rust)));
+        let check = help.command_help(&["check"]).unwrap();
+        let improved = line(&check, "- `verdict`:");
+        let improved = &improved[improved.find("`improved`").unwrap()..improved.find("; `new_suites`").unwrap()];
+        let change =
+            ratchet::Change { suite: String::new(), metric: ratchet::Bound::Failures, baseline: 0.0, current: 0.0 };
+        assert_eq!(named(improved)[2..], keys(&change)[..]);
+    }
+
     /// The one test that keeps the manual whole: every command has text and a
     /// group, every placeholder and topic link names something.
     #[test]
