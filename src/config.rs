@@ -296,7 +296,12 @@ pub fn detect(files: &[String]) -> Vec<SuiteConfig> {
 pub fn load(repo: &Path) -> Result<Config> {
     let path = repo.join(FILE);
     let text = std::fs::read_to_string(&path).with_context(|| format!("no {FILE}: run `slimfit init` first"))?;
-    let cfg: Config = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
+    parse(&text).with_context(|| format!("reading {}", path.display()))
+}
+
+/// `slimfit.toml`'s text, read and checked.
+pub fn parse(text: &str) -> Result<Config> {
+    let cfg: Config = toml::from_str(text)?;
     if cfg.suites.is_empty() {
         bail!("{FILE} names no [[suite]]");
     }

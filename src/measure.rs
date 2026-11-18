@@ -59,6 +59,9 @@ impl Spending {
 pub struct Options {
     pub mutants: Mutants,
     pub fresh: bool,
+    /// Write nothing in the repo: the commands write their reports to a
+    /// directory of their own outside it, and the measurement is not cached.
+    pub dry_run: bool,
 }
 
 /// The measurement of the tree as it is now: from the cache when it was
@@ -81,6 +84,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
     {
         return Ok(m);
     }
+    let scratch = Scratch::new(repo, opts.dry_run)?;
     let changed = match (&base.mutants_at, opts.mutants) {
         (Some(then), Mutants::Changed | Mutants::Fill(_)) => match git::changed_since(repo, &wt, then) {
             Ok(c) => Some(c),
@@ -120,7 +124,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             }
             Mutants::All => Some(Prior { changed: None, base: None, all: true }),
         };
-        suites.push(measure_suite(repo, &wt.files, &suite, prior, spending.as_mut())?);
+        suites.push(measure_suite(repo, &scratch.0, &wt.files, &suite, prior, spending.as_mut())?);
     }
     let m = Measurement {
         tree,
@@ -129,9 +133,34 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
         snapshot: wt.snapshot,
         suites,
     };
-    std::fs::create_dir_all(repo.join(OUT))?;
-    std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
+    if !opts.dry_run {
+        std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
+    }
     Ok(m)
+}
+
+/// Where the suites' commands write: `.slimfit/out`, or in a dry run a
+/// directory outside the repo, removed when the measurement is done.
+struct Scratch(PathBuf, bool);
+
+impl Scratch {
+    fn new(repo: &Path, dry_run: bool) -> Result<Self> {
+        let dir = if dry_run {
+            std::env::temp_dir().join(format!("slimfit-dry-run-{}", std::process::id()))
+        } else {
+            repo.join(OUT)
+        };
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self(dir, dry_run))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.1 {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 }
 
 /// What a run that mutates only some files builds on: the files changed
@@ -193,13 +222,14 @@ fn limited(suite: &Suite, files: &[String]) -> String {
 
 fn measure_suite(
     repo: &Path,
+    scratch: &Path,
     files: &[String],
     suite: &Suite,
     prior: Option<Prior>,
     spending: Option<&mut Spending>,
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
-    let out = repo.join(OUT).join(&suite.name);
+    let out = scratch.join(&suite.name);
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
@@ -582,7 +612,7 @@ mod t {
     }
 
     fn run(repo: &Path, cfg: &Config, base: &Baseline, mutants: Mutants) -> (Measurement, Option<String>) {
-        let m = current(repo, cfg, base, &Options { mutants, fresh: true }).unwrap();
+        let m = current(repo, cfg, base, &Options { mutants, fresh: true, dry_run: false }).unwrap();
         (m, std::fs::read_to_string(repo.join(OUT).join("rust/args")).ok())
     }
 
@@ -678,7 +708,7 @@ mod t {
         let fill = |n| Mutants::Fill(Budget { files: Some(n), seconds: None });
         let piece = |base: &Baseline, mutants| {
             // Not fresh: a piece never takes a cached measurement for its own.
-            let m = current(repo, &cfg, base, &Options { mutants, fresh: false }).unwrap();
+            let m = current(repo, &cfg, base, &Options { mutants, fresh: false, dry_run: false }).unwrap();
             let runs = std::fs::read_to_string(repo.join(OUT).join("rust/runs")).unwrap_or_default();
             let next = crate::ratchet::ratchet(base, &m, &Default::default(), &[], None).unwrap().0;
             (m, next, runs.lines().map(|l| l.trim().to_string()).collect::<Vec<_>>())
@@ -733,7 +763,7 @@ mod t {
         // A loaded host: the piece's test_seconds is over its bound. The piece
         // still records its counts, and test_seconds stays at the old value.
         let fill = Mutants::Fill(Budget { files: Some(2), seconds: None });
-        let m = current(repo, &cfg, &b0, &Options { mutants: fill, fresh: true }).unwrap();
+        let m = current(repo, &cfg, &b0, &Options { mutants: fill, fresh: true, dry_run: false }).unwrap();
         assert!(m.piece && m.suites[0].metrics.test_seconds > 0.1);
         let (b1, over) = crate::ratchet::ratchet(&b0, &m, &strict, &[], None).unwrap();
         assert_eq!(over.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::TestSeconds]);

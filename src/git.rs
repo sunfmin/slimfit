@@ -20,6 +20,11 @@ pub fn run(repo: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// `path`'s text at `commit`; `None` when the commit has no such file.
+pub fn text_at(repo: &Path, commit: &str, path: &str) -> Option<String> {
+    run(repo, &["show", &format!("{commit}:{path}")]).ok()
+}
+
 pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
     let s = run(dir, &["rev-parse", "--show-toplevel"]).context("slimfit runs inside a git repository")?;
     Ok(s.trim().into())

@@ -93,13 +93,35 @@ fn on_path(name: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("{name} is not on PATH"))
 }
 
+/// The directories the tools write their builds and reports in, by name
+/// (Stryker's `reports`; a sample keeps its real reports there too).
+const BUILT: &[&str] = &["reports", "node_modules", ".build", "build", "target", ".gradle", ".out"];
+
+/// Every file under `dir` by path, with its bytes (a symlink, its target),
+/// except git's and the tools' builds (`BUILT`).
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let (name, path, kind) = (e.file_name(), e.path(), e.file_type().unwrap());
+        if name == ".git" || BUILT.contains(&&*name.to_string_lossy()) {
+            continue;
+        }
+        if kind.is_symlink() {
+            files.insert(path.clone(), std::fs::read_link(&path).unwrap().into_os_string().into_encoded_bytes());
+        } else if kind.is_dir() {
+            files.extend(snapshot(&path));
+        } else {
+            files.insert(path.clone(), std::fs::read(&path).unwrap());
+        }
+    }
+    files
+}
+
 fn copy_tree(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap();
     for e in std::fs::read_dir(src).unwrap().flatten() {
         let name = e.file_name();
-        if ["reports", "node_modules", ".build", "build", "target", ".gradle", ".out"]
-            .contains(&&*name.to_string_lossy())
-        {
+        if BUILT.contains(&&*name.to_string_lossy()) {
             continue;
         }
         if e.file_type().unwrap().is_dir() {
@@ -159,6 +181,23 @@ impl Sample {
         let json = serde_json::from_slice(&out.stdout)
             .unwrap_or_else(|e| panic!("slimfit {args:?}: {e}; stdout {:?}; stderr {stderr}", out.stdout));
         (out.status.code().unwrap(), json, stderr)
+    }
+
+    /// A dry run: it answers, as `would_write`, the files named in `files`
+    /// and no others, and leaves the tree as it was, byte for byte.
+    fn dry_run(&self, args: &[&str], files: &[&str]) -> serde_json::Map<String, Value> {
+        let before = snapshot(&self.repo);
+        let answer = self.ok(args);
+        let after = snapshot(&self.repo);
+        let changed: Vec<_> = before.keys().chain(after.keys()).filter(|p| before.get(*p) != after.get(*p)).collect();
+        assert!(changed.is_empty(), "slimfit {args:?} wrote {changed:?}");
+        let would = answer["would_write"].as_object().unwrap_or_else(|| panic!("{answer:#}")).clone();
+        assert_eq!(would.keys().collect::<Vec<_>>(), files, "slimfit {args:?}");
+        would
+    }
+
+    fn read(&self, path: &str) -> String {
+        std::fs::read_to_string(self.repo.join(path)).unwrap()
     }
 
     fn ok(&self, args: &[&str]) -> Value {
@@ -222,8 +261,22 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
     // other tools are made to fail all the same.
     let exit = if lang.name == "rust" { 2 } else { 3 };
     s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
+    let would =
+        s.dry_run(&["init", "--mutants", "--dry-run"], &[".gitignore", ".slimfit/baseline.json", "slimfit.toml"]);
+    s.take();
     let (code, init, stderr) = s.slimfit(&["init", "--mutants"]);
     assert_eq!(code, 0, "{}: {init:#}\n{stderr}", lang.name);
+    // What the dry run said it would write, but for `test_seconds`: the host's load moves it.
+    let baseline = |text: &str| {
+        let mut b: Value = serde_json::from_str(text).unwrap();
+        b["suites"][lang.name]["test_seconds"] = Value::Null;
+        b
+    };
+    for f in [".gitignore", "slimfit.toml"] {
+        assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
+    }
+    let base = s.read(".slimfit/baseline.json");
+    assert_eq!(baseline(&base), baseline(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
     assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
     s.fault(lang.mutants_step, None);
     let mut want: Vec<&str> = lang.test_steps.to_vec();
@@ -240,7 +293,16 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
     assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);
     assert!(of("surviving-mutant").next().is_some(), "{}: {next:#}", lang.name);
     s.ok(&["check"]);
-    assert_eq!(s.steps(), Vec::<String>::new(), "{}: next and check reuse the measurement", lang.name);
+    // A bound with room to tighten: ratchet would write exactly the baseline it writes.
+    let mut looser: Value = serde_json::from_str(&base).unwrap();
+    looser["suites"][lang.name]["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 5).into();
+    std::fs::write(s.repo.join(".slimfit/baseline.json"), serde_json::to_string_pretty(&looser).unwrap()).unwrap();
+    let would = s.dry_run(&["ratchet", "--dry-run"], &[".slimfit/baseline.json"]);
+    s.ok(&["ratchet"]);
+    assert_eq!(s.read(".slimfit/baseline.json"), would[".slimfit/baseline.json"], "{}", lang.name);
+    assert_eq!(s.read(".slimfit/baseline.json"), base, "{}", lang.name);
+    s.dry_run(&["ratchet", "--dry-run"], &[]);
+    assert_eq!(s.steps(), Vec::<String>::new(), "{}: next, check and ratchet reuse the measurement", lang.name);
     s
 }
 
