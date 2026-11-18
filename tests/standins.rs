@@ -152,6 +152,8 @@ impl Sample {
             .args(args)
             .current_dir(&self.repo)
             .env("PATH", &self.bin)
+            // cargo's own bin directory, where doctor looks for its subcommands: empty.
+            .env("CARGO_HOME", self.bin.with_file_name("cargo-home"))
             .env(state::ENV, &self.state)
             .output()
             .unwrap();
@@ -328,4 +330,46 @@ fn kotlin() {
 #[test]
 fn swift() {
     faults_reach_the_agent(&measures_through_its_tools(&SWIFT), &SWIFT);
+}
+
+/// `doctor` reads and writes nothing: on a fresh sample it says to run
+/// `init` and names the tools the detected suite needs that are not on
+/// PATH (the stand-in is `cargo` alone), and exits 0. The load is the
+/// host's own, so a `host_busy` finding is left out.
+#[test]
+fn doctor_names_each_fix_and_changes_nothing() {
+    let s = Sample::new(&RUST);
+    let status = || {
+        let out =
+            Command::new("git").args(["status", "--porcelain", "--ignored"]).current_dir(&s.repo).output().unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let before = status();
+    let found = |doctor: &Value| -> Vec<(String, String)> {
+        doctor["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["kind"] != "host_busy")
+            .map(|f| {
+                (f["kind"].as_str().unwrap().into(), f["what"].as_str().unwrap().split(' ').next().unwrap().into())
+            })
+            .collect()
+    };
+    let doctor = s.ok(&["doctor"]);
+    let tool = |exe: &str| ("tool_missing".to_string(), exe.to_string());
+    let want = vec![
+        ("no_config".to_string(), "no".to_string()),
+        tool("cargo-llvm-cov"),
+        tool("cargo-nextest"),
+        tool("cargo-mutants"),
+    ];
+    assert_eq!(found(&doctor), want, "{doctor:#}");
+    assert!(doctor["next"].as_str().unwrap().contains("slimfit init"), "{doctor:#}");
+    assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
+    assert_eq!(status(), before, "doctor changed the working tree");
+    assert_eq!(s.steps(), Vec::<String>::new(), "doctor ran a tool");
+    s.ok(&["init"]);
+    let doctor = s.ok(&["doctor"]);
+    assert_eq!(found(&doctor), want[1..], "{doctor:#}");
 }

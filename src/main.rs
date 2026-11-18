@@ -1,4 +1,5 @@
 mod config;
+mod doctor;
 #[cfg(test)]
 mod fixtures;
 mod formats;
@@ -39,7 +40,7 @@ agent_help::binary!("slimfit");
 /// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json`.
 /// 5. Commit the code and the baseline together (one task, one commit); back to 1.
 ///
-/// Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
+/// When setting up slimfit on a repo or a host, run `slimfit doctor` first and do each finding's `fix`. Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
 ///
 /// ## Output
 ///
@@ -62,6 +63,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Checks how slimfit is set up here and on this host; changes nothing.
+    ///
+    /// Run it first when setting up slimfit on a repo or a new host, and whenever a command is slower or stranger than it should be. It reads `slimfit.toml`, `.slimfit/baseline.json`, the gates in `factorium.toml` (each `[gate]` entry and the lines of a script it names), the host's load, and whether the tools the suites' commands run are installed. It runs no tests and writes nothing, so it takes a second.
+    ///
+    /// ## What it answers
+    ///
+    /// - `findings`: in the order to fix them, each with `kind`, `suite` (when it concerns one), `what` (what was found, and where) and `fix` (what to do). Empty when nothing is off.
+    /// - `host`: `load` (the 1-minute load average) and `cores`.
+    /// - `next`: the first finding's fix, or `slimfit next` when there is none.
+    ///
+    /// It exits 0 whenever it ran: findings are an answer, not an error.
+    ///
+    /// ## What it finds
+    ///
+    /// {table:finding}
+    #[command(next_help_heading = "Run first, when setting up on a repo or a host", verbatim_doc_comment)]
+    Doctor,
     /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
     ///
     /// Run it once, when adopting slimfit on a repo; time it first (see [costs](help:costs)). It detects Rust, Go, Swift, Kotlin and TypeScript projects, one suite per project found, each from its language's preset; edit `slimfit.toml` to override any preset field.
@@ -255,6 +273,7 @@ fn help() -> Help {
         .topic::<MutantsScope>()
         .topic::<PiecewiseBaseline>()
         .topic::<Factorium>()
+        .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
         .constant("COVERAGE_SLACK", check.coverage_slack)
@@ -406,6 +425,12 @@ fn run() -> Result<()> {
                 "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
                          (while a suite lists mutants_pending, a --pending-seconds piece again)",
             }));
+        }
+        Cmd::Doctor => {
+            let host = doctor::Host::current();
+            let findings = doctor::diagnose(&repo, &host);
+            let next = findings.first().map_or("slimfit next".to_string(), |f| f.fix.clone());
+            print(json!({ "findings": findings, "host": host, "next": next }));
         }
         Cmd::Help { .. } => unreachable!("`parse` answers it"),
         Cmd::Report { commits, points, fresh } => {
