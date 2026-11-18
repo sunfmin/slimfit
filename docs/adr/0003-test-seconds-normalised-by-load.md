@@ -80,3 +80,42 @@ the normalised time grew 27× that way, a contention no host load causes.
 - Baselines written before this change hold wall time, which is higher. The
   baseline is re-measured once, with the change, under `--loosen
   test_seconds`.
+
+## Why one tree still swung (slimfit#27)
+
+On one commit at load ~20 the watch measured 5.46 and 7.51, then 10.19 and
+14.12. Measured on c01e62c plus #27's cuts, 18 cores (6 performance, 12
+efficiency):
+
+- **The slowdown is averaged over the build.** `cargo llvm-cov nextest`
+  builds inside the probed command. After a build that relinked (command
+  73-87s) the probe saw 4.5-5.1 and test_seconds read 5.8-13.3; on a cached
+  build (25-39s) it saw 1.2-1.6 and the same tree read 13-20 (both under
+  background QoS, below). How much of the command is build, and how busy
+  the build kept the cores, set the number. slimfit rebuilds more often
+  than it seems: `build.rs` reruns when the git index changes, and every
+  `git status` touches it.
+- **Priority.** factorium runs heavy commands as `taskpolicy -b nice -n 10`:
+  background QoS, efficiency cores and throttled I/O. The same tree read
+  5.46 at normal priority (load 13.5, slowdown 1.006) and 13-20 under it
+  (load 14-25); the CPU-hog test took 0.79s and 6.58s. The probe runs at
+  the same priority and sees the CPU share, but not throttled I/O or the
+  wait to start a process. `factorium worker gate` runs `slimfit check` at
+  normal priority (its run: command 7.0s, slowdown 1.008, 5.516).
+- **A fresh binary's first run.** macOS checks a newly linked binary on its
+  first exec: 0.17-0.34s, and every process that execs it meanwhile waits
+  (6 at once: 0.17s each). Each stand-in test, in its own nextest process,
+  counted that wait; they now run in one test.
+
+Tried: dividing each test by the slowdown while it ran, its window from
+the report's timestamps (2d305b0). The build no longer set the number
+(14.7, 14.9, 18.6 at command 76/39/30s, background QoS), but the level
+doubled, since the build-inflated slowdown had set the 7.5 baseline. It
+needs the baseline measured again, which #27 rules out, so it is not on.
+Kept from it: a test whose report started before the command (a sample's
+report a test copies) is not divided by a slowdown it never ran under.
+
+What the gate does: it holds test_seconds as before, at normal priority,
+and the suite keeps a margin under its bound instead of relying on the
+correction: 5.0-5.5 at load 9-12 after #27, against a bound of 10 on the
+7.5 baseline.
