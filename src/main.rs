@@ -10,6 +10,7 @@ mod model;
 mod ratchet;
 mod report;
 mod tasks;
+mod tools;
 // build.rs runs it to stamp the version; compiled here too, for its tests and mutants.
 #[cfg_attr(not(test), allow(dead_code))]
 mod version;
