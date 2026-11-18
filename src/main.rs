@@ -588,6 +588,11 @@ mod answer_tests {
         let (again, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((again["changed"].as_bool(), code), (Some(false), 0));
         assert!(again["next"].as_str().unwrap().starts_with("nothing to ratchet"));
+        let (all, _) = slimfit(dir.path(), "next --all").unwrap();
+        assert_eq!(all["counts"], serde_json::json!({ "slow-test": 1 }));
+        assert!(all["notes"][0].as_str().unwrap().starts_with("mutants not measured"), "{all}");
+        let (held, code) = slimfit(dir.path(), "check").unwrap();
+        assert_eq!((held["next"].as_str(), code), (Some("slimfit next"), 0));
         let (none, code) = slimfit(dir.path(), "next --kind deepen").unwrap();
         assert_eq!((none["task"].clone(), code), (Value::Null, 0));
     }
