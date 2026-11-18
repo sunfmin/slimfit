@@ -10,6 +10,9 @@ pub struct TestCase {
     pub id: String,
     pub seconds: f64,
     pub passed: bool,
+    /// When it started, in seconds since the Unix epoch, when the report says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<f64>,
 }
 
 /// Line hits per file, plus the functions the report names (some formats
@@ -151,8 +154,9 @@ pub struct SuiteMeasurement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Vec<String>>,
     pub command_seconds: f64,
-    /// How much the host's load slowed the test command: the tests'
-    /// durations are divided by it (ADR 0003).
+    /// How much the host's load slowed the tests: their durations as
+    /// timed over their sum once corrected, each test by the slowdown
+    /// while it ran (ADR 0003).
     pub load_slowdown: f64,
 }
 
