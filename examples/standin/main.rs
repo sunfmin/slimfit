@@ -199,7 +199,7 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
     }
 }
 
-/// cargo-mutants' test phase, as `--test-tool nextest` runs it: in a build
+/// cargo-mutants' build and test phases, as `--test-tool nextest` runs them: in a build
 /// directory under `out`, unmutated first unless `skip`, then once per
 /// mutant of the real list (its first line marked as cargo-mutants marks
 /// it), `cargo nextest run`. Only when there is a `cargo-nextest` to run.
@@ -212,13 +212,18 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool) {
     let listed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(reports.join("mutants.list.json")).unwrap()).unwrap();
     let build = out.join("standin-build");
+    // The build phase (`--no-run`), then the test phase.
     let test = || {
-        let status = std::process::Command::new("cargo")
-            .args(["nextest", "run", "--verbose", "--package=calc@0.1.0"])
-            .current_dir(&build)
-            .status()
-            .unwrap();
-        assert!(status.code().is_some(), "cargo nextest run was killed");
+        for phase in [&["--no-run"][..], &[]] {
+            let status = std::process::Command::new("cargo")
+                .args(["nextest", "run"])
+                .args(phase)
+                .args(["--verbose", "--package=calc@0.1.0"])
+                .current_dir(&build)
+                .status()
+                .unwrap();
+            assert!(status.code().is_some(), "cargo nextest run was killed");
+        }
     };
     let copy = |file: &str| {
         std::fs::create_dir_all(build.join(file).parent().unwrap()).unwrap();

@@ -1005,13 +1005,15 @@ pub(crate) mod t {
             hits: 0,
             symbol: format!("_R{name}"),
         };
-        let coverage = Coverage { lines: Default::default(), functions: vec![f("a", 1), f("b", 2), f("t", 5)] };
+        // Two symbols of one line: a generic function's instantiations.
+        let functions = vec![f("a", 1), f("a2", 1), f("b", 2), f("t", 5)];
+        let coverage = Coverage { lines: Default::default(), functions };
         let t = |name: &str, ran: Option<&[&str]>| formats::TestReach {
             binary: "calc".into(),
             name: name.into(),
             functions: ran.map(|r| r.iter().map(|s| s.to_string()).collect()),
         };
-        let reach = vec![t("x", Some(&["_Ra", "_Rt"])), t("y", None), t("z", Some(&["_Rgone"]))];
+        let reach = vec![t("x", Some(&["_Ra", "_Ra2", "_Rt"])), t("y", None), t("z", Some(&["_Rgone"]))];
         let timing = Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 };
         let suite = crate::config::preset(crate::config::Preset::Rust);
         let resolver = Resolver::new(Path::new("/r"), &totals);

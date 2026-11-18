@@ -536,13 +536,16 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let calls = s.take();
     let listed = calls.iter().filter(|c| c.step == "cargo mutants" && c.args.contains(&"--list".to_string())).count();
     assert_eq!(listed, 1, "{calls:?}");
-    // cargo-mutants' test run of each of the 17 listed mutants reaches the
-    // real nextest through the shim: `add`'s 5 with its 3 tests, `is_adult`'s
-    // 3 with its one, each under its timeout; `unused`'s 9 run none.
-    let runs = calls.iter().filter(|c| c.step == "cargo nextest").count();
+    // cargo-mutants' build of each of the 17 listed mutants reaches the
+    // real nextest through the shim as it came; its test run, narrowed:
+    // `add`'s 5 with its 3 tests, `is_adult`'s 3 with its one, each under its
+    // timeout; `unused`'s 9 run none.
+    let runs = calls.iter().filter(|c| c.step == "cargo nextest").count() / 2;
+    let builds = calls.iter().filter(|c| c.step == "cargo-nextest nextest" && c.args.contains(&"--no-run".into()));
+    assert!(builds.clone().count() == 17 && builds.clone().all(|c| c.args.len() == 5), "{calls:#?}");
     let filters: Vec<&str> = calls
         .iter()
-        .filter(|c| c.step == "cargo-nextest nextest")
+        .filter(|c| c.step == "cargo-nextest nextest" && !c.args.contains(&"--no-run".into()))
         .map(|c| {
             assert!(c.args.iter().any(|a| a.starts_with("slimfit:") && a.ends_with(".toml")), "{c:?}");
             c.args.iter().skip_while(|a| *a != "-E").nth(1).map(String::as_str).unwrap_or("")
@@ -577,6 +580,27 @@ fn the_shim_without_its_plan_says_why() {
     assert_eq!(out.status.code(), Some(101), "{stderr}");
     assert!(stderr.contains("SLIMFIT_SELECT is not set: every test runs"), "{stderr}");
     assert!(stderr.contains("SLIMFIT_NEXTEST is not set: the real cargo-nextest is unknown"), "{stderr}");
+    // A plan, but no file differs (cargo-mutants' unmutated baseline): every
+    // test runs, each under its timeout, and nextest's exit is the shim's.
+    let plan = tmp.path().join("plan.json");
+    let test = r#"{"binary": "calc", "name": "t", "timeout": 6}"#;
+    std::fs::write(&plan, format!(r#"{{"root": "/", "tests": [{test}], "functions": []}}"#)).unwrap();
+    let out = Command::new(&shim)
+        .args(["nextest", "run"])
+        .env("SLIMFIT_SELECT", &plan)
+        .env("SLIMFIT_NEXTEST", on_path("false"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no file differs from the suite's own: every test runs"), "{stderr}");
+    let configs: Vec<String> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("nextest-"))
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect();
+    assert!(configs.len() == 1 && configs[0].contains("period = \"6s\""), "{configs:?}");
 }
 
 /// Every key a command prints is named on its own page (`slimfit <command>
