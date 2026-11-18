@@ -19,7 +19,12 @@ use std::time::Instant;
 pub const OUT: &str = ".slimfit/out";
 
 /// What every measuring command may refuse, as the command pages say it.
-pub const REFUSALS_HELP: &str = "It refuses with exit 2 and `{\"error\": [{\"fault\": \"...\", \"fix\": \"...\"}, ...]}`: every fault it found at once, each with the `fix` that clears it. Faults: a bad command line; not in a git repository; no `slimfit.toml` (`slimfit init` writes one), or one that is not valid; a `.slimfit/baseline.json` it cannot read; a suite's tool missing, or writing no report: the fault names the report it looked for (`no tests_report at ...`) and ends with the command's log. A failing test is measured, not refused: it counts in `failures`.";
+pub fn refusals_help() -> String {
+    format!(
+        "It refuses with exit {} and `{{\"error\": [{{\"fault\": \"...\", \"fix\": \"...\"}}, ...]}}`: every fault it found at once, each with the `fix` that clears it. Faults: a bad command line; not in a git repository; no `slimfit.toml` (`slimfit init` writes one), or one that is not valid; a `.slimfit/baseline.json` it cannot read; a suite's tool missing, or writing no report: the fault names the report it looked for (`no tests_report at ...`) and ends with the command's log. A failing test is measured, not refused: it counts in `failures`.",
+        crate::EXIT_ERROR
+    )
+}
 
 /// The cache's pitfall, as the command pages say it.
 pub const CACHE_HELP: &str = "The measurement is cached in `.slimfit/out/` and reused while HEAD and the contents of every file git does not ignore are unchanged. A change outside them is not seen: a tool's new version, the host's load, an environment variable, a flaky test. `--fresh` measures again.";

@@ -35,7 +35,7 @@ impl Default for CheckConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Preset {
     Rust,
@@ -43,6 +43,24 @@ pub enum Preset {
     Swift,
     Kotlin,
     Typescript,
+}
+
+impl Preset {
+    /// Every preset, in declaration order.
+    pub fn all() -> &'static [Preset] {
+        <Preset as clap::ValueEnum>::value_variants()
+    }
+
+    /// The language's name, as a reader writes it.
+    pub fn language(self) -> &'static str {
+        match self {
+            Preset::Rust => "Rust",
+            Preset::Go => "Go",
+            Preset::Swift => "Swift",
+            Preset::Kotlin => "Kotlin",
+            Preset::Typescript => "TypeScript",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
