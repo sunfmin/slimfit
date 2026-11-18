@@ -11,6 +11,9 @@ mod ratchet;
 mod report;
 mod tasks;
 mod tools;
+// build.rs runs it to stamp the version; compiled here too, for its tests and mutants.
+#[cfg_attr(not(test), allow(dead_code))]
+mod version;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -154,7 +157,7 @@ OUTPUT
   Measurements are cached per working tree in .slimfit/out/; --fresh re-runs.";
 
 #[derive(Parser)]
-#[command(name = "slimfit", version, about = ABOUT, long_about = LONG_ABOUT, arg_required_else_help = true)]
+#[command(name = "slimfit", version = env!("SLIMFIT_VERSION"), about = ABOUT, long_about = LONG_ABOUT, arg_required_else_help = true)]
 struct Cli {
     /// Repository to work on (default: the one containing the current directory).
     #[arg(long, global = true)]
