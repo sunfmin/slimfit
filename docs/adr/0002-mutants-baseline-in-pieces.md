@@ -35,6 +35,12 @@ large workspace could never get a mutants baseline through factorium. Its own
   mutated and held by `--mutants` like any change. Only files that were there
   when the suite started its pieces are pending. A pending file that is
   deleted leaves the list.
+- A piece is not refused because test_seconds went over its bound. Pieces
+  run while other workers load the host (708s and 996s measured against a
+  bound of 540s at load 45-60), and refusing threw away hours of mutant
+  counts. The piece keeps the old test_seconds (it never loosens a bound)
+  and lists the overrun under `not_recorded`. Failing tests, new uncovered
+  lines and more surviving mutants still refuse it.
 - Mutating one file per tool run costs the tool's own start (cargo-mutants
   builds and runs the unmutated tests once per run). That buys a time budget
   checked between files; one batched run could not stop at the budget.

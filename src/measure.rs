@@ -123,7 +123,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
         };
         suites.push(measure_suite(repo, &files, &suite, prior, spending.as_mut())?);
     }
-    let m = Measurement { tree, with_mutants: opts.mutants != Mutants::None, snapshot, suites };
+    let m = Measurement { tree, with_mutants: opts.mutants != Mutants::None, piece: filling, snapshot, suites };
     std::fs::create_dir_all(repo.join(OUT))?;
     std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
     Ok(m)
@@ -512,6 +512,8 @@ fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function]) -> Vec<S
 #[cfg(test)]
 mod t {
     use super::*;
+    use crate::config::CheckConfig;
+    use crate::ratchet::Bound;
 
     fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
@@ -572,7 +574,7 @@ mod t {
 
         // A file the baseline counted, unchanged since: kept as counted.
         let kept = MutantCounts { killed: 2, survived: 1, unviable: 0 };
-        let mut base = crate::ratchet::ratchet(&Baseline::default(), &full, &Default::default(), &[], None).unwrap();
+        let mut base = crate::ratchet::ratchet(&Baseline::default(), &full, &Default::default(), &[], None).unwrap().0;
         let b = base.suites.get_mut("rust").unwrap();
         b.mutant_files.insert("src/kept.rs".into(), kept);
         b.mutants = Some(MutantCounts::sum(b.mutant_files.values()));
@@ -592,7 +594,7 @@ mod t {
         assert_eq!(s.metrics.mutant_files, [("src/kept.rs".to_string(), kept), ("src/lib.rs".to_string(), lib)].into());
         assert_eq!(s.metrics.mutants, total);
         // The merged counts describe this tree: ratcheting records it.
-        let next = crate::ratchet::ratchet(&base, &m, &Default::default(), &[], None).unwrap();
+        let next = crate::ratchet::ratchet(&base, &m, &Default::default(), &[], None).unwrap().0;
         assert_eq!(next.mutants_at.unwrap().dirty, vec!["src/lib.rs".to_string()]);
 
         // --all-mutants, or a baseline without per-file counts: every file.
@@ -646,7 +648,7 @@ mod t {
             // Not fresh: a piece never takes a cached measurement for its own.
             let m = current(repo, &cfg, base, &Options { mutants, fresh: false }).unwrap();
             let runs = std::fs::read_to_string(repo.join(OUT).join("rust/runs")).unwrap_or_default();
-            let next = crate::ratchet::ratchet(base, &m, &Default::default(), &[], None).unwrap();
+            let next = crate::ratchet::ratchet(base, &m, &Default::default(), &[], None).unwrap().0;
             (m, next, runs.lines().map(|l| l.trim().to_string()).collect::<Vec<_>>())
         };
 
@@ -685,6 +687,35 @@ mod t {
         assert!(s.mutants_pending.is_empty());
         assert_eq!((&s.mutant_files, s.mutants), (&f.mutant_files, f.mutants));
         assert_eq!(f.mutant_files.len(), 4);
+    }
+
+    #[test]
+    fn a_piece_records_its_mutants_when_test_seconds_is_over_but_not_when_a_test_fails() {
+        let (dir, cfg) = five_file_repo();
+        let repo = dir.path();
+        let strict = CheckConfig { time_tolerance: 0.0, time_slack: 0.0, coverage_slack: 0 };
+        // A suite with no mutants yet, its test_seconds taken on an idle host.
+        let idle = Metrics { test_seconds: 0.1, uncovered_lines: 1000, ..Default::default() };
+        let b0 = Baseline { suites: [("rust".to_string(), idle)].into(), ..Default::default() };
+
+        // A loaded host: the piece's test_seconds is over its bound. The piece
+        // still records its counts, and test_seconds stays at the old value.
+        let fill = Mutants::Fill(Budget { files: Some(2), seconds: None });
+        let m = current(repo, &cfg, &b0, &Options { mutants: fill, fresh: true }).unwrap();
+        assert!(m.piece && m.suites[0].metrics.test_seconds > 0.1);
+        let (b1, over) = crate::ratchet::ratchet(&b0, &m, &strict, &[], None).unwrap();
+        assert_eq!(over.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::TestSeconds]);
+        let s = &b1.suites["rust"];
+        assert_eq!(s.test_seconds, 0.1);
+        assert_eq!(s.mutants_pending, ["src/c.rs", "src/d.rs", "src/e.rs"]);
+        assert_eq!(s.mutant_files.keys().collect::<Vec<_>>(), ["src/a.rs", "src/b.rs"]);
+
+        // Not a piece: the same measurement is refused.
+        assert!(crate::ratchet::ratchet(&b0, &Measurement { piece: false, ..m.clone() }, &strict, &[], None).is_err());
+        // A failing test refuses a piece all the same.
+        let mut failing = m;
+        failing.suites[0].metrics.failures = 1;
+        assert!(crate::ratchet::ratchet(&b0, &failing, &strict, &[], None).is_err());
     }
 
     #[test]

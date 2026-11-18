@@ -193,17 +193,25 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
 
 /// The new baseline: each bound at the better of baseline and current;
 /// a loosened bound at current, recorded with its reason. Refuses while
-/// any other bound is violated.
+/// any other bound is violated, except that a piece (`m.piece`: a run that
+/// fills in pending mutant counts) is not refused for test_seconds: host
+/// load swells it, and the piece's mutant counts must not be thrown away
+/// for that. Such a violation is returned with the baseline; test_seconds
+/// stays as it was.
 pub fn ratchet(
     base: &Baseline,
     m: &Measurement,
     cfg: &CheckConfig,
     loosen: &[Bound],
     reason: Option<&str>,
-) -> Result<Baseline> {
+) -> Result<(Baseline, Vec<Violation>)> {
     let verdict = check(base, m, cfg);
+    let (not_recorded, violations): (Vec<Violation>, Vec<Violation>) = verdict
+        .violations
+        .into_iter()
+        .partition(|v| m.piece && v.metric == Bound::TestSeconds && !loosen.contains(&Bound::TestSeconds));
     let blocking: Vec<&Violation> =
-        verdict.violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
+        violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
     if !blocking.is_empty() {
         let lines: Vec<String> = blocking
             .iter()
@@ -258,7 +266,7 @@ pub fn ratchet(
         }
         next.suites.insert(s.suite.clone(), metrics);
     }
-    Ok(next)
+    Ok((next, not_recorded))
 }
 
 #[cfg(test)]
@@ -281,7 +289,7 @@ mod t {
     }
 
     fn measurement(metrics: Metrics, with_mutants: bool) -> Measurement {
-        Measurement { tree: "t".into(), with_mutants, snapshot: None, suites: vec![suite("s", metrics)] }
+        Measurement { tree: "t".into(), with_mutants, piece: false, snapshot: None, suites: vec![suite("s", metrics)] }
     }
 
     fn base(metrics: Metrics) -> Baseline {
@@ -315,7 +323,7 @@ mod t {
     fn ratchet_keeps_the_better_time_and_old_mutants_when_unmeasured() {
         let cfg = CheckConfig::default();
         let next =
-            ratchet(&base(m(10, 10.0, Some(2))), &measurement(m(8, 11.0, None), false), &cfg, &[], None).unwrap();
+            ratchet(&base(m(10, 10.0, Some(2))), &measurement(m(8, 11.0, None), false), &cfg, &[], None).unwrap().0;
         let s = &next.suites["s"];
         assert_eq!((s.uncovered_lines, s.test_seconds, s.mutants.unwrap().survived), (8, 10.0, 2));
     }
@@ -326,11 +334,11 @@ mod t {
         let (b, cur) = (base(m(10, 10.0, None)), measurement(m(12, 10.0, None), false));
         assert!(ratchet(&b, &cur, &cfg, &[], None).is_err());
         assert!(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None).is_err());
-        let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap();
+        let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap().0;
         assert_eq!(next.suites["s"].uncovered_lines, 12);
         assert_eq!(next.loosened[0].reason, "generated code");
         // A loosened bound that did not rise is not recorded as raised.
         let same = ratchet(&b, &measurement(m(10, 10.0, None), false), &cfg, &[Bound::UncoveredLines], Some("x"));
-        assert!(same.unwrap().loosened.is_empty());
+        assert!(same.unwrap().0.loosened.is_empty());
     }
 }

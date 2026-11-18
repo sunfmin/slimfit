@@ -113,6 +113,7 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let run = |lcov: String| Measurement {
         tree: "t".into(),
         with_mutants: false,
+        piece: false,
         snapshot: None,
         suites: vec![measure_with_coverage(
             "rust",
@@ -131,11 +132,11 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let cfg = CheckConfig::default();
     for (first, second) in [(&reached, &missed), (&missed, &reached)] {
         let mut base = Baseline::default();
-        base = ratchet(&base, first, &cfg, &[], None).unwrap();
+        base = ratchet(&base, first, &cfg, &[], None).unwrap().0;
         for m in [second, first, second] {
             let v = check(&base, m, &cfg);
             assert!(v.ok && v.improved.is_empty(), "{v:?}");
-            base = ratchet(&base, m, &cfg, &[], None).unwrap();
+            base = ratchet(&base, m, &cfg, &[], None).unwrap().0;
             assert_eq!(base.suites["rust"].uncovered_lines, uncovered(first));
         }
     }
