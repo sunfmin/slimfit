@@ -660,8 +660,15 @@ mod t {
             std::fs::rename(repo.join(f), repo.join("sub").join(f)).unwrap();
         }
         cfg.suites[0].root = "sub".into();
+        // A report found by a glob.
+        let glob = "$SLIMFIT_OUT/mutants.out/outcome*.json";
+        cfg.suites[0].overrides.mutants_report =
+            Some(crate::config::Report { format: crate::formats::MutantsFormat::CargoMutants, path: glob.into() });
         let (m, args) = run(repo, &cfg, &Baseline::default(), Mutants::Change);
-        assert_eq!(m.suites[0].mutated.as_ref().unwrap().files, ["sub/src/lib.rs"]);
+        let mutated = m.suites[0].mutated.as_ref().unwrap();
+        assert_eq!(mutated.files, ["sub/src/lib.rs"]);
+        assert_eq!(mutated.change, MutantCounts::of(&m.suites[0].mutants));
+        assert!(!m.suites[0].mutants.is_empty());
         assert!(args.unwrap().starts_with("--in-diff "));
         let patch = std::fs::read_to_string(repo.join(OUT).join("rust/change.diff")).unwrap();
         assert!(patch.contains("+++ b/src/lib.rs"), "{patch}");
