@@ -455,3 +455,30 @@ mod tests {
         assert!(first[2] < at("THE LOOP"));
     }
 }
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::{ensure_gitignore, measure::OUT};
+
+    /// The output directory is ignored once: added after any text (on its own
+    /// line), never twice, and an existing `/.../` entry counts.
+    #[test]
+    fn ensure_gitignore_adds_the_output_dir_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(".gitignore");
+        let after = |text: Option<&str>| {
+            match text {
+                Some(t) => std::fs::write(&file, t).unwrap(),
+                None => _ = std::fs::remove_file(&file),
+            }
+            ensure_gitignore(dir.path()).unwrap();
+            std::fs::read_to_string(&file).unwrap()
+        };
+        assert_eq!(after(None), format!("{OUT}\n"));
+        assert_eq!(after(Some("target")), format!("target\n{OUT}\n"));
+        assert_eq!(after(Some("target\n")), format!("target\n{OUT}\n"));
+        for kept in [format!("a\n {OUT} \nb"), format!("/{OUT}/\nb\n"), format!("b\n/{OUT}/")] {
+            assert_eq!(after(Some(&kept)), kept);
+        }
+    }
+}

@@ -173,3 +173,29 @@ pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirty: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each status counts in its own field, per file and in the sum of the files.
+    #[test]
+    fn mutant_counts_count_each_status_per_file_and_in_sum() {
+        let m = |file: &str, status| Mutant {
+            file: file.into(),
+            line: 1,
+            description: String::new(),
+            status,
+            killed_by: None,
+        };
+        use MutantStatus::*;
+        let all =
+            [m("a", Killed), m("a", Unviable), m("a", Unviable), m("b", Survived), m("b", Unviable), m("b", Killed)];
+        let c = |killed, survived, unviable| MutantCounts { killed, survived, unviable };
+        let by_file = MutantCounts::by_file(&all);
+        assert_eq!(by_file["a"], c(1, 0, 2));
+        assert_eq!(by_file["b"], c(1, 1, 1));
+        assert_eq!(MutantCounts::sum(by_file.values()), c(2, 1, 3));
+        assert_eq!(MutantCounts::of(&all), c(2, 1, 3));
+    }
+}

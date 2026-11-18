@@ -1,17 +1,17 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 2781,
-      "test_lines": 772,
-      "tests": 32,
+      "prod_lines": 2987,
+      "test_lines": 906,
+      "tests": 39,
       "failures": 0,
       "test_seconds": 1.508,
-      "covered_lines": 1257,
-      "uncovered_lines": 341,
+      "covered_lines": 1382,
+      "uncovered_lines": 332,
       "mutants": {
-        "killed": 417,
-        "survived": 147,
-        "unviable": 44
+        "killed": 456,
+        "survived": 141,
+        "unviable": 46
       },
       "mutant_files": {
         "src/config.rs": {
@@ -25,9 +25,9 @@
           "unviable": 0
         },
         "src/formats/mutants.rs": {
-          "killed": 29,
+          "killed": 52,
           "survived": 1,
-          "unviable": 0
+          "unviable": 1
         },
         "src/formats/tests.rs": {
           "killed": 20,
@@ -45,8 +45,8 @@
           "unviable": 1
         },
         "src/load.rs": {
-          "killed": 5,
-          "survived": 1,
+          "killed": 9,
+          "survived": 0,
           "unviable": 3
         },
         "src/loc.rs": {
@@ -55,24 +55,24 @@
           "unviable": 1
         },
         "src/main.rs": {
-          "killed": 4,
-          "survived": 21,
+          "killed": 6,
+          "survived": 19,
           "unviable": 1
         },
         "src/measure.rs": {
-          "killed": 76,
+          "killed": 79,
           "survived": 21,
           "unviable": 13
         },
         "src/model.rs": {
-          "killed": 15,
-          "survived": 3,
+          "killed": 18,
+          "survived": 0,
           "unviable": 0
         },
         "src/ratchet.rs": {
-          "killed": 59,
+          "killed": 63,
           "survived": 11,
-          "unviable": 5
+          "unviable": 6
         },
         "src/report.rs": {
           "killed": 0,
@@ -97,6 +97,6 @@
     }
   ],
   "mutants_at": {
-    "commit": "775196f0d6da08ffc1a3eb353162b9eb30e882a8"
+    "commit": "2bdaa4ab6c9cf0ba6b936075f92ec38e6652de5d"
   }
 }
