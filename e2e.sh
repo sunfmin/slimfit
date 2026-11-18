@@ -16,6 +16,12 @@ cargo build --release -q
 bin="$PWD/target/release/slimfit"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Gates run without a shell rc, so JAVA_HOME may be unset: ask macOS for a
+# JDK 21 (-F: fail rather than fall back to another version). An explicit
+# JAVA_HOME wins.
+if [ -z "${JAVA_HOME:-}" ] && [ -x /usr/libexec/java_home ]; then
+  JAVA_HOME=$(/usr/libexec/java_home -F -v 21 2>/dev/null) && export JAVA_HOME || unset JAVA_HOME
+fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 needs() {
