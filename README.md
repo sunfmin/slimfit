@@ -41,6 +41,6 @@ Redundant tests can be found only where the mutation tool records which test kil
 
 ## Develop
 
-- `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself).
-- `./slow.sh`: the fast gate, slimfit's own mutants, and the Rust sample end to end. `E2E_LANGS="go swift" ./slow.sh` runs those languages instead; `E2E_LANGS=all ./slow.sh` runs every language whose toolchain is present.
-- `./e2e.sh [rust|go|typescript|kotlin|swift]...`: end to end on its own; no arguments means every language.
+- `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself). Its tests run every preset end to end against stand-ins for the tools (`tests/standins.rs`, `examples/standin/`), so they need no toolchain but Rust.
+- `./slow.sh`: the fast gate and slimfit's own mutants. `E2E_LANGS="rust go" ./slow.sh` also runs those languages' real toolchains end to end, mutants included; `E2E_LANGS=all ./slow.sh` every language whose toolchain is present.
+- `./e2e.sh [rust|go|typescript|kotlin|swift]...`: the real toolchains end to end on their own; no arguments means every language.

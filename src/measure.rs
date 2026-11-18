@@ -207,6 +207,14 @@ fn measure_suite(
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
 
+    // Reports left by an earlier run would be read as this run's.
+    for old in report_paths(&root, &out, &suite.tests_report)?.into_iter().chain(report_paths(
+        &root,
+        &out,
+        &suite.coverage_report,
+    )?) {
+        std::fs::remove_file(old)?;
+    }
     let started = Instant::now();
     let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
     let (log, _) = run?;
@@ -314,7 +322,7 @@ fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf
         .arg("-c")
         .arg(command)
         .current_dir(root)
-        .env("SLIMFIT_OUT", out)
+        .env(crate::tools::OUT_ENV, out)
         .stdout(file.try_clone()?)
         .stderr(file)
         .status()
@@ -324,7 +332,7 @@ fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf
 }
 
 fn report_pattern<F>(root: &Path, out: &Path, report: &Report<F>) -> String {
-    let pattern = report.path.replace("$SLIMFIT_OUT", &out.to_string_lossy());
+    let pattern = report.path.replace(&format!("${}", crate::tools::OUT_ENV), &out.to_string_lossy());
     if Path::new(&pattern).is_absolute() { pattern } else { root.join(&pattern).to_string_lossy().into_owned() }
 }
 
@@ -339,7 +347,10 @@ fn read_report<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Re
 /// The report's files, each with its path.
 fn read_reports<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Result<Vec<(PathBuf, String)>> {
     let pattern = report_pattern(root, out, report);
-    let paths = expand(&pattern)?;
+    // An empty file is no report: a shell redirect creates one even when
+    // the tool behind it is missing.
+    let paths: Vec<PathBuf> =
+        expand(&pattern)?.into_iter().filter(|p| p.metadata().is_ok_and(|m| m.len() > 0)).collect();
     if paths.is_empty() {
         let tail = std::fs::read_to_string(log).unwrap_or_default();
         let tail: Vec<&str> = tail.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();

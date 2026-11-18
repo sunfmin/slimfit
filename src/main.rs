@@ -10,6 +10,7 @@ mod model;
 mod ratchet;
 mod report;
 mod tasks;
+mod tools;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
