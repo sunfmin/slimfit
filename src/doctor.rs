@@ -67,12 +67,7 @@ impl Host {
         let mut load = [0f64; 3];
         // SAFETY: `load` has room for the 3 samples asked for.
         let n = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
-        let mut path: Vec<PathBuf> =
-            std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-        let cargo_home = std::env::var_os("CARGO_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cargo")));
-        path.extend(cargo_home.map(|h| h.join("bin")));
+        let path = tool_path();
         let jdk = jdk(&path);
         Host {
             load: if n >= 1 { load[0] } else { 0.0 },
@@ -87,7 +82,19 @@ impl Host {
     }
 }
 
-fn find(path: &[PathBuf], exe: &str) -> Option<PathBuf> {
+/// Where tools are looked for: PATH, then cargo's own bin directory, where
+/// cargo finds its subcommands too.
+pub fn tool_path() -> Vec<PathBuf> {
+    let mut path: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cargo")));
+    path.extend(cargo_home.map(|h| h.join("bin")));
+    path
+}
+
+pub fn find(path: &[PathBuf], exe: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     path.iter()
         .map(|d| d.join(exe))

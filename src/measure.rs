@@ -857,6 +857,8 @@ pub(crate) mod t {
     #[test]
     fn mutants_run_on_the_lines_changed_since_the_tree_last_measured() {
         let (dir, mut cfg) = sample_repo();
+        // Every test on every mutant: which tests run is not this test's.
+        cfg.suites[0].overrides.mutants_tests = Some(MutantTests::All);
         let repo = dir.path();
         let base = Baseline { mutants_at: snapshot(repo).unwrap(), ..Default::default() };
         let text = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
@@ -1017,6 +1019,24 @@ pub(crate) mod t {
         let reach = m.reach.unwrap();
         assert_eq!(reach.functions["src/a.rs"], [(1, vec![0, 1]), (2, vec![1])].into());
         assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::x", "calc::y", "calc::z"]);
+    }
+
+    /// No reach_report configured, or none written: nothing is recorded,
+    /// and every mutant runs every test. One that is not the format
+    /// configured is refused, with its fix.
+    #[test]
+    fn a_reach_report_is_read_when_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut suite = crate::config::preset(crate::config::Preset::Rust);
+        let read = |s: &Suite| read_reach(dir.path(), dir.path(), s);
+        assert!(read(&suite).unwrap().is_none());
+        std::fs::write(dir.path().join(crate::tools::REACH), "test calc\tx\n").unwrap();
+        assert_eq!(read(&suite).unwrap().unwrap().len(), 1);
+        std::fs::write(dir.path().join(crate::tools::REACH), "garbled\n").unwrap();
+        let f = crate::fault::of(read(&suite).unwrap_err());
+        assert!(f[0].fault.starts_with("its reach_report is not llvm-profdata"), "{f:?}");
+        suite.reach_report.path = String::new();
+        assert!(read(&suite).unwrap().is_none());
     }
 
     #[test]

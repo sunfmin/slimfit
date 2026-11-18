@@ -19,7 +19,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 /// The environment variable naming the plan the shim reads.
@@ -201,16 +200,12 @@ pub fn timeouts(plan: &Plan, chosen: Option<&BTreeSet<u32>>) -> String {
 /// (`nextest run`, not `--no-run`) runs only the mutant's tests; anything
 /// else goes to the real nextest as it came.
 pub fn shim(args: Vec<OsString>) -> ! {
-    let Some(real) = std::env::var_os(NEXTEST_ENV) else {
-        eprintln!("slimfit: {NEXTEST_ENV} is not set: the real cargo-nextest is unknown");
-        std::process::exit(101);
-    };
     let mut args: Vec<OsString> = args.into_iter().skip(1).collect();
     let test_run = args.first().is_some_and(|a| a == "nextest")
         && args.get(1).is_some_and(|a| a == "run")
         && !args.iter().any(|a| a == "--no-run");
     if test_run {
-        match narrowed(&args) {
+        match narrowed() {
             Ok(Some(extra)) => {
                 let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
                 args.splice(at..at, extra);
@@ -219,14 +214,25 @@ pub fn shim(args: Vec<OsString>) -> ! {
             Err(e) => eprintln!("slimfit: {e:#}: every test runs"),
         }
     }
-    let e = std::process::Command::new(&real).args(&args).exec();
-    eprintln!("slimfit: running {}: {e}", Path::new(&real).display());
-    std::process::exit(101);
+    // Not exec: this process must exit to write its own coverage profile.
+    let code = real(&args).unwrap_or_else(|e| {
+        eprintln!("slimfit: {e:#}");
+        101
+    });
+    std::process::exit(code);
+}
+
+/// Runs the real nextest with `args`: its exit code.
+fn real(args: &[OsString]) -> Result<i32> {
+    let real =
+        std::env::var_os(NEXTEST_ENV).context(format!("{NEXTEST_ENV} is not set: the real {SHIM} is unknown"))?;
+    let status = std::process::Command::new(&real).args(args).status();
+    Ok(status.with_context(|| format!("running {}", Path::new(&real).display()))?.code().unwrap_or(101))
 }
 
 /// The arguments that narrow this run to the mutant's tests, each under its
 /// timeout; `None` when no test runs the mutant's function, so none runs.
-fn narrowed(_args: &[OsString]) -> Result<Option<Vec<OsString>>> {
+fn narrowed() -> Result<Option<Vec<OsString>>> {
     let path = PathBuf::from(std::env::var_os(PLAN_ENV).context(format!("{PLAN_ENV} is not set"))?);
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let plan: Plan = serde_json::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
@@ -244,18 +250,10 @@ fn narrowed(_args: &[OsString]) -> Result<Option<Vec<OsString>>> {
     Ok(Some(extra))
 }
 
-/// The real `cargo-nextest`: on PATH outside `shim_dir`, else in cargo's
-/// bin directory, as cargo looks for its subcommands.
+/// The real `cargo-nextest`, where cargo would find it, outside `shim_dir`.
 pub fn real_nextest(shim_dir: &Path) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let cargo_home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cargo")));
-    std::env::split_paths(&path)
-        .filter(|d| d != shim_dir)
-        .chain(cargo_home.map(|h| h.join("bin")))
-        .map(|d| d.join(SHIM))
-        .find(|p| p.is_file())
+    let path: Vec<PathBuf> = crate::doctor::tool_path().into_iter().filter(|d| d != shim_dir).collect();
+    crate::doctor::find(&path, SHIM)
 }
 
 #[cfg(test)]
@@ -327,7 +325,8 @@ mod tests {
         );
         assert_eq!(choose_at(&plan, "    2", "    3").0, None, "a function of unknown tests");
         assert!(choose_at(&plan, "// c", "// d").1.contains("lib.rs:8 is in no function"));
-        let plan = Plan { functions: vec![f(5, 7, Some(vec![]))], ..plan };
+        let gone = PlanFunction { file: "gone.rs".into(), start: 1, end: 9, tests: Some(vec![0]) };
+        let plan = Plan { functions: vec![gone, f(5, 7, Some(vec![]))], ..plan };
         assert_eq!(choose(&plan, build.path()).0, None, "line 8 again");
         assert_eq!(choose_at(&plan, "    2", "    3").0, Some(BTreeSet::new()));
 

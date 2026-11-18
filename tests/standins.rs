@@ -500,9 +500,16 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // `cargo-nextest`), slimfit writes the plan and its shim.
     let lib = s.repo.join("src/lib.rs");
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
-    std::os::unix::fs::symlink(standin(), s.bin.join("cargo-nextest")).unwrap();
+    // No nextest to hand on to: every mutant runs every test, and stderr says why.
     s.take();
-    let check = run("check", &["--mutants"], 1);
+    let (_, _, stderr) = s.slimfit(&["next", "--mutants"]);
+    assert!(
+        stderr.contains("no cargo-nextest on PATH or in cargo's bin directory: every mutant runs every test"),
+        "{stderr}"
+    );
+    assert!(!s.take().iter().any(|c| c.args.contains(&"--list".to_string())), "listed with no nextest");
+    std::os::unix::fs::symlink(standin(), s.bin.join("cargo-nextest")).unwrap();
+    let check = run("check", &["--mutants", "--fresh"], 1);
     let plan: Value = serde_json::from_str(&s.read(".slimfit/out/rust/shim/plan.json")).unwrap();
     let tests = |f: &Value| -> Vec<String> {
         let names =
@@ -551,6 +558,25 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
     run("report", &["--points", "1"], 0);
+}
+
+/// slimfit run as `cargo-nextest` outside a mutants run (no plan, no real
+/// nextest named): it says so and fails, rather than pass a mutant untested.
+#[test]
+fn the_shim_without_its_plan_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let shim = tmp.path().join("cargo-nextest");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_slimfit"), &shim).unwrap();
+    let out = Command::new(&shim)
+        .args(["nextest", "run"])
+        .env_remove("SLIMFIT_SELECT")
+        .env_remove("SLIMFIT_NEXTEST")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(101), "{stderr}");
+    assert!(stderr.contains("SLIMFIT_SELECT is not set: every test runs"), "{stderr}");
+    assert!(stderr.contains("SLIMFIT_NEXTEST is not set: the real cargo-nextest is unknown"), "{stderr}");
 }
 
 /// Every key a command prints is named on its own page (`slimfit <command>
