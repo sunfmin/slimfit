@@ -22,7 +22,11 @@ The measurement records the ratio as `load_slowdown`.
 
 In `load.rs`'s test, a fixed CPU workload ran 2.3-2.5× slower by the wall
 clock beside 2 × cores `yes` processes (18 cores, 6 of them faster, on a host
-already at load ~30). The probe measured the same factor to within 3%. In
+already at load ~30). The probe measured the same factor to within 3%. The
+test holds the normalised time within the tolerance both of the unloaded
+run's and of the work's own CPU time, the time it takes on an idle core.
+The test spawns one `yes` per core, not two: it runs once per mutant, and
+the host it loads is the one everyone shares. In
 release builds with a hog of threads, it held to within 20% in 6 of 6 runs,
 while the "unloaded" run itself was slowed up to 4× by the host. The hog
 has to be other processes: threads in the test binary share llvm-cov's

@@ -70,7 +70,7 @@ mod tests {
         let tolerance = crate::config::CheckConfig::default().time_tolerance;
         let near = |a: f64, b: f64| (a - b).abs() <= b * tolerance;
         let (unloaded, unloaded_cpu) = normalised_and_cpu_seconds();
-        let mut hogs: Vec<_> = (0..2 * std::thread::available_parallelism().map_or(4, |n| n.get()))
+        let mut hogs: Vec<_> = (0..std::thread::available_parallelism().map_or(4, |n| n.get()))
             .map(|_| std::process::Command::new("yes").stdout(std::process::Stdio::null()).spawn().unwrap())
             .collect();
         let (loaded, loaded_cpu) = normalised_and_cpu_seconds();
