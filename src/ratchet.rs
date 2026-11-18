@@ -50,7 +50,7 @@ pub enum Bound {
     /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
     #[value(verbatim_doc_comment)]
     UncoveredLines,
-    /// Mutants no test kills in the lines the change added: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
+    /// Mutants no test kills in the changed lines: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
 }
@@ -175,7 +175,7 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             list("uncovered")
         ),
         Bound::SurvivedMutants => format!(
-            "mutants survive in the lines this change added: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
+            "mutants survive in the changed lines: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
         ),
     }
