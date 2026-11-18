@@ -558,7 +558,7 @@ mod t {
             preset = "rust"
             test_command = "cp {r}/junit.xml {r}/lcov.info \"$SLIMFIT_OUT\""
             tests_report = {{ format = "junit", path = "$SLIMFIT_OUT/junit.xml" }}
-            mutants_command = "f() {{ echo \"$@\" > \"$SLIMFIT_OUT/args\"; mkdir -p \"$SLIMFIT_OUT/mutants.out\"; cp -R {r}/outcomes.json {r}/log \"$SLIMFIT_OUT/mutants.out\"; }}; f"
+            mutants_command = "f() {{ echo \"$@\" > \"$SLIMFIT_OUT/args\"; mkdir -p \"$SLIMFIT_OUT/mutants.out\"; cp {r}/outcomes.json \"$SLIMFIT_OUT/mutants.out\"; ln -sfn {r}/log \"$SLIMFIT_OUT/mutants.out/log\"; }}; f"
             "#
         ))
         .unwrap();
