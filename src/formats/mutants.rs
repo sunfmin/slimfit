@@ -352,14 +352,18 @@ mod t {
         let dir = tempfile::tempdir().unwrap();
         let log = "  START [ ] (1/2) c t::quick\n  START [ ] (2/2) c t::hangs\nTRY 1 FAIL [ 0.01s] (1/2) c t::quick\n   PASS [ 0.01s] (1/2) c t::quick\n   SLOW [> 60s] (2/2) c t::hangs\n";
         std::fs::write(dir.path().join("hang.log"), log).unwrap();
-        let outcome = |summary: &str, tool: &str| {
+        let outcome = |summary: &str, phase: &str, tool: &str| {
             format!(
                 r#"{{"scenario":{{"Mutant":{{"file":"src/a.rs","name":"src/a.rs:1:1: replace f with ()"}}}},"summary":"{summary}","log_path":"hang.log",
-                    "phase_results":[{{"phase":"Test","argv":["cargo","{tool}","run","--no-fail-fast"]}}]}}"#
+                    "phase_results":[{{"phase":"{phase}","argv":["cargo","{tool}","run","--no-fail-fast"]}}]}}"#
             )
         };
         let report = |tool: &str| {
-            let text = format!(r#"{{"outcomes":[{},{}]}}"#, outcome("Timeout", tool), outcome("Unviable", tool));
+            let text = format!(
+                r#"{{"outcomes":[{},{}]}}"#,
+                outcome("Timeout", "Test", tool),
+                outcome("Unviable", "Build", tool)
+            );
             read(MutantsFormat::CargoMutants, &[(dir.path().join("outcomes.json"), text)]).unwrap()
         };
         let r = report("nextest");
