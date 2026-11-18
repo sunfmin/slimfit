@@ -529,6 +529,23 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let calls = s.take();
     let listed = calls.iter().filter(|c| c.step == "cargo mutants" && c.args.contains(&"--list".to_string())).count();
     assert_eq!(listed, 1, "{calls:?}");
+    // cargo-mutants' test run of each of the 17 listed mutants reaches the
+    // real nextest through the shim: `add`'s 5 with its 3 tests, `is_adult`'s
+    // 3 with its one, each under its timeout; `unused`'s 9 run none.
+    let runs = calls.iter().filter(|c| c.step == "cargo nextest").count();
+    let filters: Vec<&str> = calls
+        .iter()
+        .filter(|c| c.step == "cargo-nextest nextest")
+        .map(|c| {
+            assert!(c.args.iter().any(|a| a.starts_with("slimfit:") && a.ends_with(".toml")), "{c:?}");
+            c.args.iter().skip_while(|a| *a != "-E").nth(1).map(String::as_str).unwrap_or("")
+        })
+        .collect();
+    // In the order the tests ran, as the reach report lists them.
+    let adds = "(binary_id(=calc) & test(=tests::slow)) | (binary_id(=calc) & test(=tests::adds)) | \
+                (binary_id(=calc) & test(=tests::adds_again))";
+    let adult = "(binary_id(=calc) & test(=tests::adult))";
+    assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);

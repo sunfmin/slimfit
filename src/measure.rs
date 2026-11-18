@@ -987,6 +987,38 @@ pub(crate) mod t {
         assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (5.645, 1.235, 9.877));
     }
 
+    /// Every function of a source file's coverage is keyed by its first
+    /// line, with the tests that ran it by symbol; a test whose profile was
+    /// unreadable ran them all; test code is left out.
+    #[test]
+    fn reach_keys_each_source_function_by_its_first_line() {
+        let mut totals = Totals::default();
+        let classifier = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
+        let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
+        totals.files = classifier.count(&["src/a.rs".to_string()], |_| Some(text.into())).files;
+        let f = |name: &str, line| Function {
+            file: "/r/src/a.rs".into(),
+            name: name.into(),
+            line,
+            hits: 0,
+            symbol: format!("_R{name}"),
+        };
+        let coverage = Coverage { lines: Default::default(), functions: vec![f("a", 1), f("b", 2), f("t", 5)] };
+        let t = |name: &str, ran: Option<&[&str]>| formats::TestReach {
+            binary: "calc".into(),
+            name: name.into(),
+            functions: ran.map(|r| r.iter().map(|s| s.to_string()).collect()),
+        };
+        let reach = vec![t("x", Some(&["_Ra", "_Rt"])), t("y", None), t("z", Some(&["_Rgone"]))];
+        let timing = Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 };
+        let suite = crate::config::preset(crate::config::Preset::Rust);
+        let resolver = Resolver::new(Path::new("/r"), &totals);
+        let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);
+        let reach = m.reach.unwrap();
+        assert_eq!(reach.functions["src/a.rs"], [(1, vec![0, 1]), (2, vec![1])].into());
+        assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::x", "calc::y", "calc::z"]);
+    }
+
     #[test]
     fn resolver_matches_longest_suffix() {
         let mut totals = Totals::default();

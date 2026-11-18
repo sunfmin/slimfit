@@ -469,11 +469,14 @@ mod tests {
             preset = "go"
             root = "core"
             test_command = "make test"
+            reach_report = { format = "llvm-profdata", path = "reach.txt" }
+            mutants_tests = "all"
             "#,
         )
         .unwrap();
         let r = s.suites[0].resolve();
         assert_eq!(r.test_command, "make test");
+        assert_eq!((r.reach_report.path.as_str(), r.mutants_tests), ("reach.txt", MutantTests::All));
         assert_eq!(r.tests_report.format, TestsFormat::GoTestJson);
         assert_eq!(r.root, "core");
     }
