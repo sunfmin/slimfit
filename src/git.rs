@@ -1,6 +1,8 @@
 //! The few git questions slimfit asks, each one command.
 
+use crate::model::Snapshot;
 use anyhow::{Context, Result, bail};
+use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -46,6 +48,33 @@ pub fn tree_key(repo: &Path) -> Result<String> {
         }
     }
     Ok(format!("{}+{:016x}", head.trim(), h.finish()))
+}
+
+/// HEAD and the files that differ from it, outside `.slimfit/`; `None`
+/// before the first commit.
+pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
+    let Ok(head) = run(repo, &["rev-parse", "--verify", "HEAD"]) else { return Ok(None) };
+    let commit = head.trim().to_string();
+    let dirty = differing(repo, &commit)?.into_iter().collect();
+    Ok(Some(Snapshot { commit, dirty }))
+}
+
+/// The files whose contents may differ between the tree `then` names and
+/// the working tree now: those changed since its commit, and those that
+/// differed from it then. Fails when the commit is not in this repository.
+pub fn changed_since(repo: &Path, then: &Snapshot) -> Result<BTreeSet<String>> {
+    let mut out = differing(repo, &then.commit)?;
+    out.extend(then.dirty.iter().cloned());
+    Ok(out)
+}
+
+/// Files of the working tree that differ from `commit` (both sides of a
+/// rename, deleted ones too), plus untracked ones.
+fn differing(repo: &Path, commit: &str) -> Result<BTreeSet<String>> {
+    let exclude = ":(exclude).slimfit";
+    let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", commit, "--", ".", exclude])?;
+    let untracked = run(repo, &["ls-files", "-o", "--exclude-standard", "-z", "--", ".", exclude])?;
+    Ok(diff.split('\0').chain(untracked.split('\0')).filter(|p| !p.is_empty()).map(String::from).collect())
 }
 
 /// The blobs of `commit`: (path, contents), read through one `cat-file --batch`.

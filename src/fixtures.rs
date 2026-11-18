@@ -65,7 +65,7 @@ fn measure_with_coverage(
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    reduce(&suite, &totals, &resolver, t, c, Some(m), 0.0)
+    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), 0.0)
 }
 
 /// What every sample must show, whatever the language.
@@ -113,6 +113,7 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let run = |lcov: String| Measurement {
         tree: "t".into(),
         with_mutants: false,
+        snapshot: None,
         suites: vec![measure_with_coverage(
             "rust",
             Preset::Rust,
