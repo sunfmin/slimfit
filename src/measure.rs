@@ -44,6 +44,9 @@ pub enum Mutants {
 pub struct Options {
     pub mutants: Mutants,
     pub fresh: bool,
+    /// Write nothing in the repo: the commands write their reports to a
+    /// directory of their own outside it, and the measurement is not cached.
+    pub dry_run: bool,
 }
 
 /// The measurement of the tree as it is now: from the cache when it was
@@ -68,6 +71,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
     }) {
         return Ok(m.clone());
     }
+    let scratch = Scratch::new(repo, opts.dry_run)?;
     let mut tested = tested.map(|m| m.suites.into_iter()).into_iter().flatten();
     // Only `--all-mutants` runs every mutant: a suite whose tool cannot be
     // limited to a change refuses `--mutants` before anything runs.
@@ -103,7 +107,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             }
         );
         let mutants = with_mutants.then_some((&mut change, opts.mutants == Mutants::All));
-        let r = measure_suite(repo, &wt.files, &suite, mutants, tested.next());
+        let r = measure_suite(repo, &scratch.0, &wt.files, &suite, mutants, tested.next());
         suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
     }
     // Every suite is measured, so one that fails does not hide another's faults.
@@ -115,8 +119,9 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
         since: if with_mutants { base.mutants_at.clone() } else { None },
         suites,
     };
-    std::fs::create_dir_all(repo.join(OUT))?;
-    std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
+    if !opts.dry_run {
+        std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
+    }
     Ok(m)
 }
 
@@ -126,6 +131,30 @@ pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
     let head = git::head(repo)?;
     let tree = git::write_tree(repo, &head)?;
     Ok(head.commit.map(|commit| Snapshot { commit, tree: Some(tree) }))
+}
+
+/// Where the suites' commands write: `.slimfit/out`, or in a dry run a
+/// directory outside the repo, removed when the measurement is done.
+struct Scratch(PathBuf, bool);
+
+impl Scratch {
+    fn new(repo: &Path, dry_run: bool) -> Result<Self> {
+        let dir = if dry_run {
+            std::env::temp_dir().join(format!("slimfit-dry-run-{}", std::process::id()))
+        } else {
+            repo.join(OUT)
+        };
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self(dir, dry_run))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.1 {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 }
 
 /// The change, taken the first time a suite's mutants need it: a run that
@@ -274,13 +303,14 @@ fn quoted(s: &str) -> String {
 
 fn measure_suite(
     repo: &Path,
+    scratch: &Path,
     files: &[String],
     suite: &Suite,
     mutants: Option<(&mut Lazy, bool)>,
     tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
-    let out = repo.join(OUT).join(&suite.name);
+    let out = scratch.join(&suite.name);
     let classifier = Classifier::new(suite)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
@@ -731,7 +761,7 @@ pub(crate) mod t {
     fn run(repo: &Path, cfg: &Config, base: &Baseline) -> (Measurement, Option<String>) {
         let args = repo.join(OUT).join("rust/args");
         let _ = std::fs::remove_file(&args);
-        let m = current(repo, cfg, base, &Options { mutants: Mutants::Change, fresh: false }).unwrap();
+        let m = current(repo, cfg, base, &Options { mutants: Mutants::Change, fresh: false, dry_run: false }).unwrap();
         (m, std::fs::read_to_string(args).ok())
     }
 
@@ -804,7 +834,12 @@ pub(crate) mod t {
         // No mutants_at and no upstream: refused, no mutant run.
         let refused = |cfg: &Config| {
             let _ = std::fs::remove_file(repo.join(OUT).join("rust/args"));
-            let e = current(repo, cfg, &Baseline::default(), &Options { mutants: Mutants::Change, fresh: false });
+            let e = current(
+                repo,
+                cfg,
+                &Baseline::default(),
+                &Options { mutants: Mutants::Change, fresh: false, dry_run: false },
+            );
             let faults = crate::fault::of(e.unwrap_err());
             assert!(!repo.join(OUT).join("rust/args").exists(), "a mutant ran");
             faults.into_iter().map(|f| f.fault).collect::<Vec<_>>().join("\n")
@@ -926,7 +961,7 @@ mod faults {
         )
         .unwrap();
         cfg.suites.extend(bad.suites);
-        let opts = Options { mutants: Mutants::None, fresh: true };
+        let opts = Options { mutants: Mutants::None, fresh: true, dry_run: false };
         let faults = crate::fault::of(current(dir.path(), &cfg, &Baseline::default(), &opts).unwrap_err());
         let got: Vec<(&str, &str)> =
             faults.iter().map(|f| (f.fault.split(':').next().unwrap(), f.fix.as_str())).collect();

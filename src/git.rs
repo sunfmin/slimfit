@@ -107,7 +107,8 @@ pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&head.scratch),
         Err(e) => return Err(e.into()),
     }
-    run_with_index(repo, Some(&head.scratch), &["add", "-A", "--", "."])?;
+    // slimfit's own files are not the code: writing the baseline moves no tree.
+    run_with_index(repo, Some(&head.scratch), &["add", "-A", "--", ".", ":(exclude).slimfit"])?;
     Ok(run_with_index(repo, Some(&head.scratch), &["write-tree"])?.trim().to_string())
 }
 

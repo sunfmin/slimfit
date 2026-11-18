@@ -121,10 +121,9 @@ pub fn load(repo: &Path) -> Result<Baseline> {
     }
 }
 
-pub fn save(repo: &Path, b: &Baseline) -> Result<()> {
-    std::fs::create_dir_all(repo.join(".slimfit"))?;
-    std::fs::write(repo.join(FILE), serde_json::to_string_pretty(b)? + "\n")?;
-    Ok(())
+/// The baseline file's text.
+pub fn render(b: &Baseline) -> Result<String> {
+    Ok(serde_json::to_string_pretty(b)? + "\n")
 }
 
 /// A bound's value in a baseline's (or a measurement's) metrics; none for
