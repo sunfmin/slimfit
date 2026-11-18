@@ -33,7 +33,25 @@ pub struct Task {
     pub accept: String,
 }
 
-const PER_KIND: usize = 5;
+/// How many tasks of one kind in one suite are listed; the rest are only
+/// counted.
+fn per_kind(kind: TaskKind) -> usize {
+    if kind == TaskKind::Deepen { 3 } else { 5 }
+}
+
+/// The tasks worth listing: the first few of each kind in each suite, in
+/// order. Count before capping: what is left is every task, not the list.
+pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
+    let mut seen: BTreeMap<(String, TaskKind), usize> = BTreeMap::new();
+    tasks
+        .into_iter()
+        .filter(|t| {
+            let n = seen.entry((t.suite.clone(), t.kind)).or_default();
+            *n += 1;
+            *n <= per_kind(t.kind)
+        })
+        .collect()
+}
 
 pub fn all(repo: &Path, cfg: &Config, m: &Measurement) -> Result<Vec<Task>> {
     let mut out = Vec::new();
@@ -71,7 +89,6 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
     s.uncovered
         .iter()
         .filter(|sp| sp.lines >= 2)
-        .take(PER_KIND)
         .map(|sp| Task {
             kind: TaskKind::Uncovered,
             suite: s.suite.clone(),
@@ -145,7 +162,6 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
     spare.sort_by(|a, b| b.2.unwrap_or(0.0).total_cmp(&a.2.unwrap_or(0.0)).then(a.0.cmp(b.0)));
     spare
         .into_iter()
-        .take(PER_KIND)
         .map(|(t, ks, secs)| Task {
             kind: TaskKind::RedundantTest,
             suite: s.suite.clone(),
@@ -171,7 +187,6 @@ fn slow(s: &SuiteMeasurement) -> Vec<Task> {
     tests.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
     tests
         .into_iter()
-        .take(PER_KIND)
         .map(|t| Task {
             kind: TaskKind::SlowTest,
             suite: s.suite.clone(),
@@ -196,7 +211,6 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
     files.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
     files
         .into_iter()
-        .take(PER_KIND)
         .map(|(file, ms)| Task {
             kind: TaskKind::SurvivingMutant,
             suite: s.suite.clone(),
@@ -233,7 +247,6 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
     hot.sort_by_key(|(f, n, l)| (std::cmp::Reverse(n * l), f.clone()));
     Ok(hot
         .into_iter()
-        .take(3)
         .map(|(f, n, l)| Task {
             kind: TaskKind::Deepen,
             suite: s.suite.clone(),
@@ -262,6 +275,28 @@ mod t {
             status,
             killed_by: Some(killers.iter().map(|s| s.to_string()).collect()),
         }
+    }
+
+    #[test]
+    fn cap_keeps_the_first_few_of_each_kind_in_each_suite() {
+        let task = |suite: &str, kind| Task {
+            kind,
+            suite: suite.into(),
+            summary: String::new(),
+            files: vec![],
+            evidence: Value::Null,
+            steps: String::new(),
+            accept: String::new(),
+        };
+        let mut all = Vec::new();
+        for suite in ["a", "b"] {
+            all.extend((0..7).map(|_| task(suite, TaskKind::Uncovered)));
+            all.extend((0..4).map(|_| task(suite, TaskKind::Deepen)));
+        }
+        let kept = cap(all);
+        let n = |suite: &str, kind| kept.iter().filter(|t| t.suite == suite && t.kind == kind).count();
+        assert_eq!((n("a", TaskKind::Uncovered), n("a", TaskKind::Deepen)), (5, 3));
+        assert_eq!((n("b", TaskKind::Uncovered), n("b", TaskKind::Deepen)), (5, 3));
     }
 
     #[test]

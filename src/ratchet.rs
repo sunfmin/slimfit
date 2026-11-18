@@ -100,6 +100,16 @@ fn value(m: &Metrics, b: Bound) -> Option<f64> {
 fn limit(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
     match b {
         Bound::TestSeconds => base * (1.0 + cfg.time_tolerance) + cfg.time_slack,
+        Bound::UncoveredLines => base + cfg.coverage_slack as f64,
+        _ => base,
+    }
+}
+
+/// Below this a bound has improved. Coverage must drop by more than the
+/// slack, or a line that flaps would be locked in and then fail the next run.
+fn improved_below(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
+    match b {
+        Bound::UncoveredLines => base - cfg.coverage_slack as f64,
         _ => base,
     }
 }
@@ -153,7 +163,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
                     current: cur,
                     fix: fix(bound, s),
                 });
-            } else if cur < base_v - 1e-9 && bound != Bound::Failures {
+            } else if cur < improved_below(cfg, bound, base_v) - 1e-9 && bound != Bound::Failures {
                 v.improved.push(Change { suite: s.suite.clone(), metric: bound, baseline: base_v, current: cur });
             }
         }
@@ -215,6 +225,12 @@ pub fn ratchet(
             if !loosen.contains(&Bound::TestSeconds) {
                 metrics.test_seconds = metrics.test_seconds.min(old.test_seconds);
             }
+            if !loosen.contains(&Bound::UncoveredLines)
+                && metrics.uncovered_lines as f64
+                    >= improved_below(cfg, Bound::UncoveredLines, old.uncovered_lines as f64)
+            {
+                metrics.uncovered_lines = old.uncovered_lines;
+            }
             if metrics.mutants.is_none() {
                 metrics.mutants = old.mutants;
                 metrics.mutant_files = old.mutant_files.clone();
@@ -263,7 +279,7 @@ mod t {
     #[test]
     fn growth_of_a_bound_is_a_violation_and_shrinking_an_improvement() {
         let cfg = CheckConfig::default();
-        let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(11, 12.9, Some(1)), true), &cfg);
+        let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(12, 12.9, Some(1)), true), &cfg);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::UncoveredLines]);
         assert_eq!(v.improved.len(), 1);
         let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(10, 13.1, None), false), &cfg);

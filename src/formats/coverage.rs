@@ -72,9 +72,68 @@ fn lcov(text: &str, c: &mut Coverage) -> Result<()> {
 /// Rust symbols come mangled in llvm-cov output; anything else passes through.
 fn demangle(name: &str) -> String {
     match rustc_demangle::try_demangle(name) {
-        Ok(d) => format!("{d:#}"),
+        Ok(d) => rust_name(&format!("{d:#}")),
         Err(_) => name.to_string(),
     }
+}
+
+/// A demangled Rust path as a reader of the file names it: no crate path,
+/// no generic arguments, closures folded into the function they are in.
+/// `<a::Grok as a::Kind>::call::<T>` is `Grok::call`;
+/// `a::run::{closure#0}::{closure#0}` is `run (closure)`.
+fn rust_name(path: &str) -> String {
+    let segments = split_top(path, "::");
+    let closure = segments.iter().any(|s| s.starts_with("{closure"));
+    let mut names = segments.iter().filter(|s| !s.starts_with('<') && !s.starts_with('{')).map(|s| strip_generics(s));
+    let last = names.next_back();
+    let name = match (segments.first().filter(|s| s.starts_with('<')), last) {
+        (Some(qself), Some(f)) => format!("{}::{f}", self_type(qself)),
+        (Some(qself), None) => self_type(qself),
+        (None, Some(f)) => f,
+        (None, None) => path.to_string(),
+    };
+    if closure { format!("{name} (closure)") } else { name }
+}
+
+/// The type an `impl` block is for: `<a::B<T> as c::D>` is `B`.
+fn self_type(qself: &str) -> String {
+    let inner = qself.strip_prefix('<').and_then(|s| s.strip_suffix('>')).unwrap_or(qself);
+    let ty = split_top(inner, " as ").into_iter().next().unwrap_or(inner);
+    let ty = strip_generics(ty.trim_start_matches('&').trim_start_matches("mut "));
+    split_top(&ty, "::").last().map(|s| s.to_string()).unwrap_or(ty)
+}
+
+/// `s` split at each `sep` outside angle brackets.
+fn split_top<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
+    let (mut out, mut depth, mut start, mut prev) = (Vec::new(), 0i32, 0, ' ');
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' if prev != '-' => depth -= 1,
+            _ if depth == 0 && i >= start && s[i..].starts_with(sep) => {
+                out.push(&s[start..i]);
+                start = i + sep.len();
+            }
+            _ => {}
+        }
+        prev = ch;
+    }
+    out.push(&s[start..]);
+    out
+}
+
+fn strip_generics(s: &str) -> String {
+    let (mut out, mut depth, mut prev) = (String::new(), 0i32, ' ');
+    for ch in s.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' if prev != '-' => depth -= 1,
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+        prev = ch;
+    }
+    out
 }
 
 fn go_cover(text: &str, c: &mut Coverage) -> Result<()> {
@@ -156,6 +215,23 @@ mod t {
                 Function { file: "/r/src/a.rs".into(), name: "g".into(), line: 9, hits: 0 },
             ]
         );
+    }
+
+    #[test]
+    fn rust_names_drop_generics_crate_paths_and_closures() {
+        let cases = [
+            ("calc::tests::adds", "adds"),
+            (
+                "<factorium_harness::harness::grok::Grok as factorium_harness::harness::Kind>::call::<&mut serde_json::de::Deserializer<serde_json::read::StrRead>>",
+                "Grok::call",
+            ),
+            ("factorium::run::{closure#0}::{closure#0}", "run (closure)"),
+            ("<a::B<fn() -> u8>>::new", "B::new"),
+            ("<&mut a::W as core::fmt::Write>::write_str::{closure#0}", "W::write_str (closure)"),
+        ];
+        for (path, name) in cases {
+            assert_eq!(rust_name(path), name, "{path}");
+        }
     }
 
     #[test]
