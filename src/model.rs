@@ -68,6 +68,11 @@ pub struct Metrics {
     /// only the changed files keeps for the files it does not mutate.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mutant_files: BTreeMap<String, MutantCounts>,
+    /// Source files with no mutant count yet, while a baseline is built in
+    /// pieces (`ratchet --pending-files/--pending-seconds`): their mutants
+    /// are not in `mutants`, so `check` does not hold them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutants_pending: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
