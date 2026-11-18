@@ -19,12 +19,10 @@ pub enum Kind {
     NoBaseline,
     /// A gate runs the project's own tests and also `slimfit check`, which is a test run: the tests run twice. Fix: take the project's test command out of that gate.
     TestsRunTwice,
-    /// A gate runs mutation testing (`--mutants`, `--all-mutants`, `--pending-*` or a mutation tool): it holds up every landing for hours. Fix: move it to idle work (in factorium, `[idle] steps`).
+    /// A gate runs mutation testing (`--mutants`, `--all-mutants` or a mutation tool): it holds up every landing for hours. Fix: move it to idle work (in factorium, `[idle] steps`).
     MutantsInGate,
-    /// The baseline holds a suite's mutants with no commit they were measured at, or no per-file counts: every `--mutants` run mutates every file. Fix: one `slimfit ratchet --all-mutants` on an idle host, then commit the baseline.
+    /// The baseline records no `mutants_at`: `--mutants` takes the change from the merge base with the branch's upstream, and refuses without one (see [mutants scope](help:mutants-scope)). Fix: one `slimfit ratchet` (it records the tree now as `mutants_at`), then commit the baseline.
     MutantsUnscoped,
-    /// Files of a suite have no mutant count in the baseline yet: `--mutants` does not hold them. Fix: `slimfit ratchet --pending-seconds <s>` pieces on an idle host (see [the piecewise baseline](help:piecewise-baseline)).
-    MutantsPending,
     /// The host's 1-minute load is above its core count: what is measured now runs slow and its wall times are skewed (see [host load](help:host-load)). Fix: measure when the host is quiet, or at `nice -n 19`.
     HostBusy,
     /// A tool a suite's commands run is not installed on this host: the command that needs it fails. Fix: install it as the finding says.
@@ -154,17 +152,8 @@ const TEST_RUNNERS: &[&str] = &[
 ];
 
 /// What in a gate's line is mutation testing.
-const MUTATION: &[&str] = &[
-    "--mutants",
-    "--all-mutants",
-    "--pending-seconds",
-    "--pending-files",
-    "cargo mutants",
-    "stryker",
-    "pitest",
-    "gremlins",
-    "muter run",
-];
+const MUTATION: &[&str] =
+    &["--mutants", "--all-mutants", "cargo mutants", "stryker", "pitest", "gremlins", "muter run"];
 
 /// Every finding, in the order to fix them: setup first, then gates, the
 /// baseline, the host and its tools.
@@ -280,40 +269,17 @@ fn gates(repo: &Path) -> Vec<Finding> {
 }
 
 fn baseline(b: &Baseline) -> Vec<Finding> {
-    let mut out = Vec::new();
-    for (suite, m) in &b.suites {
-        if m.mutants.is_some() && (b.mutants_at.is_none() || m.mutant_files.is_empty()) {
-            let missing = match (b.mutants_at.is_none(), m.mutant_files.is_empty()) {
-                (true, true) => "the commit they were measured at and per-file counts",
-                (true, false) => "the commit they were measured at",
-                _ => "per-file counts",
-            };
-            out.push(finding(
-                Kind::MutantsUnscoped,
-                Some(suite),
-                format!(
-                    "the baseline holds {suite}'s mutants without {missing}: every `--mutants` run mutates every file"
-                ),
-                "on an idle host, `nice -n 19 slimfit ratchet --all-mutants`, then commit .slimfit/baseline.json"
-                    .into(),
-            ));
-        }
-        if !m.mutants_pending.is_empty() {
-            let n = m.mutants_pending.len();
-            out.push(finding(
-                Kind::MutantsPending,
-                Some(suite),
-                format!(
-                    "{n} file(s) of {suite} have no mutant count yet (first: {}): `--mutants` does not hold them",
-                    m.mutants_pending[0]
-                ),
-                "on an idle host, `nice -n 19 slimfit ratchet --pending-seconds 1800`, then commit .slimfit/baseline.json; \
-                 again until none is pending"
-                    .into(),
-            ));
-        }
+    if b.mutants_at.is_some() || b.suites.is_empty() {
+        return vec![];
     }
-    out
+    vec![finding(
+        Kind::MutantsUnscoped,
+        None,
+        "the baseline records no mutants_at: `--mutants` takes the change from the merge base with the branch's \
+         upstream, and refuses without one"
+            .into(),
+        "`slimfit ratchet` (it records the tree now as mutants_at), then commit .slimfit/baseline.json".into(),
+    )]
 }
 
 fn tools(suites: &[Suite], host: &Host) -> Vec<Finding> {
@@ -343,7 +309,7 @@ fn tools(suites: &[Suite], host: &Host) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Metrics, MutantCounts, Snapshot};
+    use crate::model::{Metrics, Snapshot};
 
     /// A repository with a Rust suite, a baseline and `files` as written.
     fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -387,18 +353,11 @@ mod tests {
         f.iter().map(|f| f.kind).collect()
     }
 
-    fn with_mutants(at: Option<&str>, per_file: bool, pending: &[&str]) -> String {
-        let c = MutantCounts { killed: 3, survived: 1, unviable: 0 };
-        let m = Metrics {
-            mutants: Some(c),
-            mutant_files: if per_file { [("src/lib.rs".to_string(), c)].into() } else { Default::default() },
-            mutants_pending: pending.iter().map(|s| s.to_string()).collect(),
-            ..Default::default()
-        };
+    fn with_mutants_at(at: Option<&str>) -> String {
         let b = Baseline {
-            suites: [("rust".to_string(), m)].into(),
+            suites: [("rust".to_string(), Metrics::default())].into(),
             loosened: vec![],
-            mutants_at: at.map(|c| Snapshot { commit: c.into(), dirty: vec![] }),
+            mutants_at: at.map(|c| Snapshot { commit: c.into(), tree: None }),
         };
         serde_json::to_string(&b).unwrap()
     }
@@ -407,7 +366,7 @@ mod tests {
     /// slimfit's own setup is one such.
     #[test]
     fn a_sound_setup_has_no_findings() {
-        let r = repo(&[(ratchet::FILE, &with_mutants(Some("abc"), true, &[]))]);
+        let r = repo(&[(ratchet::FILE, &with_mutants_at(Some("abc")))]);
         assert_eq!(diagnose(r.path(), &host(&every_tool())), vec![]);
         let own = Path::new(env!("CARGO_MANIFEST_DIR"));
         let found = diagnose(own, &host(&every_tool()));
@@ -475,29 +434,13 @@ mod tests {
         assert!(f.iter().all(|f| f.fix.contains("[idle]")), "{f:#?}");
     }
 
-    /// Mutants with no commit or no per-file counts: every `--mutants` is a full run.
+    /// No mutants_at: `--mutants` would measure only what is uncommitted.
     #[test]
-    fn mutants_without_a_commit_or_per_file_counts_are_unscoped() {
-        for (at, per_file, missing) in [
-            (None, true, "without the commit"),
-            (Some("abc"), false, "without per-file"),
-            (None, false, "without the commit they were measured at and per-file"),
-        ] {
-            let r = repo(&[(ratchet::FILE, &with_mutants(at, per_file, &[]))]);
-            let f = diagnose(r.path(), &host(&every_tool()));
-            assert_eq!(kinds(&f), vec![Kind::MutantsUnscoped], "{f:#?}");
-            assert!(f[0].what.contains(missing) && f[0].fix.contains("--all-mutants"), "{f:#?}");
-            assert_eq!(f[0].suite.as_deref(), Some("rust"));
-        }
-    }
-
-    #[test]
-    fn files_pending_a_mutant_count_are_named() {
-        let r = repo(&[(ratchet::FILE, &with_mutants(Some("abc"), true, &["src/a.rs", "src/b.rs"]))]);
+    fn a_baseline_without_mutants_at_is_unscoped() {
+        let r = repo(&[(ratchet::FILE, &with_mutants_at(None))]);
         let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::MutantsPending], "{f:#?}");
-        assert!(f[0].what.starts_with("2 file(s)") && f[0].what.contains("src/a.rs"), "{f:#?}");
-        assert!(f[0].fix.contains("--pending-seconds"), "{f:#?}");
+        assert_eq!(kinds(&f), vec![Kind::MutantsUnscoped], "{f:#?}");
+        assert!(f[0].what.contains("no mutants_at") && f[0].fix.starts_with("`slimfit ratchet`"), "{f:#?}");
     }
 
     /// This host: its cores, PATH and cargo's bin directory searched; a

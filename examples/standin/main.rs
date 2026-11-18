@@ -157,6 +157,9 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
         }
         "mutants" => {
             let out = PathBuf::from(need(args, "--output")?);
+            if let Some(diff) = value(args, "--in-diff") {
+                std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
+            }
             let outcomes = out.join(CARGO_MUTANTS_OUTCOMES);
             let logs = outcomes.parent().unwrap().join("log");
             // cargo-mutants exits 2 when a mutant was missed.

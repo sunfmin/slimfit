@@ -97,6 +97,8 @@ pub struct Overrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_report: Option<Report<MutantsFormat>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutants_diff_flag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_file_flag: Option<String>,
 }
 
@@ -125,10 +127,14 @@ pub struct Suite {
     pub coverage_report: Report<CoverageFormat>,
     pub mutants_command: String,
     pub mutants_report: Report<MutantsFormat>,
-    /// The flag that limits `mutants_command` to one file, given once per
-    /// file (paths relative to the suite root), for `--mutants` to mutate
-    /// only the files changed since the baseline. Empty: the tool has none,
-    /// and every file is mutated.
+    /// The flag that limits `mutants_command` to the lines a unified diff
+    /// adds, given the diff's path (paths in it relative to the suite root):
+    /// how `--mutants` runs only the change's mutants (ADR 0005).
+    pub mutants_diff_flag: String,
+    /// Without a diff flag: the flag that limits `mutants_command` to one
+    /// file, given once per file the change touches (paths relative to the
+    /// suite root). Neither: every file is mutated, and the change's mutants
+    /// are told apart by line.
     pub mutants_file_flag: String,
 }
 
@@ -161,6 +167,9 @@ impl SuiteConfig {
         }
         if let Some(v) = o.mutants_report {
             s.mutants_report = v
+        }
+        if let Some(v) = o.mutants_diff_flag {
+            s.mutants_diff_flag = v
         }
         if let Some(v) = o.mutants_file_flag {
             s.mutants_file_flag = v
@@ -201,6 +210,7 @@ pub fn preset(p: Preset) -> Suite {
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
         mutants_command: String::new(),
         mutants_report: report(MutantsFormat::Stryker, ""),
+        mutants_diff_flag: String::new(),
         mutants_file_flag: String::new(),
     };
     match p {
@@ -217,7 +227,7 @@ pub fn preset(p: Preset) -> Suite {
                 --output \"$SLIMFIT_OUT\""
                 .into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
-            mutants_file_flag: "--file".into(),
+            mutants_diff_flag: "--in-diff".into(),
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
         Preset::Go => Suite {

@@ -18,8 +18,9 @@ pub struct Baseline {
     /// Every time a bound was raised, and why.
     #[serde(default)]
     pub loosened: Vec<Loosening>,
-    /// The tree the suites' mutant counts were measured at: `--mutants`
-    /// mutates only the files changed since.
+    /// The tree mutants were last measured at: `--mutants` runs the mutants
+    /// of the lines changed since (ADR 0005). `init` sets it, so adopting
+    /// slimfit runs no mutant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutants_at: Option<Snapshot>,
 }
@@ -49,7 +50,7 @@ pub enum Bound {
     /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
     #[value(verbatim_doc_comment)]
     UncoveredLines,
-    /// Mutants no test kills: at most the baseline, checked only with `--mutants` or `--all-mutants`: deleting a test can never lower what the suite catches.
+    /// Mutants no test kills in the lines the change added: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
 }
@@ -105,10 +106,6 @@ pub struct Verdict {
     pub new_suites: Vec<String>,
     /// Mutants were not measured, so their bound was not checked.
     pub mutants_unchecked: bool,
-    /// Per suite, the source files with no mutant count yet: their mutants
-    /// are not held. `slimfit ratchet --pending-seconds <s>` measures some.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub mutants_pending: BTreeMap<String, Vec<String>>,
 }
 
 pub fn load(repo: &Path) -> Result<Baseline> {
@@ -129,24 +126,20 @@ pub fn render(b: &Baseline) -> Result<String> {
     Ok(serde_json::to_string_pretty(b)? + "\n")
 }
 
+/// A bound's value in a baseline's (or a measurement's) metrics; none for
+/// `survived_mutants`, which no baseline keeps.
 fn value(m: &Metrics, b: Bound) -> Option<f64> {
     Some(match b {
         Bound::Failures => m.failures as f64,
         Bound::TestSeconds => m.test_seconds,
         Bound::UncoveredLines => m.uncovered_lines as f64,
-        Bound::SurvivedMutants => m.mutants?.survived as f64,
+        Bound::SurvivedMutants => return None,
     })
 }
 
-/// `cur`'s value of `bound` over what `base` holds: the mutants of files
-/// the baseline has no count for yet are new, not held.
-fn held(base: &Metrics, cur: &Metrics, bound: Bound) -> Option<f64> {
-    let v = value(cur, bound)?;
-    if bound != Bound::SurvivedMutants {
-        return Some(v);
-    }
-    let fresh: u64 = base.mutants_pending.iter().filter_map(|f| cur.mutant_files.get(f)).map(|c| c.survived).sum();
-    Some(v - fresh as f64)
+/// The mutants that survive in the lines of the change, when measured.
+fn survivors(s: &SuiteMeasurement) -> Option<f64> {
+    s.mutated.as_ref().map(|m| m.change.survived as f64)
 }
 
 fn limit(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
@@ -182,7 +175,7 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             list("uncovered")
         ),
         Bound::SurvivedMutants => format!(
-            "more mutants survive: a test lost its teeth or new code is untested; assert what each mutant changes; {}",
+            "mutants survive in the lines this change added: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
         ),
     }
@@ -195,11 +188,17 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         improved: vec![],
         new_suites: vec![],
         mutants_unchecked: !m.with_mutants,
-        mutants_pending: BTreeMap::new(),
     };
     for s in &m.suites {
-        if m.with_mutants && !s.metrics.mutants_pending.is_empty() {
-            v.mutants_pending.insert(s.suite.clone(), s.metrics.mutants_pending.clone());
+        if let Some(n) = survivors(s).filter(|n| *n > 0.0) {
+            v.violations.push(Violation {
+                suite: s.suite.clone(),
+                metric: Bound::SurvivedMutants,
+                baseline: 0.0,
+                limit: 0.0,
+                current: n,
+                fix: fix(Bound::SurvivedMutants, s),
+            });
         }
         let Some(b) = base.suites.get(&s.suite) else {
             v.new_suites.push(s.suite.clone());
@@ -216,7 +215,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
             continue;
         };
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
-            let (Some(base_v), Some(cur)) = (value(b, bound), held(b, &s.metrics, bound)) else { continue };
+            let (Some(base_v), Some(cur)) = (value(b, bound), value(&s.metrics, bound)) else { continue };
             let lim = if bound == Bound::Failures { 0.0 } else { limit(cfg, bound, base_v) };
             if cur > lim + 1e-9 {
                 v.violations.push(Violation {
@@ -238,25 +237,18 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
 
 /// The new baseline: each bound at the better of baseline and current;
 /// a loosened bound at current, recorded with its reason. Refuses while
-/// any other bound is violated, except that a piece (`m.piece`: a run that
-/// fills in pending mutant counts) is not refused for test_seconds: host
-/// load swells it, and the piece's mutant counts must not be thrown away
-/// for that. Such a violation is returned with the baseline; test_seconds
-/// stays as it was.
+/// any other bound is violated. With mutants measured, `mutants_at` moves
+/// to the tree measured: its change is accepted.
 pub fn ratchet(
     base: &Baseline,
     m: &Measurement,
     cfg: &CheckConfig,
     loosen: &[Bound],
     reason: Option<&str>,
-) -> Result<(Baseline, Vec<Violation>)> {
+) -> Result<Baseline> {
     let verdict = check(base, m, cfg);
-    let (not_recorded, violations): (Vec<Violation>, Vec<Violation>) = verdict
-        .violations
-        .into_iter()
-        .partition(|v| m.piece && v.metric == Bound::TestSeconds && !loosen.contains(&Bound::TestSeconds));
     let blocking: Vec<&Violation> =
-        violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
+        verdict.violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
     let mut faults: Vec<Fault> = blocking
         .iter()
         .map(|v| {
@@ -286,6 +278,17 @@ pub fn ratchet(
     let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at };
     for s in &m.suites {
         let mut metrics = s.metrics.clone();
+        if loosen.contains(&Bound::SurvivedMutants)
+            && let Some(to) = survivors(s).filter(|n| *n > 0.0)
+        {
+            next.loosened.push(Loosening {
+                suite: s.suite.clone(),
+                metric: Bound::SurvivedMutants,
+                from: 0.0,
+                to,
+                reason: reason.unwrap_or_default().into(),
+            });
+        }
         if let Some(old) = base.suites.get(&s.suite) {
             for &bound in loosen {
                 if let (Some(from), Some(to)) = (value(old, bound), value(&metrics, bound))
@@ -309,23 +312,19 @@ pub fn ratchet(
             {
                 metrics.uncovered_lines = old.uncovered_lines;
             }
-            if metrics.mutants.is_none() {
-                metrics.mutants = old.mutants;
-                metrics.mutant_files = old.mutant_files.clone();
-                metrics.mutants_pending = old.mutants_pending.clone();
-            }
         }
         next.suites.insert(s.suite.clone(), metrics);
     }
-    Ok((next, not_recorded))
+    Ok(next)
 }
 
 #[cfg(test)]
 mod t {
     use super::*;
-    use crate::model::MutantCounts;
+    use crate::model::{MutantCounts, Mutated};
 
-    fn suite(name: &str, metrics: Metrics) -> SuiteMeasurement {
+    fn suite(name: &str, metrics: Metrics, survived: Option<u64>) -> SuiteMeasurement {
+        let change = |n| MutantCounts { killed: 3, survived: n, unviable: 0 };
         SuiteMeasurement {
             suite: name.into(),
             metrics,
@@ -333,42 +332,68 @@ mod t {
             uncovered: vec![],
             mutants: vec![],
             mutation_tests: None,
-            mutated: None,
+            mutated: survived.map(|n| Mutated { all: false, files: vec!["src/a.rs".into()], change: change(n) }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
         }
     }
 
-    fn measurement(metrics: Metrics, with_mutants: bool) -> Measurement {
-        Measurement { tree: "t".into(), with_mutants, piece: false, snapshot: None, suites: vec![suite("s", metrics)] }
+    /// `survived`: the change's survivors, when mutants were measured.
+    fn measurement(metrics: Metrics, survived: Option<u64>) -> Measurement {
+        let snapshot = survived.map(|_| Snapshot { commit: "c".into(), tree: Some("t".into()) });
+        Measurement {
+            tree: "t".into(),
+            with_mutants: survived.is_some(),
+            snapshot,
+            since: None,
+            suites: vec![suite("s", metrics, survived)],
+        }
     }
 
     fn base(metrics: Metrics) -> Baseline {
         Baseline { suites: [("s".to_string(), metrics)].into(), loosened: vec![], mutants_at: None }
     }
 
-    fn m(uncovered: u64, secs: f64, survived: Option<u64>) -> Metrics {
-        Metrics {
-            uncovered_lines: uncovered,
-            test_seconds: secs,
-            mutants: survived.map(|s| MutantCounts { killed: 10, survived: s, unviable: 0 }),
-            ..Default::default()
-        }
+    fn m(uncovered: u64, secs: f64) -> Metrics {
+        Metrics { uncovered_lines: uncovered, test_seconds: secs, ..Default::default() }
     }
 
     #[test]
     fn growth_of_a_bound_is_a_violation_and_shrinking_an_improvement() {
         let cfg = CheckConfig::default();
-        let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(12, 12.9, Some(1)), true), &cfg);
+        let v = check(&base(m(10, 10.0)), &measurement(m(12, 9.0), Some(0)), &cfg);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::UncoveredLines]);
         assert!(v.violations[0].fix.ends_with("`slimfit next --all --kind uncovered` lists them"));
-        assert_eq!(v.improved.len(), 1);
-        let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(10, 13.1, None), false), &cfg);
+        assert_eq!(v.improved.iter().map(|c| c.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
+        let v = check(&base(m(10, 10.0)), &measurement(m(10, 13.1), None), &cfg);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
         assert!(v.mutants_unchecked);
         // A suite new to the baseline is recorded, but its failures still fail.
-        let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0, None) }, false), &cfg);
+        let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0) }, None), &cfg);
         assert_eq!((v.new_suites, v.violations.len()), (vec!["s".to_string()], 1));
+    }
+
+    /// No baseline keeps a mutant count: a survivor in the change fails the
+    /// check, in a new suite too, until it is killed or loosened with a
+    /// reason. Ratcheting a mutants run moves `mutants_at` to its tree.
+    #[test]
+    fn the_changes_own_survivors_fail_until_loosened_and_a_ratchet_moves_mutants_at() {
+        let cfg = CheckConfig::default();
+        let two = measurement(m(10, 10.0), Some(2));
+        for b in [base(m(10, 10.0)), Baseline::default()] {
+            let v = check(&b, &two, &cfg);
+            assert_eq!(
+                v.violations.iter().map(|v| (v.metric, v.limit, v.current)).collect::<Vec<_>>(),
+                [(Bound::SurvivedMutants, 0.0, 2.0)]
+            );
+            assert!(ratchet(&b, &two, &cfg, &[], None).is_err());
+        }
+        let next = ratchet(&base(m(10, 10.0)), &two, &cfg, &[Bound::SurvivedMutants], Some("equivalent")).unwrap();
+        let l = &next.loosened[0];
+        assert_eq!((l.metric, l.from, l.to, l.reason.as_str()), (Bound::SurvivedMutants, 0.0, 2.0, "equivalent"));
+        assert_eq!(next.mutants_at, two.snapshot);
+        let clean = ratchet(&base(m(10, 10.0)), &measurement(m(10, 10.0), Some(0)), &cfg, &[], None).unwrap();
+        assert!(clean.loosened.is_empty() && clean.mutants_at.is_some());
     }
 
     #[test]
@@ -383,19 +408,20 @@ mod t {
     }
 
     #[test]
-    fn ratchet_keeps_the_better_time_and_old_mutants_when_unmeasured() {
+    fn ratchet_keeps_the_better_time_and_mutants_at_when_unmeasured() {
         let cfg = CheckConfig::default();
-        let next =
-            ratchet(&base(m(10, 10.0, Some(2))), &measurement(m(8, 11.0, None), false), &cfg, &[], None).unwrap().0;
+        let at = Some(Snapshot { commit: "old".into(), tree: None });
+        let old = Baseline { mutants_at: at.clone(), ..base(m(10, 10.0)) };
+        let next = ratchet(&old, &measurement(m(8, 11.0), None), &cfg, &[], None).unwrap();
         let s = &next.suites["s"];
-        assert_eq!((s.uncovered_lines, s.test_seconds, s.mutants.unwrap().survived), (8, 10.0, 2));
+        assert_eq!((s.uncovered_lines, s.test_seconds, next.mutants_at), (8, 10.0, at));
     }
 
     #[test]
     fn loosening_needs_a_reason_and_is_recorded() {
         let cfg = CheckConfig::default();
-        let (b, cur) = (base(m(10, 10.0, None)), measurement(m(12, 10.0, None), false));
-        let fixes = |r: Result<(Baseline, Vec<Violation>)>| -> Vec<String> {
+        let (b, cur) = (base(m(10, 10.0)), measurement(m(12, 10.0), None));
+        let fixes = |r: Result<Baseline>| -> Vec<String> {
             crate::fault::of(r.unwrap_err()).into_iter().map(|f| f.fix).collect()
         };
         let f = fixes(ratchet(&b, &cur, &cfg, &[], None));
@@ -404,16 +430,16 @@ mod t {
         );
         assert!(fixes(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None))[0].starts_with("add `--reason"));
         // Every refusal at once: each violated bound, and the missing reason.
-        let worse = measurement(Metrics { failures: 1, ..m(12, 20.0, None) }, false);
+        let worse = measurement(Metrics { failures: 1, ..m(12, 20.0) }, None);
         let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::TestSeconds], None));
         assert_eq!(f.len(), 3, "{f:?}");
         assert!(f[0].starts_with("make these tests pass") && !f[0].contains("--loosen failures"), "{f:?}");
         assert!(f[1].contains("--loosen uncovered_lines") && f[2].starts_with("add `--reason"), "{f:?}");
-        let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap().0;
+        let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap();
         assert_eq!(next.suites["s"].uncovered_lines, 12);
         assert_eq!(next.loosened[0].reason, "generated code");
         // A loosened bound that did not rise is not recorded as raised.
-        let same = ratchet(&b, &measurement(m(10, 10.0, None), false), &cfg, &[Bound::UncoveredLines], Some("x"));
-        assert!(same.unwrap().0.loosened.is_empty());
+        let same = ratchet(&b, &measurement(m(10, 10.0), None), &cfg, &[Bound::UncoveredLines], Some("x"));
+        assert!(same.unwrap().loosened.is_empty());
     }
 }

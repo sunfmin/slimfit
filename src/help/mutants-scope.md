@@ -1,8 +1,13 @@
-Which files `--mutants` and `--all-mutants` mutate, and what the counts of the others mean.
+Which mutants `--mutants` runs, and which survivors it holds.
 
-- `--all-mutants`: every file. Use it for the first baseline (`slimfit init --mutants` does), after changing tests outside source files, and to accept a redundant-test task.
-- `--mutants`: only the source files changed since the commit the baseline's mutants were measured at; every other file keeps its count from the baseline. It falls back to every file when the baseline has no such commit or no per-file counts, or the suite's mutation tool cannot be limited to files (of the presets, only {const:FILE_LIMITED}'s can, through the suite's `mutants_file_flag`).
+- `--mutants` measures the change: the lines that differ from the tree the baseline's `mutants_at` names, untracked files included. `slimfit init` sets `mutants_at`; a ratchet of a measurement with mutants moves it to the tree measured, so committing what was measured leaves no change behind.
+- The suite's tool runs as few mutants as it can be limited to: {const:DIFF_LIMITED}'s tool only those of the changed lines (through the suite's `mutants_diff_flag`: `--in-diff` for cargo-mutants); a tool with only a file flag (`mutants_file_flag`), those of the files the change touches. For a tool with neither, `--mutants` refuses: it never runs every mutant; only `slimfit next --all-mutants` does.
+- Either way only the survivors in the lines the change added are held, at 0: each is the change's own. Survivors elsewhere are surviving-mutant tasks, not violations. No baseline keeps a mutant count.
+- One that changes nothing observable is accepted with `slimfit ratchet --loosen survived_mutants --reason "<why>"`.
+- `slimfit next --all-mutants` runs every mutant, for tasks across the whole suite: its redundant tests too.
 
-A test changed outside source files is not seen in the unchanged files' counts: `--all-mutants` sees it.
+A change that only deletes code or tests adds no line, so it runs no mutant: what a deleted test killed in unchanged code is not seen. A test changed outside source files likewise.
 
-The output's `mutated` says, per suite, `"all"` or the files mutated. `slimfit ratchet --mutants` moves the commit the baseline's mutants were measured at, so the next `--mutants` mutates only what changed after it.
+When the tree `mutants_at` names is gone (another clone, or `git gc` pruned it), the change is taken from its commit. When the commit is gone too, or none is recorded, it is taken from the merge base with the branch's upstream; with no upstream, `--mutants` refuses, saying why. stderr says which. `slimfit init`, and the first `slimfit ratchet` of a baseline without one, record the tree as `mutants_at`.
+
+The output's `mutated` says, per suite, whether every mutant ran (`all`), the source files the change touches (`files`) and its mutants by outcome (`change`).

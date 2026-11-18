@@ -39,7 +39,7 @@ impl TaskKind {
     pub fn accept(self) -> &'static str {
         match self {
             TaskKind::FailingTest | TaskKind::Uncovered => "slimfit check",
-            TaskKind::RedundantTest => "slimfit check --all-mutants",
+            TaskKind::RedundantTest => "slimfit check",
             TaskKind::SlowTest | TaskKind::SurvivingMutant | TaskKind::Deepen => "slimfit check --mutants",
         }
     }
@@ -170,13 +170,11 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
 }
 
 /// Tests whose killed mutants are all killed by a cheaper cover of the
-/// rest: a time-weighted greedy set cover over the kill matrix.
-/// Not when only the changed files were mutated: a test that kills only
-/// mutants of the others would look as if it killed none.
+/// rest: a time-weighted greedy set cover over the kill matrix of the
+/// mutants that ran. When only the change's ran, a test that killed none of
+/// them is not named: it may kill others.
 fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
-    if s.mutated.is_some() {
-        return vec![];
-    }
+    let every = s.mutated.as_ref().is_none_or(|m| m.all);
     let killed: Vec<(usize, &Vec<String>)> = s
         .mutants
         .iter()
@@ -215,8 +213,11 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
         covered.extend(&kills[t]);
         chosen.insert(t.clone());
     }
-    let mut spare: Vec<(&String, &BTreeSet<usize>, Option<f64>)> =
-        kills.iter().filter(|(t, _)| !chosen.contains(*t)).map(|(t, ks)| (t, ks, seconds(t))).collect();
+    let mut spare: Vec<(&String, &BTreeSet<usize>, Option<f64>)> = kills
+        .iter()
+        .filter(|(t, ks)| !chosen.contains(*t) && (every || !ks.is_empty()))
+        .map(|(t, ks)| (t, ks, seconds(t)))
+        .collect();
     spare.sort_by(|a, b| b.2.unwrap_or(0.0).total_cmp(&a.2.unwrap_or(0.0)).then(a.0.cmp(b.0)));
     spare
         .into_iter()
@@ -225,14 +226,17 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
             suite: s.suite.clone(),
             summary: if ks.is_empty() {
                 format!("{t} kills no mutant")
-            } else {
+            } else if every {
                 format!("{t} kills only mutants other tests also kill ({})", ks.len())
+            } else {
+                format!("{t} kills only mutants other tests also kill ({}, of the change's)", ks.len())
             },
             files: vec![],
             evidence: json!({ "test": t, "seconds": secs, "mutants_killed": ks.len(),
                               "also_killed_by": ks.iter().flat_map(|i| s.mutants[*i].killed_by.iter().flatten()).filter(|k| *k != t).collect::<BTreeSet<_>>() }),
             steps: "Read the test. If it checks behaviour no other test pins down (a user-visible outcome the mutants here don't reach), keep it and strengthen the code it covers instead. \
-                    Otherwise delete it. The mutation bound proves nothing was lost: the accept command mutates every file, since a deleted test can let mutants of unchanged files survive."
+                    Otherwise delete it. No bound proves a deletion lost nothing: a deletion adds no line, so no mutant is run for it, and the evidence covers only the mutants that ran. \
+                    When those were only a change's, read what else the test asserts before deleting it."
                 .into(),
             accept: TaskKind::RedundantTest.accept().into(),
         })
@@ -325,7 +329,7 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
 #[cfg(test)]
 mod t {
     use super::*;
-    use crate::model::{Metrics, Mutant, TestCase};
+    use crate::model::{Metrics, Mutant, Mutated, TestCase};
 
     fn mutant(status: MutantStatus, killers: &[&str]) -> Mutant {
         Mutant {
@@ -372,9 +376,20 @@ mod t {
             command_seconds: 0.0,
             load_slowdown: 1.0,
         };
-        let tasks = redundant(&s);
-        let names: Vec<&str> = tasks.iter().map(|t| t.evidence["test"].as_str().unwrap()).collect();
-        assert_eq!(names, vec!["slow", "idle"]);
-        assert!(tasks[1].summary.contains("kills no mutant"));
+        let names = |s: &SuiteMeasurement| -> Vec<(String, String)> {
+            redundant(s).into_iter().map(|t| (t.evidence["test"].as_str().unwrap().into(), t.summary)).collect()
+        };
+        let all = names(&s);
+        assert_eq!(all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow", "idle"]);
+        assert!(all[1].1.contains("kills no mutant"));
+        // Only the change's mutants ran: a test that killed none of them may
+        // kill others, so it is not named.
+        let change = SuiteMeasurement {
+            mutated: Some(Mutated { all: false, files: vec!["a".into()], change: Default::default() }),
+            ..s
+        };
+        let some = names(&change);
+        assert_eq!(some.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow"]);
+        assert!(some[0].1.ends_with("(1, of the change's)"), "{some:?}");
     }
 }

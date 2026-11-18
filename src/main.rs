@@ -102,13 +102,13 @@ enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run; with `--mutants`, every mutant too), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
+    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It records the tree as `mutants_at`, unless the baseline already has one: `--mutants` measures the changes made after it (see [mutants scope](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report` and `mutants_file_flag` (the flag that limits the mutation tool to one file; empty when it has none).
-    /// - `baseline`: per suite, {const:HELD}.
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none) and `mutants_file_flag` (the flag that limits it to one file; empty when it has none).
+    /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
     ///
@@ -121,12 +121,9 @@ enum Cmd {
     ///
     /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
     /// - On a busy host its `test_seconds` comes out high, and the baseline holds it from then on: run it on a quiet host (see [host load](help:host-load)).
-    /// - Without `--mutants` the baseline holds no mutants, and `--mutants` later mutates every file, not just the changed ones (see [mutants scope](help:mutants-scope)). On a large workspace build the mutants baseline in pieces instead (see [the piecewise baseline](help:piecewise-baseline)).
+    /// - Run again on a baseline that has `mutants_at`, it keeps it: changes since are still measured by the next `--mutants`, not accepted unmeasured.
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init {
-        /// Also run mutation testing of every file, for the first mutants baseline: hours on a large workspace (see [the piecewise baseline](help:piecewise-baseline)).
-        #[arg(long, verbatim_doc_comment)]
-        mutants: bool,
         /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
         #[arg(long, verbatim_doc_comment)]
         dry_run: bool,
@@ -145,7 +142,7 @@ enum Cmd {
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides: mutants not run, only the changed files mutated, or a mutation tool that does not record which test kills which mutant (only {const:KILLERS_RECORDED} record it, so only they get redundant-test tasks).
+    /// - `notes`: what was not measured and what that hides: mutants not run, only the change's mutants run, or a mutation tool that does not record which test kills which mutant (only {const:KILLERS_RECORDED} record it, so only they get redundant-test tasks).
     /// - `next`: what to do now.
     ///
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
@@ -163,8 +160,8 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - Without `--mutants` there are no surviving-mutant tasks, and without `--all-mutants` no redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says, so never run them in a gate.
-    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (no `slimfit ratchet --mutants` yet): see [mutants scope](help:mutants-scope).
+    /// - Without `--mutants` or `--all-mutants` there are no surviving-mutant or redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says, so never run them in a gate.
+    /// - `--mutants` runs only the change's mutants: its tasks name only what they show, and a test it calls redundant is redundant only among them. `--all-mutants` runs every mutant (see [mutants scope](help:mutants-scope)).
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Next {
@@ -174,10 +171,10 @@ enum Cmd {
         /// Only tasks of this kind.
         #[arg(long, value_enum, verbatim_doc_comment)]
         kind: Option<tasks::TaskKind>,
-        /// Measure mutants too, of the files changed since the baseline: needed for surviving-mutant tasks (see [mutants scope](help:mutants-scope)).
+        /// Measure the mutants of the change too, the lines changed since the baseline's `mutants_at`: tasks from what they show (see [mutants scope](help:mutants-scope)).
         #[arg(long, verbatim_doc_comment)]
         mutants: bool,
-        /// Measure mutants of every file: needed for redundant-test tasks.
+        /// Measure every mutant: tasks from the whole suite's mutants, redundant tests across it.
         #[arg(long, verbatim_doc_comment)]
         all_mutants: bool,
         /// Measure again even if the working tree is unchanged.
@@ -188,7 +185,7 @@ enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` and `--all-mutants` only on an idle host, never in a gate.
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` only on an idle host, never in a gate.
     ///
     /// ## What it reads and writes
     ///
@@ -204,9 +201,9 @@ enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and, while a mutants baseline is built in pieces, `mutants_pending`, per suite the files whose mutants are not held yet.
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; and `mutants_unchecked`, true when mutants were not measured.
     /// - `metrics`: per suite, {const:METRICS}.
-    /// - `mutated`: per suite, `"all"` or the files mutated; `null` without mutants (see [mutants scope](help:mutants-scope)).
+    /// - `mutated`: per suite, `all` (whether every mutant ran), `files` (the source files the change touches) and `change` (its mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
     ///
     /// It exits {const:EXIT_OK} when `ok`, {const:EXIT_VIOLATION} when a bound is violated.
@@ -219,16 +216,13 @@ enum Cmd {
     ///
     /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
     /// - `test_seconds` swells on a busy host. slimfit corrects for load, but a violation on a loaded host is worth one `--fresh` run on a quiet one before you chase it (see [host load](help:host-load)).
-    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (see [mutants scope](help:mutants-scope)).
+    /// - A change that only deletes code or tests adds no line, so `--mutants` runs no mutant for it: what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Check {
-        /// Also check `survived_mutants`, mutating the files changed since the baseline's mutants were measured and keeping the baseline's counts for the rest (see [mutants scope](help:mutants-scope)). Never in a gate.
+        /// Also check `survived_mutants`: run the mutants of the lines changed since the baseline's `mutants_at`; none may survive (see [mutants scope](help:mutants-scope)). Never in a gate.
         #[arg(long, verbatim_doc_comment)]
         mutants: bool,
-        /// Also check `survived_mutants`, mutating every file. Never in a gate.
-        #[arg(long, verbatim_doc_comment)]
-        all_mutants: bool,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -237,18 +231,18 @@ enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). After a task accepted with `--mutants` or `--all-mutants`, ratchet with the same flag, so the mutant counts are recorded too. On an idle host, `--pending-seconds` builds the mutants baseline in pieces (see [the piecewise baseline](help:piecewise-baseline)).
+    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). After `slimfit check --mutants` passes, it reuses that measurement and moves `mutants_at` to the tree measured, so the next `--mutants` measures only what changed after it. A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. With `--mutants`, `--all-mutants` or a piece it also records the commit the mutants were measured at, so the next `--mutants` mutates only what changed after it. With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement has mutants it also records the tree measured as `mutants_at` (see [mutants scope](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
     /// - `changed`: whether the baseline moved. `false` is nothing to ratchet: an answer (exit {const:EXIT_OK}), and the baseline is not rewritten.
-    /// - `baseline`: per suite, {const:HELD}.
+    /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `not_recorded`: in a piece, a `test_seconds` over its bound, left at its old value (see [host load](help:host-load)): {const:VIOLATION}.
+    /// - `mutants_at`: `commit` and `tree`, what the next `--mutants` measures the change from.
     /// - `next`: commit, then `slimfit next` (or, when nothing changed, just `slimfit next`).
     /// - `would_write`: with `--dry-run` only, `.slimfit/baseline.json`'s whole new text, when it would change.
     ///
@@ -256,16 +250,14 @@ enum Cmd {
     ///
     /// It writes nothing when it refuses.
     ///
-    /// - A bound got worse: `failures` always; any other unless `--loosen` names it. A piece is not refused for `test_seconds`: that goes to `not_recorded`.
+    /// - A bound got worse: `failures` always; any other unless `--loosen` names it.
     /// - `--loosen` without `--reason`.
-    /// - `--pending-seconds` or `--pending-files` with `--all-mutants`, and `--pending-files 0`.
     /// - {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
     ///
     /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
-    /// - A piece always measures at least one pending file, even past `--pending-seconds`, and the budget counts the whole command, the test run included. Commit after each piece; repeat until `slimfit check --mutants` lists no `mutants_pending`.
-    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (see [mutants scope](help:mutants-scope)).
+    /// - A plain `ratchet` of a tree last measured without mutants keeps `mutants_at`: the change stays to be measured by the next `--mutants`. A baseline with no `mutants_at` gets one at the tree now, as `slimfit init` gives it: changes before it are not measured.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
@@ -275,18 +267,9 @@ enum Cmd {
         /// Why the bound may rise, kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
-        /// Measure mutants of the files changed since the baseline's mutants were measured, and record them.
+        /// Measure the change's mutants first, as `slimfit check --mutants` does.
         #[arg(long, verbatim_doc_comment)]
         mutants: bool,
-        /// Measure mutants of every file, and record them.
-        #[arg(long, verbatim_doc_comment)]
-        all_mutants: bool,
-        /// One piece of the mutants baseline: as `--mutants`, then also files with no mutant count yet, while the command has run less than this many seconds (at least one file).
-        #[arg(long, conflicts_with = "all_mutants", verbatim_doc_comment)]
-        pending_seconds: Option<u64>,
-        /// As `--pending-seconds`, but at most this many files with no count yet.
-        #[arg(long, conflicts_with = "all_mutants", value_parser = clap::value_parser!(u64).range(1..), verbatim_doc_comment)]
-        pending_files: Option<u64>,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -307,7 +290,7 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `current`: per suite, the metrics measured now: {const:METRICS}.
-    /// - `baseline`: per suite, {const:HELD}.
+    /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
     /// - `history`: oldest first, each point's `commit`, `date` and `suites`: per suite, `prod` and `test` lines.
     /// - `next`: `slimfit next`.
@@ -358,11 +341,6 @@ struct HostLoad;
 #[topic(name = "mutants-scope")]
 struct MutantsScope;
 
-#[doc = include_str!("help/piecewise-baseline.md")]
-#[derive(Topic)]
-#[topic(name = "piecewise-baseline")]
-struct PiecewiseBaseline;
-
 #[doc = include_str!("help/dry-run.md")]
 #[derive(Topic)]
 #[topic(name = "dry-run")]
@@ -380,7 +358,6 @@ fn help() -> Help {
         .topic::<Costs>()
         .topic::<HostLoad>()
         .topic::<MutantsScope>()
-        .topic::<PiecewiseBaseline>()
         .topic::<DryRun>()
         .topic::<Factorium>()
         .table::<ratchet::Bound>("bound")
@@ -390,7 +367,7 @@ fn help() -> Help {
         .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
         .constant("LANGUAGES", languages("and"))
         .constant("KILLERS_RECORDED", languages_where(|s| s.mutants_report.format.records_killers()))
-        .constant("FILE_LIMITED", languages_where(|s| !s.mutants_file_flag.is_empty()))
+        .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
@@ -399,7 +376,6 @@ fn help() -> Help {
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
         .constant("DEEPEN_DAYS", tasks::DEEPEN_DAYS)
         .constant("METRICS", model::METRICS_HELP)
-        .constant("HELD", format!("{}, with {}", model::METRICS_HELP, model::HELD_HELP))
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
@@ -467,7 +443,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
     let start = cli.repo.clone().unwrap_or(std::env::current_dir()?);
     let repo = git::toplevel(&start)?;
     match cli.command {
-        Cmd::Init { mutants, dry_run } => {
+        Cmd::Init { dry_run } => {
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let created = !repo.join(config::FILE).exists();
             let cfg = if created {
@@ -495,12 +471,17 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &repo,
                 &cfg,
                 &old,
-                &measure::Options { mutants: scope(false, mutants), fresh: true, dry_run },
+                &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run },
             )?;
+            // Mutants are measured from here on; a mutants_at already kept is not skipped past.
+            let mutants_at = match old.mutants_at {
+                Some(at) => Some(at),
+                None => measure::snapshot(&repo)?,
+            };
             let base = ratchet::Baseline {
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
                 loosened: old.loosened,
-                mutants_at: if mutants { m.snapshot.clone().map(|s| writes.dirty(s)) } else { None },
+                mutants_at,
             };
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
@@ -542,10 +523,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             }) {
                 notes.push(format!("{}: the mutation tool does not record which test kills which mutant, so redundant tests cannot be found", s.suite));
             }
-            for s in m.suites.iter().filter(|s| s.mutated.is_some()) {
+            for s in m.suites.iter().filter(|s| s.mutated.as_ref().is_some_and(|x| !x.all)) {
                 notes.push(format!(
-                    "{}: only the files changed since the baseline were mutated: surviving-mutant tasks name only those; \
-                     redundant-test and the other files' survivors need `slimfit next --all-mutants`",
+                    "{}: only the change's mutants ran: tasks name only what they show (a redundant test only \
+                     among them); the whole suite's need `slimfit next --all-mutants`",
                     s.suite
                 ));
             }
@@ -567,13 +548,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Check { mutants, all_mutants, fresh } => {
+        Cmd::Check { mutants, fresh } => {
             let (cfg, base) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
                 &cfg,
                 &base,
-                &measure::Options { mutants: scope(mutants, all_mutants), fresh, dry_run: false },
+                &measure::Options { mutants: scope(mutants, false), fresh, dry_run: false },
             )?;
             let v = ratchet::check(&base, &m, &cfg.check);
             let next = if !v.ok {
@@ -586,18 +567,19 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let code = if v.ok { EXIT_OK } else { EXIT_VIOLATION };
             Ok((json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }), code))
         }
-        Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh, dry_run } => {
+        Cmd::Ratchet { loosen, reason, mutants, fresh, dry_run } => {
             let (cfg, old) = loaded(&repo)?;
-            let scope = if pending_seconds.is_some() || pending_files.is_some() {
-                measure::Mutants::Fill(measure::Budget {
-                    files: pending_files.map(|n| n as usize),
-                    seconds: pending_seconds,
-                })
-            } else {
-                scope(mutants, all_mutants)
-            };
-            let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh, dry_run })?;
-            let (new, not_recorded) = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &old,
+                &measure::Options { mutants: scope(mutants, false), fresh, dry_run },
+            )?;
+            let mut new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            // A baseline with no mutants_at starts it here, as `init` does.
+            if new.mutants_at.is_none() {
+                new.mutants_at = measure::snapshot(&repo)?;
+            }
             // Nothing to ratchet is an answer, not a failure.
             let changed = new != old;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
@@ -605,8 +587,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 writes.put(ratchet::FILE, &ratchet::render(&new)?)?;
             }
             let next = if changed {
-                "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
-                 (while a suite lists mutants_pending, a --pending-seconds piece again)"
+                "commit .slimfit/baseline.json with the change it records; then `slimfit next`"
             } else {
                 "nothing to ratchet: the baseline already holds this measurement; `slimfit next`"
             };
@@ -615,7 +596,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "changed": changed,
                     "baseline": new.suites,
                     "loosened": new.loosened,
-                    "not_recorded": not_recorded,
+                    "mutants_at": new.mutants_at,
                     "next": next,
                 })),
                 EXIT_OK,
@@ -695,30 +676,21 @@ fn parse(help: &Help, args: impl IntoIterator<Item = std::ffi::OsString>) -> Res
 fn scope(mutants: bool, all_mutants: bool) -> measure::Mutants {
     match (mutants, all_mutants) {
         (_, true) => measure::Mutants::All,
-        (true, false) => measure::Mutants::Changed,
+        (true, false) => measure::Mutants::Change,
         (false, false) => measure::Mutants::None,
     }
 }
 
-/// The metrics, without the per-file mutant counts behind `mutants`.
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {
-    m.suites
-        .iter()
-        .map(|s| (s.suite.clone(), json!(model::Metrics { mutant_files: Default::default(), ..s.metrics.clone() })))
-        .collect::<serde_json::Map<_, _>>()
-        .into()
+    m.suites.iter().map(|s| (s.suite.clone(), json!(s.metrics))).collect::<serde_json::Map<_, _>>().into()
 }
 
-/// Per suite, what was mutated: "all", or the changed files.
+/// Per suite, what the mutation run covered and found in the change.
 fn mutated_of(m: &model::Measurement) -> serde_json::Value {
     if !m.with_mutants {
         return serde_json::Value::Null;
     }
-    m.suites
-        .iter()
-        .map(|s| (s.suite.clone(), s.mutated.as_ref().map_or(json!("all"), |f| json!(f))))
-        .collect::<serde_json::Map<_, _>>()
-        .into()
+    m.suites.iter().map(|s| (s.suite.clone(), json!(s.mutated))).collect::<serde_json::Map<_, _>>().into()
 }
 
 /// The files a command writes, by path in the repo: written at once, or in
@@ -742,20 +714,6 @@ impl Writes<'_> {
             std::fs::write(file, text)?;
         }
         Ok(())
-    }
-
-    /// `s` as the tree will be once written: a dry run measured it without
-    /// the files it would write, so those are dirty when they differ from
-    /// the commit, and clean when they would equal it again.
-    fn dirty(&self, mut s: model::Snapshot) -> model::Snapshot {
-        for (path, text) in &self.would {
-            s.dirty.retain(|d| d != path);
-            if git::text_at(self.repo, &s.commit, path).as_deref() != text.as_str() {
-                s.dirty.push(path.clone());
-            }
-        }
-        s.dirty.sort();
-        s
     }
 
     /// The command's answer; in a dry run with `would_write`, and `next`
@@ -806,16 +764,7 @@ mod tests {
     /// out: help describes each key in words, so the list is checked here.
     #[test]
     fn help_names_every_output_key_in_order() {
-        let counts = keys(&model::MutantCounts::default());
-        let mut metrics = model::Metrics {
-            mutants: Some(Default::default()),
-            mutants_pending: vec![String::new()],
-            ..Default::default()
-        };
-        metrics.mutant_files.insert(String::new(), Default::default());
-        let mut held = named(&format!("{} {}", model::METRICS_HELP, model::HELD_HELP));
-        held.retain(|k| !counts.contains(k));
-        assert_eq!(held, keys(&metrics));
+        assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
         let loosening = ratchet::Loosening {
@@ -967,6 +916,8 @@ mod answer_tests {
         std::fs::write(dir.path().join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let (first, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((first["changed"].as_bool(), code), (Some(true), 0));
+        // A baseline with no mutants_at gets one: where changes start.
+        assert!(first["mutants_at"]["tree"].is_string(), "{first}");
         let (again, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((again["changed"].as_bool(), code), (Some(false), 0));
         assert!(again["next"].as_str().unwrap().starts_with("nothing to ratchet"));

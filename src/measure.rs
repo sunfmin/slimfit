@@ -33,39 +33,12 @@ pub const CACHE_HELP: &str = "The measurement is cached in `.slimfit/out/` and r
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mutants {
     None,
-    /// Only the source files changed since the baseline's mutants were
-    /// measured, where the tool can be limited to files and the baseline
-    /// has per-file counts; every file otherwise.
-    Changed,
-    /// `Changed`, then some of the files the baseline has no count for yet
-    /// (all of a suite's files when it has no mutants yet), one run of the
-    /// tool per file, while the budget lasts. At least one file is filled.
-    Fill(Budget),
+    /// The mutants of the change: the lines that differ from the tree the
+    /// baseline's mutants were last measured at (`mutants_at`), as narrowly
+    /// as the suite's tool can be limited (ADR 0005).
+    Change,
+    /// Every mutant. The change's are still told apart, and held.
     All,
-}
-
-/// How many pending files a `Mutants::Fill` run may measure: at most
-/// `files` of them, and none started once the command has run for
-/// `seconds` less the longest file so far.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Budget {
-    pub files: Option<usize>,
-    pub seconds: Option<u64>,
-}
-
-/// A budget being spent, across the suites of one command.
-struct Spending {
-    budget: Budget,
-    started: Instant,
-    filled: usize,
-    longest: f64,
-}
-
-impl Spending {
-    fn more(&self) -> bool {
-        let fits = |s: u64| self.started.elapsed().as_secs_f64() + self.longest <= s as f64;
-        self.filled == 0 || (self.budget.files.is_none_or(|n| self.filled < n) && self.budget.seconds.is_none_or(fits))
-    }
 }
 
 pub struct Options {
@@ -77,44 +50,49 @@ pub struct Options {
 }
 
 /// The measurement of the tree as it is now: from the cache when it was
-/// taken of this exact tree (and with as many mutants as are wanted).
-/// `base` is the baseline a `Mutants::Changed` run builds on.
+/// taken of this exact tree (with as many mutants as are wanted, from the
+/// same `mutants_at`). A cached measurement of the tree that lacks those
+/// mutants keeps its test run: only the mutation tool runs. `base` is the baseline whose `mutants_at` the
+/// change is taken from.
 pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Result<Measurement> {
-    let started = Instant::now();
     let wt = git::worktree(repo)?;
     let tree = wt.key.clone();
     let cache = repo.join(OUT).join("measurement.json");
-    let filling = matches!(opts.mutants, Mutants::Fill(_));
-    if !opts.fresh
-        && !filling
-        && let Ok(text) = std::fs::read_to_string(&cache)
-        && let Ok(m) = serde_json::from_str::<Measurement>(&text)
-        && m.tree == tree
-        && (m.with_mutants || opts.mutants == Mutants::None)
-        && (opts.mutants != Mutants::All || m.suites.iter().all(|s| s.mutated.is_none()))
-        && m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name))
-    {
-        return Ok(m);
+    let with_mutants = opts.mutants != Mutants::None;
+    // The cached measurement of this tree, when not asked to measure afresh.
+    let tested = std::fs::read_to_string(&cache)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Measurement>(&text).ok())
+        .filter(|m| !opts.fresh && m.tree == tree)
+        .filter(|m| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name)));
+    if let Some(m) = tested.as_ref().filter(|m| {
+        (!with_mutants || (m.with_mutants && m.since == base.mutants_at))
+            && (opts.mutants != Mutants::All || m.suites.iter().all(|s| s.mutated.as_ref().is_some_and(|x| x.all)))
+    }) {
+        return Ok(m.clone());
     }
     let scratch = Scratch::new(repo, opts.dry_run)?;
-    let changed = match (&base.mutants_at, opts.mutants) {
-        (Some(then), Mutants::Changed | Mutants::Fill(_)) => match git::changed_since(repo, &wt, then) {
-            Ok(c) => Some(c),
-            Err(e) => {
-                eprintln!("slimfit: mutating every file: no diff from the baseline's commit ({e:#})");
-                None
+    let mut tested = tested.map(|m| m.suites.into_iter()).into_iter().flatten();
+    // Only `--all-mutants` runs every mutant: a suite whose tool cannot be
+    // limited to a change refuses `--mutants` before anything runs.
+    if opts.mutants == Mutants::Change {
+        fault::all(cfg.suites.iter().map(|s| s.resolve()).map(|s| {
+            if s.mutants_diff_flag.is_empty() && s.mutants_file_flag.is_empty() {
+                Err(fault(
+                    format!(
+                        "suite {}: its mutation tool cannot be limited to a change, so `--mutants` would run every mutant",
+                        s.name
+                    ),
+                    "run every mutant only on purpose: `slimfit next --all-mutants`, on an idle host; or, if its tool \
+                     takes a diff or a file, set the suite's `mutants_diff_flag` or `mutants_file_flag` in slimfit.toml",
+                ))
+            } else {
+                Ok(())
             }
-        },
-        (None, Mutants::Changed) => {
-            eprintln!("slimfit: mutating every file: the baseline records no commit its mutants were measured at");
-            None
-        }
-        _ => None,
-    };
-    let mut spending = match opts.mutants {
-        Mutants::Fill(budget) => Some(Spending { budget, started, filled: 0, longest: 0.0 }),
-        _ => None,
-    };
+        }))?;
+    }
+    let only_change = opts.mutants == Mutants::Change;
+    let mut change = Lazy { repo, wt: &wt, at: base.mutants_at.as_ref(), only_change, change: None };
     let mut suites = Vec::new();
     for s in &cfg.suites {
         let suite = s.resolve();
@@ -124,34 +102,35 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             suite.root,
             match opts.mutants {
                 Mutants::None => "",
-                Mutants::Changed => " with the mutants of changed files",
-                Mutants::Fill(_) => " with the mutants of changed files and of some with no count yet",
+                Mutants::Change => " with the mutants of the change",
                 Mutants::All => " with every mutant",
             }
         );
-        let prior = match opts.mutants {
-            Mutants::None => None,
-            Mutants::Changed | Mutants::Fill(_) => {
-                Some(Prior { changed: changed.as_ref(), base: base.suites.get(&suite.name), all: false })
-            }
-            Mutants::All => Some(Prior { changed: None, base: None, all: true }),
-        };
-        let r = measure_suite(repo, &scratch.0, &wt.files, &suite, prior, spending.as_mut());
+        let mutants = with_mutants.then_some((&mut change, opts.mutants == Mutants::All));
+        let r = measure_suite(repo, &scratch.0, &wt.files, &suite, mutants, tested.next());
         suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
     }
     // Every suite is measured, so one that fails does not hide another's faults.
     let suites = fault::all(suites)?;
     let m = Measurement {
         tree,
-        with_mutants: opts.mutants != Mutants::None,
-        piece: filling,
-        snapshot: wt.snapshot,
+        with_mutants,
+        snapshot: change.change.and_then(|c| c.snapshot),
+        since: if with_mutants { base.mutants_at.clone() } else { None },
         suites,
     };
     if !opts.dry_run {
         std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
     }
     Ok(m)
+}
+
+/// The tree as it is now, as `mutants_at` records it; `None` before the
+/// first commit.
+pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
+    let head = git::head(repo)?;
+    let tree = git::write_tree(repo, &head)?;
+    Ok(head.commit.map(|commit| Snapshot { commit, tree: Some(tree) }))
 }
 
 /// Where the suites' commands write: `.slimfit/out`, or in a dry run a
@@ -178,61 +157,148 @@ impl Drop for Scratch {
     }
 }
 
-/// What a run that mutates only some files builds on: the files changed
-/// since the baseline's mutants were measured (`None`: unknown), and the
-/// suite's baseline. `all`: every file was asked for.
-#[derive(Clone, Copy)]
-struct Prior<'a> {
-    changed: Option<&'a BTreeSet<String>>,
-    base: Option<&'a Metrics>,
-    all: bool,
+/// The change, taken the first time a suite's mutants need it: a run that
+/// fails before then spends no git calls on it.
+struct Lazy<'a> {
+    repo: &'a Path,
+    wt: &'a git::Worktree,
+    at: Option<&'a Snapshot>,
+    only_change: bool,
+    change: Option<Change>,
 }
 
-/// The mutants to run, the per-file counts kept from the baseline for the
-/// files not mutated, and the files that have no count yet.
-struct Partial {
-    targets: Vec<String>,
-    kept: BTreeMap<String, MutantCounts>,
-    pending: Vec<String>,
-}
-
-/// Why a suite's mutants cannot be limited to some files, if so. A run that
-/// fills pending files may start a suite with no mutants yet: all its
-/// source files are then pending.
-fn partial(suite: &Suite, totals: &Totals, prior: Prior, filling: bool) -> std::result::Result<Partial, String> {
-    if prior.all {
-        return Err("asked for every mutant".into());
-    }
-    if suite.mutants_file_flag.is_empty() {
-        return Err("its mutation tool cannot be limited to files".into());
-    }
-    let source = |f: &String| matches!(totals.files.get(f), Some((Kind::Source, _)));
-    let Some((b, total)) = prior.base.and_then(|b| Some((b, b.mutants?))) else {
-        if filling {
-            let pending = totals.files.keys().filter(|f| source(f)).cloned().collect();
-            return Ok(Partial { targets: vec![], kept: BTreeMap::new(), pending });
+impl Lazy<'_> {
+    fn get(&mut self) -> Result<&Change> {
+        if self.change.is_none() {
+            self.change = Some(Change::since(self.repo, self.wt, self.at, self.only_change)?);
         }
-        return Err("no mutants in the baseline".into());
-    };
-    let Some(changed) = prior.changed else { return Err("no files known to be unchanged".into()) };
-    if MutantCounts::sum(b.mutant_files.values()) != total {
-        return Err("the baseline has no per-file mutant counts (ratchet once with --all-mutants)".into());
+        Ok(self.change.as_ref().expect("just taken"))
     }
-    let pending: Vec<String> = b.mutants_pending.iter().filter(|f| source(f)).cloned().collect();
-    let targets = changed.iter().filter(|f| source(f) && !pending.contains(f)).cloned().collect();
-    let kept = b.mutant_files.iter().filter(|(f, _)| !changed.contains(*f)).map(|(f, c)| (f.clone(), *c)).collect();
-    Ok(Partial { targets, kept, pending })
+}
+
+/// The change a mutants run measures: from the tree the baseline's mutants
+/// were last measured at to the working tree now.
+struct Change {
+    from: String,
+    to: String,
+    /// The files that differ, repository relative.
+    files: Vec<String>,
+    /// HEAD and the tree now: what `ratchet` records as `mutants_at`.
+    snapshot: Option<Snapshot>,
+}
+
+impl Change {
+    /// From `at`'s tree; from its commit when this repository lacks the
+    /// tree; from HEAD when it lacks the commit too, or nothing is recorded.
+    /// From `at`'s tree; from its commit when this repository lacks the
+    /// tree; from the merge base with the branch's upstream when it lacks
+    /// the commit too, or nothing is recorded. With none of them a run of
+    /// the change's mutants (`only_change`) refuses, rather than measure
+    /// more than the change; a run of every mutant takes HEAD.
+    fn since(repo: &Path, wt: &git::Worktree, at: Option<&Snapshot>, only_change: bool) -> Result<Change> {
+        let to = git::write_tree(repo, &wt.head)?;
+        // A tree or commit this repository lacks fails the diff: the next is tried.
+        let changed = |from: &str| git::changed_files(repo, from, &to).ok().map(|f| (from.to_string(), f));
+        let recorded = at.and_then(|s| {
+            s.tree.as_deref().and_then(changed).or_else(|| {
+                let c = changed(&s.commit);
+                if s.tree.is_some() && c.is_some() {
+                    eprintln!(
+                        "slimfit: the tree the baseline's mutants were measured at is not in this repository \
+                         (another clone, or pruned): the change is taken from its commit {}",
+                        s.commit
+                    );
+                }
+                c
+            })
+        });
+        let why = match at {
+            None => "the baseline records no mutants_at".to_string(),
+            Some(s) => format!("the baseline's mutants_at commit {} is not in this repository", s.commit),
+        };
+        let found = recorded.or_else(|| {
+            let base = git::merge_base_with_upstream(repo)?;
+            eprintln!("slimfit: {why}: the change is taken from the merge base with the branch's upstream, {base}");
+            changed(&base)
+        });
+        let (from, files) = match (found, &wt.head.commit) {
+            (Some(found), _) => found,
+            (None, _) if only_change => {
+                return Err(fault(
+                    format!(
+                        "{why}, and the branch has no upstream to take the change from: `--mutants` would run more than the change"
+                    ),
+                    "record where changes start: `slimfit ratchet` records the tree now as mutants_at (commit the baseline); \
+                     or set the branch's upstream (`git branch --set-upstream-to <branch it builds on>`) to take the change \
+                     since their merge base; every mutant runs only with `slimfit next --all-mutants`, on an idle host",
+                ));
+            }
+            (None, head) => {
+                let head = match head {
+                    Some(h) => h.clone(),
+                    None => git::empty_tree(repo)?,
+                };
+                let files = git::changed_files(repo, &head, &to)?;
+                (head, files)
+            }
+        };
+        let snapshot = wt.head.commit.clone().map(|commit| Snapshot { commit, tree: Some(to.clone()) });
+        Ok(Change { from, to, files, snapshot })
+    }
+}
+
+/// The lines each file gains in a unified diff (new-side numbers), keyed by
+/// `prefix` + the diff's `b/` path.
+fn added_lines(patch: &str, prefix: &str) -> BTreeMap<String, BTreeSet<u32>> {
+    let mut out: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+    // "" while in a deleted file, which adds no line.
+    let (mut file, mut line, mut old_left, mut new_left) = (String::new(), 0u32, 0u32, 0u32);
+    for l in patch.lines() {
+        if old_left > 0 || new_left > 0 {
+            match l.as_bytes().first() {
+                Some(b' ') => {
+                    (old_left, new_left, line) = (old_left.saturating_sub(1), new_left.saturating_sub(1), line + 1)
+                }
+                Some(b'-') => old_left = old_left.saturating_sub(1),
+                Some(b'+') => {
+                    out.entry(file.clone()).or_default().insert(line);
+                    (new_left, line) = (new_left.saturating_sub(1), line + 1);
+                }
+                _ => {}
+            }
+        } else if let Some(p) = l.strip_prefix("+++ ") {
+            file = p.strip_prefix("b/").map(|p| format!("{prefix}{p}")).unwrap_or_default();
+        } else if let Some(h) = l.strip_prefix("@@ -") {
+            let count = |r: &str| -> (u32, u32) {
+                let (a, n) = r.split_once(',').unwrap_or((r, "1"));
+                (a.parse().unwrap_or(0), n.parse().unwrap_or(0))
+            };
+            let mut parts = h.split(' ');
+            let (_, o) = count(parts.next().unwrap_or(""));
+            let (start, n) = count(parts.next().unwrap_or("").trim_start_matches('+'));
+            (line, old_left, new_left) = (start, o, n);
+        }
+    }
+    out
 }
 
 /// `command` limited to `files` (repository relative) with the suite's file flag.
 fn limited(suite: &Suite, files: &[String]) -> String {
-    let prefix = if suite.root == "." { String::new() } else { format!("{}/", suite.root.trim_end_matches('/')) };
     let mut command = suite.mutants_command.clone();
     for f in files {
-        let rel = f.strip_prefix(&prefix).unwrap_or(f);
-        command.push_str(&format!(" {} '{}'", suite.mutants_file_flag, rel.replace('\'', "'\\''")));
+        command.push_str(&format!(" {} {}", suite.mutants_file_flag, quoted(relative(suite, f))));
     }
     command
+}
+
+/// `f` (repository relative) relative to the suite's root.
+fn relative<'a>(suite: &Suite, f: &'a str) -> &'a str {
+    let prefix = if suite.root == "." { String::new() } else { format!("{}/", suite.root.trim_end_matches('/')) };
+    f.strip_prefix(&prefix).unwrap_or(f)
+}
+
+fn quoted(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn measure_suite(
@@ -240,17 +306,26 @@ fn measure_suite(
     scratch: &Path,
     files: &[String],
     suite: &Suite,
-    prior: Option<Prior>,
-    spending: Option<&mut Spending>,
+    mutants: Option<(&mut Lazy, bool)>,
+    tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
     let out = scratch.join(&suite.name);
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::create_dir_all(&out)?;
-
     let classifier = Classifier::new(suite)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
+    // The tests of this tree already ran: only the mutants are new.
+    let mutants = match (tested, mutants) {
+        (Some(mut s), Some((change, all))) => {
+            std::fs::create_dir_all(&out)?;
+            let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, all)?;
+            (s.mutants, s.mutation_tests, s.mutated) = (m.run.mutants, m.run.tests, Some(m.mutated));
+            return Ok(s);
+        }
+        (_, mutants) => mutants,
+    };
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out)?;
 
     // Reports left by an earlier run would be read as this run's.
     for old in report_paths(&root, &out, &suite.tests_report)?.into_iter().chain(report_paths(
@@ -269,49 +344,9 @@ fn measure_suite(
     let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
     let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
 
-    let mutation = match prior {
+    let mutation = match mutants {
         None => None,
-        Some(prior) => Some(match partial(suite, &totals, prior, spending.is_some()) {
-            Err(why) => {
-                if !prior.all {
-                    eprintln!("slimfit: {}: mutating every file: {why}", suite.name);
-                }
-                Mutation { run: mutate(&root, &out, suite, &resolver, &suite.mutants_command, false)?, partial: None }
-            }
-            Ok(mut p) => {
-                eprintln!("slimfit: {}: mutating {} changed file(s)", suite.name, p.targets.len());
-                let mut run = if p.targets.is_empty() {
-                    MutationRun::default()
-                } else {
-                    mutate(&root, &out, suite, &resolver, &limited(suite, &p.targets), true)?
-                };
-                if let Some(sp) = spending {
-                    let mut filled = 0;
-                    while filled < p.pending.len() && sp.more() {
-                        let f = p.pending[filled].clone();
-                        eprintln!("slimfit: {}: mutating {f}, which has no count yet", suite.name);
-                        let t = Instant::now();
-                        let one =
-                            mutate(&root, &out, suite, &resolver, &limited(suite, std::slice::from_ref(&f)), true)?;
-                        sp.longest = sp.longest.max(t.elapsed().as_secs_f64());
-                        sp.filled += 1;
-                        filled += 1;
-                        run.mutants.extend(one.mutants);
-                        p.targets.push(f);
-                    }
-                    p.pending.drain(..filled);
-                }
-                if !p.pending.is_empty() {
-                    eprintln!(
-                        "slimfit: {}: {} file(s) have no mutant count yet, so their mutants are not held: \
-                         `slimfit ratchet --pending-seconds <s>` measures some",
-                        suite.name,
-                        p.pending.len()
-                    );
-                }
-                Mutation { run, partial: Some(p) }
-            }
-        }),
+        Some((change, all)) => Some(mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, all)?),
     };
     Ok(reduce(
         suite,
@@ -324,9 +359,60 @@ fn measure_suite(
     ))
 }
 
+/// Runs the suite's mutants of `change` (every mutant when `all`, or when
+/// the tool cannot be limited), and counts those in the change's lines.
+#[allow(clippy::too_many_arguments)]
+fn mutate_change(
+    repo: &Path,
+    root: &Path,
+    out: &Path,
+    suite: &Suite,
+    totals: &Totals,
+    resolver: &Resolver,
+    change: &Change,
+    all: bool,
+) -> Result<Mutation> {
+    let sources: Vec<String> =
+        change.files.iter().filter(|f| matches!(totals.files.get(*f), Some((Kind::Source, _)))).cloned().collect();
+    let patch = if sources.is_empty() {
+        String::new()
+    } else {
+        git::diff(repo, &change.from, &change.to, &suite.root, &sources)?
+    };
+    let prefix = if suite.root == "." { String::new() } else { format!("{}/", suite.root.trim_end_matches('/')) };
+    let lines = added_lines(&patch, &prefix);
+    let files: Vec<String> = lines.keys().cloned().collect();
+    // Whether the run holds only the change's mutants, so every one it finds
+    // is in the change; otherwise they are told apart by line.
+    let (run, by_tool, every) = if all {
+        (mutate(root, out, suite, resolver, &suite.mutants_command, false)?, false, true)
+    } else if files.is_empty() {
+        eprintln!("slimfit: {}: no source line changed since the baseline's mutants: none to run", suite.name);
+        (MutationRun::default(), true, false)
+    } else if !suite.mutants_diff_flag.is_empty() {
+        let diff = out.join("change.diff");
+        std::fs::write(&diff, &patch)?;
+        eprintln!("slimfit: {}: mutating the lines changed in {} file(s)", suite.name, files.len());
+        let command =
+            format!("{} {} {}", suite.mutants_command, suite.mutants_diff_flag, quoted(&diff.to_string_lossy()));
+        (mutate(root, out, suite, resolver, &command, true)?, true, false)
+    } else {
+        // `current` refuses `--mutants` for a tool with neither flag.
+        eprintln!("slimfit: {}: mutating the {} file(s) the change touches", suite.name, files.len());
+        (mutate(root, out, suite, resolver, &limited(suite, &files), true)?, false, false)
+    };
+    let in_change: Vec<Mutant> = run
+        .mutants
+        .iter()
+        .filter(|m| by_tool || lines.get(&m.file).is_some_and(|l| l.contains(&m.line)))
+        .cloned()
+        .collect();
+    Ok(Mutation { mutated: Mutated { all: every, files, change: MutantCounts::of(&in_change) }, run })
+}
+
 /// One run of the mutation tool, its paths resolved to the suite's files.
-/// `may_find_none`: a run limited to files may have no mutant to test, and
-/// a tool may then write no report; a clean exit then reads as none.
+/// `may_find_none`: a limited run may have no mutant to test, and a tool
+/// may then write no report; a clean exit then reads as none.
 fn mutate(
     root: &Path,
     out: &Path,
@@ -352,15 +438,16 @@ fn mutate(
     Ok(run)
 }
 
-/// A mutation run, and what it builds on when it mutated only some files.
+/// A mutation run, and what it covered.
 pub(crate) struct Mutation {
     pub run: MutationRun,
-    partial: Option<Partial>,
+    mutated: Mutated,
 }
 
+/// A run over every mutant, none of them in a change.
 impl From<MutationRun> for Mutation {
     fn from(run: MutationRun) -> Self {
-        Self { run, partial: None }
+        Self { run, mutated: Mutated { all: true, files: vec![], change: MutantCounts::default() } }
     }
 }
 
@@ -575,20 +662,9 @@ pub(crate) fn reduce(
     }
     uncovered.sort_by(|a, b| b.lines.cmp(&a.lines).then(a.file.cmp(&b.file)).then(a.start.cmp(&b.start)));
 
-    let (mutants, mutation_tests, partial) = match mutation {
-        Some(m) => (m.run.mutants, m.run.tests, m.partial),
+    let (mutants, mutation_tests, mutated) = match mutation {
+        Some(m) => (m.run.mutants, m.run.tests, Some(m.mutated)),
         None => (Vec::new(), None, None),
-    };
-    // Every file mutated: the counts are this run's. Some: the baseline's
-    // for the files not mutated, this run's for those that were.
-    let (mutant_counts, mutant_files, mutated, mutants_pending) = match partial {
-        None => {
-            ((!mutants.is_empty()).then(|| MutantCounts::of(&mutants)), MutantCounts::by_file(&mutants), None, vec![])
-        }
-        Some(Partial { targets, mut kept, pending }) => {
-            kept.extend(MutantCounts::by_file(&mutants));
-            (Some(MutantCounts::sum(kept.values())), kept, Some(targets), pending)
-        }
     };
     let metrics = Metrics {
         prod_lines: totals.prod,
@@ -598,9 +674,6 @@ pub(crate) fn reduce(
         test_seconds: (tests.iter().map(|t| t.seconds).sum::<f64>() * 1000.0).round() / 1000.0,
         covered_lines: covered,
         uncovered_lines: uncovered_total,
-        mutants: mutant_counts,
-        mutant_files,
-        mutants_pending,
     };
     SuiteMeasurement {
         suite: suite.name.clone(),
@@ -641,7 +714,6 @@ fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function]) -> Vec<S
 #[cfg(test)]
 pub(crate) mod t {
     use super::*;
-    use crate::config::CheckConfig;
     use crate::ratchet::Bound;
 
     pub(crate) fn git(dir: &Path, args: &[&str]) {
@@ -683,184 +755,133 @@ pub(crate) mod t {
         (dir, cfg)
     }
 
-    fn run(repo: &Path, cfg: &Config, base: &Baseline, mutants: Mutants) -> (Measurement, Option<String>) {
-        let m = current(repo, cfg, base, &Options { mutants, fresh: true, dry_run: false }).unwrap();
-        (m, std::fs::read_to_string(repo.join(OUT).join("rust/args")).ok())
+    /// The measurement, and the arguments the mutation "tool" got (`None`:
+    /// it did not run). Not `fresh`: a cached test run of the same tree is
+    /// kept, so only the mutants run.
+    fn run(repo: &Path, cfg: &Config, base: &Baseline) -> (Measurement, Option<String>) {
+        let args = repo.join(OUT).join("rust/args");
+        let _ = std::fs::remove_file(&args);
+        let m = current(repo, cfg, base, &Options { mutants: Mutants::Change, fresh: false, dry_run: false }).unwrap();
+        (m, std::fs::read_to_string(args).ok())
     }
 
+    fn mutated(m: &Measurement) -> Mutated {
+        m.suites[0].mutated.clone().unwrap()
+    }
+
+    /// One fixture through the change-only rule. `init`'s tree is the base;
+    /// a tool with only a file flag runs the touched files and the change's
+    /// mutants are told apart by line; cargo-mutants is given the diff and
+    /// all it reports is the change's; a ratchet moves the tree on, so
+    /// committing what was measured leaves nothing; a pruned tree falls back
+    /// to its commit. With no mutants_at it refuses unless the branch has an
+    /// upstream, whose merge base it then takes; a tool with neither flag
+    /// refuses `--mutants`. Nothing but `--all-mutants` runs every mutant.
     #[test]
-    fn mutants_of_changed_files_only_merge_with_the_baselines_counts() {
-        let (dir, cfg) = sample_repo();
+    fn mutants_run_on_the_lines_changed_since_the_tree_last_measured() {
+        let (dir, mut cfg) = sample_repo();
         let repo = dir.path();
-        // No commit recorded: every file is mutated, with no file arguments.
-        let (full, args) = run(repo, &cfg, &Baseline::default(), Mutants::Changed);
-        assert_eq!(args.as_deref(), Some("\n"));
-        let s = &full.suites[0];
-        assert_eq!(s.mutated, None);
-        assert_eq!(s.metrics.tests, 4);
-        let lib = s.metrics.mutant_files["src/lib.rs"];
-        assert_eq!(s.metrics.mutants, Some(lib));
-        assert!(lib.survived > 0 && lib.killed > 0);
+        let base = Baseline { mutants_at: snapshot(repo).unwrap(), ..Default::default() };
+        let text = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
+        std::fs::write(repo.join("src/lib.rs"), text.replacen("    age >= 18\n", "    age >= 18 // x\n", 1)).unwrap();
+        let files = ["src/lib.rs", "src/new.rs"];
 
-        // A file the baseline counted, unchanged since: kept as counted.
-        let kept = MutantCounts { killed: 2, survived: 1, unviable: 0 };
-        let mut base = crate::ratchet::ratchet(&Baseline::default(), &full, &Default::default(), &[], None).unwrap().0;
-        let b = base.suites.get_mut("rust").unwrap();
-        b.mutant_files.insert("src/kept.rs".into(), kept);
-        b.mutants = Some(MutantCounts::sum(b.mutant_files.values()));
-        let total = b.mutants;
-
-        // Nothing changed: nothing is mutated, the baseline's counts stand.
-        let (m, args) = run(repo, &cfg, &base, Mutants::Changed);
-        assert_eq!((args, m.suites[0].mutated.clone(), m.suites[0].metrics.mutants), (None, Some(vec![]), total));
-
-        // lib.rs changed: only it is mutated; kept.rs keeps its count.
-        std::fs::write(repo.join("src/lib.rs"), std::fs::read_to_string(repo.join("src/lib.rs")).unwrap() + "// x\n")
-            .unwrap();
-        let (m, args) = run(repo, &cfg, &base, Mutants::Changed);
+        // Only a file flag: the touched files; of the report's mutants, those
+        // of line 12 (two killed, one missed) are the change's.
+        let mut by_file = cfg.clone();
+        by_file.suites[0].overrides.mutants_diff_flag = Some(String::new());
+        by_file.suites[0].overrides.mutants_file_flag = Some("--file".into());
+        let (m, args) = run(repo, &by_file, &base);
         assert_eq!(args.as_deref(), Some("--file src/lib.rs\n"));
+        let line12 = MutantCounts { killed: 2, survived: 1, unviable: 0 };
+        assert_eq!((mutated(&m).all, mutated(&m).files, mutated(&m).change), (false, vec![files[0].into()], line12));
+
+        // A new untracked file too (another tree, so measured again).
+        std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
+
+        // A diff flag: the tool gets the change's diff, and every mutant it
+        // reports is the change's; their killers come from its own logs.
+        let (m, args) = run(repo, &cfg, &base);
+        let diff = repo.join(OUT).join("rust/change.diff");
+        assert_eq!(args.unwrap(), format!("--in-diff {}\n", diff.display()));
+        let patch = std::fs::read_to_string(diff).unwrap();
+        assert!(patch.contains("+    age >= 18 // x") && patch.contains("+++ b/src/new.rs"), "{patch}");
         let s = &m.suites[0];
-        assert_eq!(s.mutated, Some(vec!["src/lib.rs".to_string()]));
-        assert_eq!(s.metrics.mutant_files, [("src/kept.rs".to_string(), kept), ("src/lib.rs".to_string(), lib)].into());
-        assert_eq!(s.metrics.mutants, total);
-        // Its killers are read from the run's own logs.
+        assert_eq!(
+            (mutated(&m).files, mutated(&m).change),
+            (files.map(String::from).to_vec(), MutantCounts::of(&s.mutants))
+        );
         let killed: Vec<_> = s.mutants.iter().filter(|m| m.status == MutantStatus::Killed).collect();
         assert!(!killed.is_empty() && killed.iter().all(|m| m.killed_by.as_ref().is_some_and(|k| !k.is_empty())));
-        assert!(s.mutation_tests.as_ref().is_some_and(|t| t.len() == 4));
-        // The merged counts describe this tree: ratcheting records it.
-        let next = crate::ratchet::ratchet(&base, &m, &Default::default(), &[], None).unwrap().0;
-        assert_eq!(next.mutants_at.unwrap().dirty, vec!["src/lib.rs".to_string()]);
+        let v = crate::ratchet::check(&base, &m, &Default::default());
+        assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::SurvivedMutants]);
 
-        // --all-mutants, or a baseline without per-file counts: every file.
-        assert_eq!(run(repo, &cfg, &base, Mutants::All).0.suites[0].mutated, None);
-        // A commit this repository lacks (squashed away): every file.
-        let mut gone = base.clone();
-        gone.mutants_at.as_mut().unwrap().commit = "0".repeat(40);
-        assert_eq!(run(repo, &cfg, &gone, Mutants::Changed).0.suites[0].mutated, None);
-        base.suites.get_mut("rust").unwrap().mutant_files.clear();
-        assert_eq!(run(repo, &cfg, &base, Mutants::Changed).0.suites[0].mutated, None);
-    }
+        // Ratcheted: the same tree has no change left; committed as
+        // measured, none either, though HEAD moved.
+        let loosen = [Bound::SurvivedMutants];
+        let moved = crate::ratchet::ratchet(&Baseline::default(), &m, &Default::default(), &loosen, Some("t")).unwrap();
+        let none = Mutated { all: false, files: vec![], change: MutantCounts::default() };
+        assert_eq!((run(repo, &cfg, &moved).0.suites[0].mutated.clone(), None), (Some(none.clone()), None::<()>));
+        git(repo, &["add", "-A", "src"]);
+        git(repo, &["commit", "-qm", "change"]);
+        let (m, args) = run(repo, &cfg, &moved);
+        assert_eq!((mutated(&m), args), (none, None));
+        // The tree pruned: from its commit, which is before the change.
+        let mut pruned = moved;
+        pruned.mutants_at.as_mut().unwrap().tree = Some("0".repeat(40));
+        assert_eq!(mutated(&run(repo, &cfg, &pruned).0).files, files);
 
-    /// Five files, each a copy of the sample's lib.rs except `e.rs`, which
-    /// has no mutants. The mutation "tool" writes, per file it is limited
-    /// to (every file when not limited), the real report renamed to it.
-    fn five_file_repo() -> (tempfile::TempDir, Config) {
-        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust");
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        std::fs::copy(sample.join("Cargo.toml"), dir.path().join("Cargo.toml")).unwrap();
-        for f in ["a", "b", "c", "d"] {
-            std::fs::copy(sample.join("src/lib.rs"), dir.path().join(format!("src/{f}.rs"))).unwrap();
+        // No mutants_at and no upstream: refused, no mutant run.
+        let refused = |cfg: &Config| {
+            let _ = std::fs::remove_file(repo.join(OUT).join("rust/args"));
+            let e = current(
+                repo,
+                cfg,
+                &Baseline::default(),
+                &Options { mutants: Mutants::Change, fresh: false, dry_run: false },
+            );
+            let faults = crate::fault::of(e.unwrap_err());
+            assert!(!repo.join(OUT).join("rust/args").exists(), "a mutant ran");
+            faults.into_iter().map(|f| f.fault).collect::<Vec<_>>().join("\n")
+        };
+        assert!(refused(&cfg).contains("records no mutants_at, and the branch has no upstream"));
+        // A tool that takes neither a diff nor a file: `--mutants` refuses up
+        // front; only `--all-mutants` runs every mutant.
+        by_file.suites[0].overrides.mutants_file_flag = Some(String::new());
+        assert!(refused(&by_file).contains("cannot be limited to a change"));
+
+        // No mutants_at, an upstream: the change since the merge base with
+        // it. The suite moved to `sub/`, its report found by a glob: the
+        // diff is relative to its root.
+        git(repo, &["branch", "base", "HEAD~1"]);
+        git(repo, &["branch", "--set-upstream-to", "base"]);
+        std::fs::create_dir(repo.join("sub")).unwrap();
+        for f in ["Cargo.toml", "src"] {
+            std::fs::rename(repo.join(f), repo.join("sub").join(f)).unwrap();
         }
-        std::fs::write(dir.path().join("src/e.rs"), "pub const E: u8 = 1;\n").unwrap();
-        git(dir.path(), &["init", "-q"]);
-        git(dir.path(), &["add", "-A"]);
-        git(dir.path(), &["commit", "-qm", "sample"]);
-        let r = sample.join("reports");
-        let r = r.to_string_lossy();
-        let cfg: Config = toml::from_str(&format!(
-            r#"
-            [[suite]]
-            name = "rust"
-            preset = "rust"
-            test_command = "cp {r}/junit.xml {r}/lcov.info \"$SLIMFIT_OUT\""
-            tests_report = {{ format = "junit", path = "$SLIMFIT_OUT/junit.xml" }}
-            mutants_command = "f() {{ fs=; while [ $# -gt 0 ]; do [ \"$1\" = --file ] && {{ fs=\"$fs $2\"; shift; }}; shift; done; [ -n \"$fs\" ] || fs='src/a.rs src/b.rs src/c.rs src/d.rs src/e.rs'; mkdir -p \"$SLIMFIT_OUT/m\"; echo \"$fs\" >> \"$SLIMFIT_OUT/runs\"; for x in $fs; do [ $x = src/e.rs ] || sed \"s#src/lib.rs#$x#g\" {r}/outcomes.json > \"$SLIMFIT_OUT/m/${{x#src/}}.json\"; done; }}; f"
-            mutants_report = {{ format = "cargo-mutants", path = "$SLIMFIT_OUT/m/*.json" }}
-            "#
-        ))
-        .unwrap();
-        (dir, cfg)
+        cfg.suites[0].root = "sub".into();
+        let glob = "$SLIMFIT_OUT/mutants.out/outcome*.json";
+        cfg.suites[0].overrides.mutants_report =
+            Some(crate::config::Report { format: crate::formats::MutantsFormat::CargoMutants, path: glob.into() });
+        let (m, args) = run(repo, &cfg, &Baseline::default());
+        assert_eq!(mutated(&m).files, ["sub/src/lib.rs", "sub/src/new.rs"]);
+        assert!(!m.suites[0].mutants.is_empty() && args.unwrap().starts_with("--in-diff "));
+        let patch = std::fs::read_to_string(repo.join(OUT).join("rust/change.diff")).unwrap();
+        assert!(patch.contains("+++ b/src/lib.rs"), "{patch}");
     }
 
+    /// The lines a unified diff adds, counted through context, removals
+    /// that look like headers, and several hunks and files.
     #[test]
-    fn a_baseline_built_in_pieces_counts_as_one_full_run() {
-        let (dir, cfg) = five_file_repo();
-        let repo = dir.path();
-        let fill = |n| Mutants::Fill(Budget { files: Some(n), seconds: None });
-        let piece = |base: &Baseline, mutants| {
-            // Not fresh: a piece never takes a cached measurement for its own.
-            let m = current(repo, &cfg, base, &Options { mutants, fresh: false, dry_run: false }).unwrap();
-            let runs = std::fs::read_to_string(repo.join(OUT).join("rust/runs")).unwrap_or_default();
-            let next = crate::ratchet::ratchet(base, &m, &Default::default(), &[], None).unwrap().0;
-            (m, next, runs.lines().map(|l| l.trim().to_string()).collect::<Vec<_>>())
-        };
-
-        // Piece 1, on a baseline with no mutants: every file is pending; two are measured.
-        let (_, b1, runs) = piece(&Baseline::default(), fill(2));
-        assert_eq!(runs, ["src/a.rs", "src/b.rs"]);
-        let s = &b1.suites["rust"];
-        assert_eq!(s.mutants_pending, ["src/c.rs", "src/d.rs", "src/e.rs"]);
-        assert_eq!(s.mutant_files.keys().collect::<Vec<_>>(), ["src/a.rs", "src/b.rs"]);
-
-        // check --mutants holds only the counted files and names the rest.
-        let (m, _) = run(repo, &cfg, &b1, Mutants::Changed);
-        let v = crate::ratchet::check(&b1, &m, &Default::default());
-        // The same report again: only test_seconds may move, with the host's load.
-        assert!(v.ok && v.improved.iter().all(|c| c.metric == crate::ratchet::Bound::TestSeconds), "{v:?}");
-        assert_eq!(v.mutants_pending["rust"], ["src/c.rs", "src/d.rs", "src/e.rs"]);
-        let (m, _) = run(repo, &cfg, &b1, Mutants::None);
-        assert!(crate::ratchet::check(&b1, &m, &Default::default()).mutants_pending.is_empty());
-
-        // A counted file changes: piece 2 re-mutates it, so moving mutants_at
-        // stays sound. A changed pending file stays pending.
-        std::fs::write(repo.join("src/a.rs"), std::fs::read_to_string(repo.join("src/a.rs")).unwrap() + "// x\n")
-            .unwrap();
-        std::fs::write(repo.join("src/e.rs"), "pub const E: u8 = 2;\n").unwrap();
-        let (_, b2, runs) = piece(&b1, fill(2));
-        assert_eq!(runs, ["src/a.rs", "src/c.rs", "src/d.rs"]);
-        assert_eq!(b2.suites["rust"].mutants_pending, ["src/e.rs"]);
-        assert_eq!(b2.mutants_at.as_ref().unwrap().dirty, ["src/a.rs", "src/e.rs"]);
-
-        // Piece 3, on a budget larger than what is left: the last file.
-        let (_, b3, runs) = piece(&b2, Mutants::Fill(Budget { files: None, seconds: Some(3600) }));
-        assert_eq!(runs, ["src/a.rs", "src/e.rs"]);
-
-        let (full, ..) = piece(&Baseline::default(), Mutants::All);
-        let (s, f) = (&b3.suites["rust"], &full.suites[0].metrics);
-        assert!(s.mutants_pending.is_empty());
-        assert_eq!((&s.mutant_files, s.mutants), (&f.mutant_files, f.mutants));
-        assert_eq!(f.mutant_files.len(), 4);
-    }
-
-    #[test]
-    fn a_piece_records_its_mutants_when_test_seconds_is_over_but_not_when_a_test_fails() {
-        let (dir, cfg) = five_file_repo();
-        let repo = dir.path();
-        let strict = CheckConfig { time_tolerance: 0.0, time_slack: 0.0, coverage_slack: 0 };
-        // A suite with no mutants yet, its test_seconds taken on an idle host.
-        let idle = Metrics { test_seconds: 0.1, uncovered_lines: 1000, ..Default::default() };
-        let b0 = Baseline { suites: [("rust".to_string(), idle)].into(), ..Default::default() };
-
-        // A loaded host: the piece's test_seconds is over its bound. The piece
-        // still records its counts, and test_seconds stays at the old value.
-        let fill = Mutants::Fill(Budget { files: Some(2), seconds: None });
-        let m = current(repo, &cfg, &b0, &Options { mutants: fill, fresh: true, dry_run: false }).unwrap();
-        assert!(m.piece && m.suites[0].metrics.test_seconds > 0.1);
-        let (b1, over) = crate::ratchet::ratchet(&b0, &m, &strict, &[], None).unwrap();
-        assert_eq!(over.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::TestSeconds]);
-        let s = &b1.suites["rust"];
-        assert_eq!(s.test_seconds, 0.1);
-        assert_eq!(s.mutants_pending, ["src/c.rs", "src/d.rs", "src/e.rs"]);
-        assert_eq!(s.mutant_files.keys().collect::<Vec<_>>(), ["src/a.rs", "src/b.rs"]);
-
-        // Not a piece: the same measurement is refused.
-        assert!(crate::ratchet::ratchet(&b0, &Measurement { piece: false, ..m.clone() }, &strict, &[], None).is_err());
-        // A failing test refuses a piece all the same.
-        let mut failing = m;
-        failing.suites[0].metrics.failures = 1;
-        assert!(crate::ratchet::ratchet(&b0, &failing, &strict, &[], None).is_err());
-    }
-
-    #[test]
-    fn a_budget_starts_no_file_that_would_end_past_it_but_always_one() {
-        let at = |filled, longest, files, seconds| {
-            Spending { budget: Budget { files, seconds }, started: Instant::now(), filled, longest }.more()
-        };
-        assert!(at(0, 0.0, None, Some(0)));
-        assert!(at(1, 2.0, None, Some(3)));
-        assert!(!at(1, 2.0, None, Some(1)));
-        assert!(!at(2, 0.0, Some(2), None));
+    fn added_lines_follow_the_hunks() {
+        let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,4 +1,4 @@\n x\n--- y\n+++ z\n w\n \n\
+                     @@ -10 +10,2 @@\n-old\n\\ No newline at end of file\n+new\n+more\n\
+                     diff --git a/gone.rs b/gone.rs\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n\
+                     diff --git a/n.rs b/n.rs\n--- /dev/null\n+++ b/n.rs\n@@ -0,0 +1 @@\n+n\n";
+        let got = added_lines(patch, "sub/");
+        let want: BTreeMap<String, BTreeSet<u32>> =
+            [("sub/a.rs".into(), [2, 10, 11].into()), ("sub/n.rs".into(), [1].into())].into();
+        assert_eq!(got, want);
     }
 
     #[test]

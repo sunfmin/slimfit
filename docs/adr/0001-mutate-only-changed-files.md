@@ -1,5 +1,7 @@
 # 1. `--mutants` mutates only the files changed since the baseline
 
+**Superseded by ADR 0005** (`0005-mutants-of-the-change.md`): no mutant count is kept, and `--mutants` runs the mutants of the changed lines.
+
 ## Context
 
 Mutation testing a large workspace in full takes hours. factorium at 90916ff

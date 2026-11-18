@@ -6,10 +6,13 @@
 #   check                     → passes
 #   add an untested function  → check exits 1 on uncovered_lines
 # With E2E_MUTANTS=1, also (before the injection):
-#   next --all --mutants      → a `surviving-mutant` task (the is_adult boundary);
+#   next --all --all-mutants  → a `surviving-mutant` task (the is_adult boundary);
 #                               for rust, `redundant-test` tasks name `slow` and
 #                               one of the two identical `add` tests (adds_again
 #                               is the deliberate copy; which one goes is a tie)
+# and after it, for rust:
+#   check --mutants           → cargo-mutants runs only the injected lines'
+#                               mutants, and their survivors fail the check
 # A language whose toolchain for this run is incomplete (the mutants tool too
 # under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
 # Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
@@ -79,10 +82,10 @@ for lang in $langs; do
     "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
     "$bin" check >/dev/null 2>&1
     if [ "${E2E_MUTANTS:-}" = 1 ]; then
-      "$bin" next --all --mutants 2>mutants.log | json '[t["kind"] for t in d["tasks"]]' >kinds.txt || { tail -20 mutants.log; exit 1; }
+      "$bin" next --all --all-mutants 2>mutants.log | json '[t["kind"] for t in d["tasks"]]' >kinds.txt || { tail -20 mutants.log; exit 1; }
       grep -q surviving-mutant kinds.txt || { echo "no surviving-mutant task: $(cat kinds.txt)" >&2; exit 1; }
       if [ "$lang" = rust ]; then
-        "$bin" next --all --mutants --kind redundant-test 2>/dev/null | json '" ".join(sorted(t["evidence"]["test"] for t in d["tasks"]))' >redundant.txt
+        "$bin" next --all --all-mutants --kind redundant-test 2>/dev/null | json '" ".join(sorted(t["evidence"]["test"] for t in d["tasks"]))' >redundant.txt
         grep -qE '^calc::tests::adds(_again)? calc::tests::slow$' redundant.txt || { echo "redundant tests: $(cat redundant.txt)" >&2; exit 1; }
       fi
     fi
@@ -92,6 +95,11 @@ for lang in $langs; do
       exit 1
     fi
     json '[v["metric"] for v in d["verdict"]["violations"]]' <check.json | grep -q uncovered_lines
+    if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
+      "$bin" check --mutants >change.json 2>change.log && { echo "check --mutants passed the untested function" >&2; exit 1; }
+      json 'd["mutated"]["rust"]["all"], d["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <change.json \
+        | grep -qx "False \['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
+    fi
     echo "e2e $lang: ok ($(( $(date +%s) - start ))s)"
   ) || { echo "e2e $lang: FAILED"; failed=1; }
 done

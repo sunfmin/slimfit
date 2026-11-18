@@ -1,29 +1,26 @@
 //! The few git questions slimfit asks, each one command.
 
 use crate::fault::fault;
-use crate::model::Snapshot;
 use anyhow::{Context, Result, bail};
-use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn run(repo: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .with_context(|| format!("running git {}", args.join(" ")))?;
+    run_with_index(repo, None, args)
+}
+
+/// `run`, with `GIT_INDEX_FILE` set to `index` when given.
+fn run_with_index(repo: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
+    let mut cmd = Command::new("git");
+    if let Some(i) = index {
+        cmd.env("GIT_INDEX_FILE", i);
+    }
+    let out = cmd.arg("-C").arg(repo).args(args).output().with_context(|| format!("running git {}", args.join(" ")))?;
     if !out.status.success() {
         bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// `path`'s text at `commit`; `None` when the commit has no such file.
-pub fn text_at(repo: &Path, commit: &str, path: &str) -> Option<String> {
-    run(repo, &["show", &format!("{commit}:{path}")]).ok()
 }
 
 pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
@@ -56,13 +53,10 @@ fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
 pub struct Worktree {
     /// Tracked files plus untracked ones git does not ignore, relative to `repo`.
     pub files: Vec<String>,
-    /// HEAD and the files that differ from it, outside `.slimfit/`; `None`
-    /// before the first commit.
-    pub snapshot: Option<Snapshot>,
+    pub head: Head,
     /// HEAD plus a hash of every local change outside `.slimfit/`, so a
     /// measurement can be reused exactly while the tree is unchanged.
     pub key: String,
-    untracked: Vec<String>,
 }
 
 pub fn worktree(repo: &Path) -> Result<Worktree> {
@@ -71,9 +65,9 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
     let listing = listing(repo)?;
     let untracked: Vec<String> = listing.iter().filter(|(t, f)| !t && outside(f)).map(|(_, f)| f.clone()).collect();
     let files: Vec<String> = listing.into_iter().map(|(_, f)| f).collect();
-    let head = run(repo, &["rev-parse", "--verify", "HEAD"]).ok().map(|h| h.trim().to_string());
+    let head = head(repo)?;
     // Before the first commit every file is a local change.
-    let changed = match &head {
+    let changed = match &head.commit {
         Some(commit) => differing(repo, commit, &untracked)?,
         None => files.iter().filter(|f| outside(f)).cloned().collect(),
     };
@@ -89,25 +83,90 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
             .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
             .hash(&mut h);
     }
-    let key = format!("{}+{:016x}", head.as_deref().unwrap_or("unborn"), h.finish());
-    let snapshot = head.map(|commit| Snapshot { commit, dirty: changed.into_iter().collect() });
-    Ok(Worktree { files, snapshot, key, untracked })
-}
-
-/// The files whose contents may differ between the tree `then` names and
-/// the working tree now: those changed since its commit, and those that
-/// differed from it then. Fails when the commit is not in this repository.
-pub fn changed_since(repo: &Path, now: &Worktree, then: &Snapshot) -> Result<BTreeSet<String>> {
-    let mut out = differing(repo, &then.commit, &now.untracked)?;
-    out.extend(then.dirty.iter().cloned());
-    Ok(out)
+    let key = format!("{}+{:016x}", head.commit.as_deref().unwrap_or("unborn"), h.finish());
+    Ok(Worktree { files, head, key })
 }
 
 /// Files of the working tree that differ from `commit` (both sides of a
 /// rename, deleted ones too), plus the untracked ones.
-fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<BTreeSet<String>> {
+fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<Vec<String>> {
     let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", commit, "--", ".", ":(exclude).slimfit"])?;
-    Ok(diff.split('\0').filter(|p| !p.is_empty()).map(String::from).chain(untracked.iter().cloned()).collect())
+    let mut out: Vec<String> =
+        diff.split('\0').filter(|p| !p.is_empty()).map(String::from).chain(untracked.iter().cloned()).collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// The working tree (untracked files git does not ignore included) written
+/// as a tree object, through a copy of the index kept in the git directory:
+/// the real index is not touched.
+pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
+    match std::fs::copy(&head.index, &head.scratch) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&head.scratch),
+        Err(e) => return Err(e.into()),
+    }
+    // slimfit's own files are not the code: writing the baseline moves no tree.
+    run_with_index(repo, Some(&head.scratch), &["add", "-A", "--", ".", ":(exclude).slimfit"])?;
+    Ok(run_with_index(repo, Some(&head.scratch), &["write-tree"])?.trim().to_string())
+}
+
+/// HEAD, and where git keeps the index and slimfit its copy of it: one
+/// `rev-parse`, as each spawn costs on a loaded host (ADR 0003).
+pub struct Head {
+    /// `None` before the first commit.
+    pub commit: Option<String>,
+    index: std::path::PathBuf,
+    scratch: std::path::PathBuf,
+}
+
+pub fn head(repo: &Path) -> Result<Head> {
+    const PATHS: [&str; 6] =
+        ["rev-parse", "--path-format=absolute", "--git-path", "index", "--git-path", "slimfit-index"];
+    let with_head = [&PATHS[..], &["--verify", "HEAD"]].concat();
+    // Before the first commit `--verify HEAD` fails the whole call.
+    let (out, born) = match run(repo, &with_head) {
+        Ok(out) => (out, true),
+        Err(_) => (run(repo, &PATHS)?, false),
+    };
+    let mut lines = out.lines().map(str::trim);
+    let index = lines.next().context("git's index path")?.into();
+    let scratch = lines.next().context("a scratch index path")?.into();
+    let commit = if born { Some(lines.next().context("HEAD")?.to_string()) } else { None };
+    Ok(Head { commit, index, scratch })
+}
+
+/// Where the current branch forks from its upstream: `None` without an
+/// upstream, or before the first commit.
+pub fn merge_base_with_upstream(repo: &Path) -> Option<String> {
+    run(repo, &["merge-base", "HEAD", "@{upstream}"]).ok().map(|s| s.trim().to_string())
+}
+
+/// The tree with no files: what a repository with no commit is compared to.
+pub fn empty_tree(repo: &Path) -> Result<String> {
+    Ok(run(repo, &["hash-object", "-t", "tree", "/dev/null"])?.trim().to_string())
+}
+
+/// The files that differ between two trees, outside `.slimfit/` (deleted
+/// ones too).
+pub fn changed_files(repo: &Path, from: &str, to: &str) -> Result<Vec<String>> {
+    let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", from, to, "--", ".", ":(exclude).slimfit"])?;
+    Ok(diff.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
+}
+
+/// The unified diff from `from` to `to` of `files` (repository relative),
+/// its paths relative to `root` (a directory of the repository, or ".").
+pub fn diff(repo: &Path, from: &str, to: &str, root: &str, files: &[String]) -> Result<String> {
+    let relative = format!("--relative={}", root.trim_end_matches('/'));
+    let mut args = vec!["diff", "--no-ext-diff", "--no-color", "--no-renames"];
+    if root != "." {
+        args.push(&relative);
+    }
+    args.extend([from, to, "--"]);
+    let specs: Vec<String> = files.iter().map(|f| format!(":(literal){f}")).collect();
+    args.extend(specs.iter().map(String::as_str));
+    run(repo, &args)
 }
 
 /// The blobs of `commit`: (path, contents), read through one `cat-file --batch`.

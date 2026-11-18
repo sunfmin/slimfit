@@ -317,28 +317,27 @@ fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
     doctor
 }
 
-/// `init --mutants` runs the preset's tools once each and measures what
-/// they wrote; `next` and `check` then work from that measurement. With
+/// `init` runs the preset's test tools once each, and no mutant;
+/// `next --all-mutants` runs only the mutants tool, keeping the test run
+/// of the same tree; `check` then works from that measurement. With
 /// `dry`, `init` and `ratchet` are each asked first with `--dry-run`, which
 /// writes nothing and answers what the real run then writes (on one
 /// sample: what a dry run writes does not depend on the language). What
 /// each command printed, by command.
 fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'static str, Value)> {
     let mut printed = Vec::new();
-    // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
-    // other tools are made to fail all the same.
-    let exit = if lang.name == "rust" { 2 } else { 3 };
-    s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
     if dry {
         let files = [".gitignore", ".slimfit/baseline.json", "slimfit.toml"];
-        printed.push(("init", s.dry_run(&["init", "--mutants", "--dry-run"], &files)));
+        printed.push(("init", s.dry_run(&["init", "--dry-run"], &files)));
         s.take();
     }
-    let (code, init, stderr) = s.slimfit(&["init", "--mutants"]);
-    assert_eq!(code, 0, "{}: {init:#}\n{stderr}", lang.name);
+    let init = s.ok(&["init"]);
+    assert_eq!(s.steps(), lang.test_steps, "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
-        // What the dry run said it would write, but for `test_seconds`: the host's load moves it.
+        // What the dry run said it would write, but for `test_seconds` (the
+        // host's load moves it) and the tree mutants_at names (the dry run's
+        // lacks the files it did not write).
         let would = &dry["would_write"];
         for f in [".gitignore", "slimfit.toml"] {
             assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
@@ -346,21 +345,24 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
         let held = |text: &str| {
             let mut b: Value = serde_json::from_str(text).unwrap();
             b["suites"][lang.name]["test_seconds"] = Value::Null;
+            b["mutants_at"]["tree"] = Value::Null;
             b
         };
         assert_eq!(held(&base), held(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
     }
-    assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
-    s.fault(lang.mutants_step, None);
-    let mut want: Vec<&str> = lang.test_steps.to_vec();
-    want.push(lang.mutants_step);
-    assert_eq!(s.steps(), want, "{}", lang.name);
     let b = &init["baseline"][lang.name];
     assert!(b["tests"].as_u64() >= Some(4) && b["failures"] == 0, "{}: {b:#}", lang.name);
-    assert!(b["uncovered_lines"].as_u64() > Some(0), "{}: {b:#}", lang.name);
-    assert!(b["mutants"]["survived"].as_u64() > Some(0), "{}: {b:#}", lang.name);
+    assert!(b["uncovered_lines"].as_u64() > Some(0) && b.get("mutants").is_none(), "{}: {b:#}", lang.name);
 
-    let next = s.ok(&["next", "--all", "--mutants"]);
+    // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
+    // other tools are made to fail all the same.
+    let exit = if lang.name == "rust" { 2 } else { 3 };
+    s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
+    let (code, next, stderr) = s.slimfit(&["next", "--all", "--all-mutants"]);
+    assert_eq!(code, 0, "{}: {next:#}\n{stderr}", lang.name);
+    assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
+    s.fault(lang.mutants_step, None);
+    assert_eq!(s.steps(), [lang.mutants_step], "{}", lang.name);
     let tasks = next["tasks"].as_array().unwrap();
     let of = |k: &'static str| tasks.iter().filter(move |t| t["kind"] == k);
     assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);
@@ -407,10 +409,10 @@ fn faults(json: &Value) -> String {
 
 /// A test or mutants tool that is missing, exits non-zero, or writes no
 /// report. A failing exit alone is no error: failing tests still write
-/// their reports (a mutants tool's exit is covered at `init`). No report
+/// their reports (a mutants tool's exit is covered by `next --all-mutants`). No report
 /// is, and the error names the report and ends with the tool's own words.
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
-    const ARGS: &[&str] = &["check", "--all-mutants", "--fresh"];
+    const ARGS: &[&str] = &["next", "--all-mutants", "--fresh"];
     let mut tools = lang.test_tools.to_vec();
     // A mutants tool that also runs the tests is missing for them first.
     if !tools.contains(&lang.mutants_tool) {
@@ -442,9 +444,9 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
 }
 
 /// The Rust sample, measured, in the states that make each command print
-/// its optional keys: violations, improvements, loosenings, a piece's
-/// not-recorded bounds, pending mutants, mutated files. Killers come from
-/// nextest's logs, and a changed file limits cargo-mutants to it.
+/// its optional keys: violations, improvements, loosenings, the change's
+/// mutants and `mutants_at`. Killers come from nextest's logs, and a
+/// changed line gives cargo-mutants the change's diff.
 fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mut run = |cmd: &'static str, args: &[&str], code: i32| -> Value {
         let mut all = vec![cmd];
@@ -485,29 +487,19 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     edit(&|b| b["uncovered_lines"] = 0.into());
     run("check", &[], 1);
     run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
-    // A changed file and a new one pending: mutated, mutants_pending;
-    // cargo-mutants is limited to the changed file.
+    // A changed line whose mutants survive: cargo-mutants is given the
+    // change's diff; the survivors are accepted with a reason.
     let lib = s.repo.join("src/lib.rs");
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
-    std::fs::write(s.repo.join("src/pending.rs"), "pub fn p() -> u8 {\n    1\n}\n").unwrap();
-    edit(&|b| b["mutants_pending"] = serde_json::json!(["src/pending.rs"]));
     s.take();
-    run("check", &["--mutants"], 0);
+    let check = run("check", &["--mutants"], 1);
+    assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
+    assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
     let calls = s.take();
     let mutants = calls.iter().find(|c| c.step == "cargo mutants").unwrap();
-    assert!(mutants.args.ends_with(&["--file".into(), "src/lib.rs".into()]), "{:?}", mutants.args);
-    // A piece over its time bound, with no slack: not_recorded.
-    std::fs::remove_file(s.repo.join("src/pending.rs")).unwrap();
-    edit(&|b| {
-        b["test_seconds"] = 0.into();
-        b["mutants_pending"] = serde_json::json!(["src/lib.rs"]);
-    });
-    let cfg = s.repo.join("slimfit.toml");
-    let text = std::fs::read_to_string(&cfg).unwrap();
-    let text =
-        text.replace("time_tolerance = 0.2", "time_tolerance = 0.0").replace("time_slack = 1.0", "time_slack = 0.0");
-    std::fs::write(&cfg, text).unwrap();
-    run("ratchet", &["--pending-files", "1", "--fresh"], 0);
+    let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
+    assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
+    run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
     run("report", &["--points", "1"], 0);
 }
 
@@ -538,10 +530,10 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
         let page = Command::new(env!("CARGO_BIN_EXE_slimfit")).args([cmd, "--help"]).output().unwrap();
         let page = String::from_utf8(page.stdout).unwrap();
         let reached: &[&str] = match *cmd {
-            "init" => &["mutants_file_flag", "mutant_files"],
+            "init" => &["mutants_diff_flag", "mutants_file_flag"],
             "next" => &["also_killed_by", "survivors", "start", "counts", "remaining"],
-            "check" => &["fix", "improved", "mutants_pending", "unviable"],
-            "ratchet" => &["from", "reason", "fix"],
+            "check" => &["fix", "improved", "mutated", "change", "unviable"],
+            "ratchet" => &["from", "reason", "mutants_at", "tree"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
             _ => &["history", "commit", "from"],
         };

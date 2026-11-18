@@ -70,7 +70,8 @@ either way.
 ## Consequences
 
 - Rust gets redundant-test tasks from `next --all-mutants`, like TypeScript
-  and Kotlin.
+  and Kotlin (and, since ADR 0005, among the mutants of a change from
+  `next --mutants`).
 - The Rust preset now needs cargo-nextest for mutants too; it already needed
   it for tests.
 - A killed mutant costs a full test run instead of a run up to the first
