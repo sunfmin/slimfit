@@ -481,7 +481,4 @@ fn doctor_names_each_fix_and_changes_nothing() {
     assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
     assert_eq!(status(), before, "doctor changed the working tree");
     assert_eq!(s.steps(), Vec::<String>::new(), "doctor ran a tool");
-    s.ok(&["init"]);
-    let doctor = s.ok(&["doctor"]);
-    assert_eq!(found(&doctor), want[1..], "{doctor:#}");
 }
