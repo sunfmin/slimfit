@@ -50,6 +50,11 @@ unit is the file. That is also what factorium's own `mutants.sh -f` does.
   blocks) re-mutate their own file. So the `redundant-test` task, whose
   whole job is deleting a test, is accepted with `slimfit check
   --all-mutants`.
+- `mutants_at` moves only when a ratchet carries a mutants measurement.
+  After `check --mutants`, a plain `slimfit ratchet` reuses the cached
+  measurement of the same tree, so it does carry one. A baseline ratcheted
+  without mutants for a long time makes every `--mutants` run mutate all
+  the files changed since then.
 - A partial run's kill matrix covers only the mutated files, so `next` gives
   no `redundant-test` tasks from it. Its `surviving-mutant` tasks name only
   the mutated files.
