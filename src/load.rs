@@ -26,13 +26,17 @@ pub fn slowdown_during<T>(f: impl FnOnce() -> T) -> (T, f64) {
             }
             // The probe's thread has done nothing else, so its CPU time is
             // the spin's. A probe stopped before it ran has seen no slowdown.
-            let cpu = thread_cpu().as_secs_f64();
-            if cpu > 0.0 { (wall.elapsed().as_secs_f64() / cpu).max(1.0) } else { 1.0 }
+            stretch(wall.elapsed().as_secs_f64(), thread_cpu().as_secs_f64())
         })
     };
     let out = f();
     running.store(false, Ordering::Relaxed);
     (out, probe.join().unwrap_or(1.0))
+}
+
+/// Wall time over CPU time, at least 1; 1 for a thread that never ran.
+fn stretch(wall: f64, cpu: f64) -> f64 {
+    if cpu > 0.0 { (wall / cpu).max(1.0) } else { 1.0 }
 }
 
 /// The CPU time the calling thread has used.
@@ -46,6 +50,20 @@ fn thread_cpu() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stretch is wall over CPU, never below 1, and 1 for a probe that never ran.
+    #[test]
+    fn stretch_is_wall_over_cpu_at_least_one() {
+        assert_eq!(stretch(3.0, 1.5), 2.0);
+        assert_eq!(stretch(1.0, 2.0), 1.0);
+        assert_eq!(stretch(1.0, 0.0), 1.0);
+        let before = thread_cpu();
+        let mut x = 0u64;
+        for i in 0..200_000u64 {
+            x = std::hint::black_box(x.wrapping_add(i));
+        }
+        assert!(thread_cpu() > before, "thread CPU time did not advance");
+    }
 
     /// A stand-in test: a fixed amount of CPU work, timed by the wall clock
     /// as a test runner times a test, then normalised by the slowdown. Also
