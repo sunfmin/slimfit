@@ -3,6 +3,28 @@
 version = 4
 
 [[package]]
+name = "agent-help"
+version = "0.1.0"
+source = "git+https://github.com/sunfmin/agent-cli?rev=f506df826a97b2fd834e1d65b9057001a6a6e796#f506df826a97b2fd834e1d65b9057001a6a6e796"
+dependencies = [
+ "agent-help-derive",
+ "clap",
+ "flux-alloc",
+ "flux-core",
+]
+
+[[package]]
+name = "agent-help-derive"
+version = "0.1.0"
+source = "git+https://github.com/sunfmin/agent-cli?rev=f506df826a97b2fd834e1d65b9057001a6a6e796#f506df826a97b2fd834e1d65b9057001a6a6e796"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -121,7 +143,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -157,6 +179,41 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "flux-alloc"
+version = "0.1.0"
+source = "git+https://github.com/flux-rs/flux.git?rev=ef6af17f647cf98c860e18e90c36d1f1b69849ff#ef6af17f647cf98c860e18e90c36d1f1b69849ff"
+dependencies = [
+ "flux-attrs",
+ "flux-core",
+]
+
+[[package]]
+name = "flux-attrs"
+version = "0.1.0"
+source = "git+https://github.com/flux-rs/flux.git?rev=ef6af17f647cf98c860e18e90c36d1f1b69849ff#ef6af17f647cf98c860e18e90c36d1f1b69849ff"
+dependencies = [
+ "flux-attrs-impl",
+]
+
+[[package]]
+name = "flux-attrs-impl"
+version = "0.1.0"
+source = "git+https://github.com/flux-rs/flux.git?rev=ef6af17f647cf98c860e18e90c36d1f1b69849ff#ef6af17f647cf98c860e18e90c36d1f1b69849ff"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "flux-core"
+version = "0.1.0"
+source = "git+https://github.com/flux-rs/flux.git?rev=ef6af17f647cf98c860e18e90c36d1f1b69849ff#ef6af17f647cf98c860e18e90c36d1f1b69849ff"
+dependencies = [
+ "flux-attrs",
+]
 
 [[package]]
 name = "getrandom"
@@ -348,7 +405,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -377,6 +434,7 @@ dependencies = [
 name = "slimfit"
 version = "0.1.0"
 dependencies = [
+ "agent-help",
  "anyhow",
  "clap",
  "globset",
@@ -394,6 +452,17 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "syn"
+version = "2.0.119"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
 
 [[package]]
 name = "syn"

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+agent-help = { git = "https://github.com/sunfmin/agent-cli", rev = "f506df826a97b2fd834e1d65b9057001a6a6e796" }
 anyhow = "1.0.104"
 clap = { version = "4.6.8", features = ["derive", "wrap_help"] }
 globset = "0.4.21"
