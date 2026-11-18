@@ -8,11 +8,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.641565375,
+          "duration": 3.353763834,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -20,13 +21,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.132927041,
+          "duration": 1.334873042,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -71,11 +74,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.213025292,
+          "duration": 1.23956725,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -83,15 +87,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.920834458,
+          "duration": 1.186403,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -136,11 +142,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.21163575,
+          "duration": 1.247986167,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -148,15 +155,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.912891833,
+          "duration": 1.1795513340000001,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -201,11 +210,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.270902875,
+          "duration": 1.589224834,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -213,15 +223,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.911898333,
+          "duration": 1.244277625,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -266,11 +278,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.219227833,
+          "duration": 1.3947115,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -278,15 +291,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.91776225,
+          "duration": 1.2932008750000001,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -331,11 +346,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.221585625,
+          "duration": 1.2819477080000001,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -343,15 +359,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.973389833,
+          "duration": 1.2836050829999999,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -396,11 +414,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.271483,
+          "duration": 1.336283791,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -408,13 +427,15 @@
         },
         {
           "phase": "Test",
-          "duration": 0.96663275,
+          "duration": 1.336689041,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -459,11 +480,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.217462875,
+          "duration": 1.282417417,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -471,13 +493,15 @@
         },
         {
           "phase": "Test",
-          "duration": 0.971133625,
+          "duration": 1.245257042,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -522,11 +546,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.270335,
+          "duration": 1.436041625,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -534,13 +559,15 @@
         },
         {
           "phase": "Test",
-          "duration": 0.960964583,
+          "duration": 1.077078291,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -585,11 +612,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.218472708,
+          "duration": 1.191878375,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -597,13 +625,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.00307225,
+          "duration": 1.245949,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -648,11 +678,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.167103083,
+          "duration": 1.385253417,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -660,13 +691,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.065120875,
+          "duration": 1.203729875,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -711,11 +744,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.213214458,
+          "duration": 1.137118333,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -723,13 +757,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.064101875,
+          "duration": 1.2908855830000001,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -774,11 +810,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.207275834,
+          "duration": 1.55152725,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -786,13 +823,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.151294958,
+          "duration": 1.2417989170000001,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -837,11 +876,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.21546475,
+          "duration": 1.5373291249999999,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -849,13 +889,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.013948084,
+          "duration": 1.188991083,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -900,11 +942,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.216393209,
+          "duration": 1.3430164580000001,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -912,13 +955,15 @@
         },
         {
           "phase": "Test",
-          "duration": 1.227477125,
+          "duration": 1.132405834,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -963,11 +1008,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.268418625,
+          "duration": 1.4981365,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -975,13 +1021,15 @@
         },
         {
           "phase": "Test",
-          "duration": 0.97062225,
+          "duration": 1.242777625,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -1026,11 +1074,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.166544375,
+          "duration": 1.184847917,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -1038,15 +1087,17 @@
         },
         {
           "phase": "Test",
-          "duration": 1.103891917,
+          "duration": 1.28699725,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -1091,11 +1142,12 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.21098575,
+          "duration": 1.434950042,
           "process_status": "Success",
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--no-run",
             "--verbose",
             "--package=calc@0.1.0"
@@ -1103,15 +1155,17 @@
         },
         {
           "phase": "Test",
-          "duration": 0.957973917,
+          "duration": 1.185411709,
           "process_status": {
-            "Failure": 101
+            "Failure": 100
           },
           "argv": [
-            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
+            "cargo",
+            "nextest",
+            "run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--package=calc@0.1.0",
+            "--no-fail-fast"
           ]
         }
       ]
@@ -1123,7 +1177,7 @@
   "timeout": 0,
   "unviable": 0,
   "success": 0,
-  "start_time": "2026-11-18T01:48:03.125754Z",
-  "end_time": "2026-11-18T01:48:25.862001Z",
+  "start_time": "2026-11-18T07:21:26.805659Z",
+  "end_time": "2026-11-18T07:22:15.572718Z",
   "cargo_mutants_version": "27.1.0"
 }

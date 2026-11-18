@@ -6,7 +6,10 @@
 #   check                     → passes
 #   add an untested function  → check exits 1 on uncovered_lines
 # With E2E_MUTANTS=1, also (before the injection):
-#   next --all --mutants      → a `surviving-mutant` task (the is_adult boundary)
+#   next --all --mutants      → a `surviving-mutant` task (the is_adult boundary);
+#                               for rust, `redundant-test` tasks name `slow` and
+#                               one of the two identical `add` tests (adds_again
+#                               is the deliberate copy; which one goes is a tie)
 # A language whose toolchain for this run is incomplete (the mutants tool too
 # under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
 # Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
@@ -78,6 +81,10 @@ for lang in $langs; do
     if [ "${E2E_MUTANTS:-}" = 1 ]; then
       "$bin" next --all --mutants 2>mutants.log | json '[t["kind"] for t in d["tasks"]]' >kinds.txt || { tail -20 mutants.log; exit 1; }
       grep -q surviving-mutant kinds.txt || { echo "no surviving-mutant task: $(cat kinds.txt)" >&2; exit 1; }
+      if [ "$lang" = rust ]; then
+        "$bin" next --all --mutants --kind redundant-test 2>/dev/null | json '" ".join(sorted(t["evidence"]["test"] for t in d["tasks"]))' >redundant.txt
+        grep -qE '^calc::tests::adds(_again)? calc::tests::slow$' redundant.txt || { echo "redundant tests: $(cat redundant.txt)" >&2; exit 1; }
+      fi
     fi
     inject "$lang"
     if "$bin" check >check.json 2>/dev/null; then

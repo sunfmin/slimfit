@@ -29,7 +29,7 @@ Each language is a preset: the tools its community uses, each run once to write 
 
 | Language | Tests and coverage | Mutants | Needs |
 |---|---|---|---|
-| Rust | cargo-nextest under cargo-llvm-cov (JUnit, LCOV) | cargo-mutants: `--mutants` mutates only the files changed since the baseline's commit (`--file`, whole files); `--all-mutants` mutates every file | `cargo install cargo-nextest cargo-llvm-cov cargo-mutants`, `rustup component add llvm-tools-preview` |
+| Rust | cargo-nextest under cargo-llvm-cov (JUnit, LCOV) | cargo-mutants running nextest with `--no-fail-fast`, so each mutant's log names every killing test: `--mutants` mutates only the files changed since the baseline's commit (`--file`, whole files); `--all-mutants` mutates every file | `cargo install cargo-nextest cargo-llvm-cov cargo-mutants`, `rustup component add llvm-tools-preview` |
 | Go | `go test -json -coverprofile` | gremlins | `go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1` |
 | TypeScript | vitest with v8 coverage (JUnit, LCOV) | Stryker (`--disableBail`, so every killing test is recorded) | `vitest`, `@vitest/coverage-v8`, `@stryker-mutator/core`, `@stryker-mutator/vitest-runner` in devDependencies |
 | Kotlin | Gradle `test` + Kover (JUnit, JaCoCo XML) | PIT with `fullMutationMatrix` | the Kover and `info.solidsoft.pitest` plugins (see `testdata/kotlin/build.gradle.kts`) and a JDK Gradle can use |
@@ -37,7 +37,7 @@ Each language is a preset: the tools its community uses, each run once to write 
 
 `--mutants` mutates only the files changed since the baseline's mutants were measured where the tool can be limited to files; today that is Rust only, and every other language falls back to every file. See `docs/adr/0001-mutate-only-changed-files.md` and `docs/adr/0002-mutants-baseline-in-pieces.md`.
 
-Redundant tests can be found only where the mutation tool records which test kills which mutant: TypeScript (Stryker) and Kotlin (PIT). For the other languages, `slimfit next` says so.
+Redundant tests can be found only where the mutation tool records which test kills which mutant: Rust (cargo-mutants under nextest, from each mutant's log), TypeScript (Stryker) and Kotlin (PIT). For the other languages, `slimfit next` says so. Recording every killer means running every test on every killed mutant instead of stopping at the first failure; `docs/adr/0004-rust-kill-matrix.md` says what that costs.
 
 ## Develop
 

@@ -1,0 +1,143 @@
+
+*** src/lib.rs:2:5: replace add -> i64 with 1
+
+*** mutation diff:
+--- src/lib.rs
++++ replace add -> i64 with 1
+@@ -1,10 +1,10 @@
+ pub fn add(a: i64, b: i64) -> i64 {
+-    a + b
++    1 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn unused(x: i64) -> i64 {
+     let doubled = x * 2;
+     let shifted = doubled + 7;
+     shifted / 3
+ }
+ 
+
+
+*** cargo nextest run --no-run --verbose --package=calc@0.1.0
+   Compiling calc v0.1.0 (/REPO)
+warning: unused variable: `a`
+ --> src/lib.rs:1:12
+  |
+1 | pub fn add(a: i64, b: i64) -> i64 {
+  |            ^ help: if this is intentional, prefix it with an underscore: `_a`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `b`
+ --> src/lib.rs:1:20
+  |
+1 | pub fn add(a: i64, b: i64) -> i64 {
+  |                    ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: `calc` (lib) generated 2 warnings (2 duplicates)
+warning: `calc` (lib test) generated 2 warnings (run `cargo fix --lib -p calc --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.46s
+
+*** result: Success
+
+*** cargo nextest run --verbose --package=calc@0.1.0 --no-fail-fast
+warning: unused variable: `a`
+ --> src/lib.rs:1:12
+  |
+1 | pub fn add(a: i64, b: i64) -> i64 {
+  |            ^ help: if this is intentional, prefix it with an underscore: `_a`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `b`
+ --> src/lib.rs:1:20
+  |
+1 | pub fn add(a: i64, b: i64) -> i64 {
+  |                    ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: `calc` (lib) generated 2 warnings (run `cargo fix --lib -p calc` to apply 2 suggestions)
+warning: `calc` (lib test) generated 2 warnings (2 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+────────────
+ Nextest run ID 5226362a-d147-418d-a105-2dd8dc7859b0 with nextest profile: default
+    Starting 4 tests across 1 binary
+       START [         ] (1/4) calc tests::slow
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::slow --nocapture
+       START [         ] (1/4) calc tests::adds
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds --nocapture
+       START [         ] (1/4) calc tests::adds_again
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds_again --nocapture
+       START [         ] (1/4) calc tests::adult
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adult --nocapture
+        PASS [   0.022s] (1/4) calc tests::adult
+        FAIL [   0.023s] (2/4) calc tests::adds
+  stdout ───
+
+    running 1 test
+    test tests::adds ... FAILED
+
+    failures:
+
+    failures:
+        tests::adds
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'tests::adds' (652595309) panicked at src/lib.rs:21:9:
+    assertion `left == right` failed
+      left: 1
+     right: 5
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   0.027s] (3/4) calc tests::adds_again
+  stdout ───
+
+    running 1 test
+    test tests::adds_again ... FAILED
+
+    failures:
+
+    failures:
+        tests::adds_again
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+  stderr ───
+
+    thread 'tests::adds_again' (652595319) panicked at src/lib.rs:26:9:
+    assertion `left == right` failed
+      left: 1
+     right: 5
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+        FAIL [   0.622s] (4/4) calc tests::slow
+  stdout ───
+
+    running 1 test
+    test tests::slow ... FAILED
+
+    failures:
+
+    failures:
+        tests::slow
+
+    test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.60s
+
+  stderr ───
+
+    thread 'tests::slow' (652595312) panicked at src/lib.rs:37:9:
+    assertion `left == right` failed
+      left: 1
+     right: 2
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [   0.627s] 4 tests run: 1 passed, 3 failed, 0 skipped
+        FAIL [   0.023s] (2/4) calc tests::adds
+        FAIL [   0.027s] (3/4) calc tests::adds_again
+        FAIL [   0.622s] (4/4) calc tests::slow
+error: test run failed
+
+*** result: Failure(100)
