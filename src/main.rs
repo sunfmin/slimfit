@@ -3,6 +3,7 @@ mod config;
 mod fixtures;
 mod formats;
 mod git;
+mod load;
 mod loc;
 mod measure;
 mod model;
@@ -49,7 +50,10 @@ TASK KINDS (`slimfit next` gives them in this order: cheapest and safest first)
 WHAT `slimfit check` HOLDS (against .slimfit/baseline.json)
   failures          0
   test_seconds      ≤ baseline × (1 + time_tolerance) + time_slack
-                    (sum of the tests' own durations; build time excluded)
+                    (sum of the tests' own durations; build time excluded;
+                    each divided by how much the host's load slowed a
+                    CPU-bound thread meanwhile, so a busy host does not fail
+                    it: the measurement's load_slowdown)
   uncovered_lines   ≤ baseline + coverage_slack: code may grow, untested code
                     may not. A drop counts as a gain only past the slack, so
                     a line whose coverage flaps by timing never fails the gate

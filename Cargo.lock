@@ -380,6 +380,7 @@ dependencies = [
  "anyhow",
  "clap",
  "globset",
+ "libc",
  "quick-xml",
  "rustc-demangle",
  "serde",

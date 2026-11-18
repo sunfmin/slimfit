@@ -5,6 +5,7 @@
 use crate::config::{Config, Report, Suite};
 use crate::formats::{self, MutationRun};
 use crate::git;
+use crate::load;
 use crate::loc::{Classifier, Kind, Totals};
 use crate::model::*;
 use crate::ratchet::Baseline;
@@ -202,7 +203,8 @@ fn measure_suite(
     let resolver = Resolver::new(repo, &totals);
 
     let started = Instant::now();
-    let (log, _) = shell(&root, &out, &suite.test_command, "test")?;
+    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
+    let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
     let tests = formats::read_tests(suite.tests_report.format, &read_report(&root, &out, &suite.tests_report, &log)?)?;
     let coverage =
@@ -252,7 +254,7 @@ fn measure_suite(
             }
         }),
     };
-    Ok(reduce(suite, &totals, &resolver, tests, coverage, mutation, command_seconds))
+    Ok(reduce(suite, &totals, &resolver, tests, coverage, mutation, Timing { command_seconds, slowdown }))
 }
 
 /// One run of the mutation tool, its paths resolved to the suite's files.
@@ -397,15 +399,26 @@ impl Resolver {
     }
 }
 
+/// How long the test command took, and how much the host's load slowed it.
+pub(crate) struct Timing {
+    pub command_seconds: f64,
+    pub slowdown: f64,
+}
+
 pub(crate) fn reduce(
     suite: &Suite,
     totals: &Totals,
     resolver: &Resolver,
-    tests: Vec<TestCase>,
+    mut tests: Vec<TestCase>,
     coverage: Coverage,
     mutation: Option<Mutation>,
-    command_seconds: f64,
+    timing: Timing,
 ) -> SuiteMeasurement {
+    // A test's duration as the runner timed it, less what the host's load
+    // added to it (ADR 0003).
+    for t in &mut tests {
+        t.seconds /= timing.slowdown;
+    }
     // Coverage of prod lines only: test files and inline test blocks are out.
     let mut lines: BTreeMap<String, BTreeMap<u32, u64>> = BTreeMap::new();
     for (raw, hits) in coverage.lines {
@@ -468,7 +481,8 @@ pub(crate) fn reduce(
         mutants,
         mutation_tests,
         mutated,
-        command_seconds: (command_seconds * 1000.0).round() / 1000.0,
+        command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
+        load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
     }
 }
 
@@ -646,7 +660,8 @@ mod t {
         // check --mutants holds only the counted files and names the rest.
         let (m, _) = run(repo, &cfg, &b1, Mutants::Changed);
         let v = crate::ratchet::check(&b1, &m, &Default::default());
-        assert!(v.ok && v.improved.is_empty(), "{v:?}");
+        // The same report again: only test_seconds may move, with the host's load.
+        assert!(v.ok && v.improved.iter().all(|c| c.metric == crate::ratchet::Bound::TestSeconds), "{v:?}");
         assert_eq!(v.mutants_pending["rust"], ["src/c.rs", "src/d.rs", "src/e.rs"]);
         let (m, _) = run(repo, &cfg, &b1, Mutants::None);
         assert!(crate::ratchet::check(&b1, &m, &Default::default()).mutants_pending.is_empty());
@@ -681,6 +696,27 @@ mod t {
         assert!(at(1, 2.0, None, Some(3)));
         assert!(!at(1, 2.0, None, Some(1)));
         assert!(!at(2, 0.0, Some(2), None));
+    }
+
+    #[test]
+    fn the_tests_durations_are_divided_by_the_hosts_slowdown() {
+        let totals = Totals::default();
+        let tests = vec![
+            TestCase { id: "a".into(), seconds: 3.0, passed: true },
+            TestCase { id: "b".into(), seconds: 1.5, passed: true },
+        ];
+        let timing = Timing { command_seconds: 9.87654, slowdown: 1.23456 };
+        let m = reduce(
+            &crate::config::preset(crate::config::Preset::Rust),
+            &totals,
+            &Resolver::new(Path::new("/r"), &totals),
+            tests,
+            Coverage::default(),
+            None,
+            timing,
+        );
+        assert_eq!(m.tests.iter().map(|t| (t.seconds * 1e6).round()).collect::<Vec<_>>(), [2_430_016.0, 1_215_008.0]);
+        assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (3.645, 1.235, 9.877));
     }
 
     #[test]
