@@ -59,11 +59,17 @@ fn cargo_mutants(text: &str, dir: &Path, run: &mut MutationRun) -> Result<()> {
             // The baseline: when the unmutated tests fail, no mutant was
             // tested, and an empty report would read as a file with none.
             if o["scenario"] == "Baseline" && o["summary"] != "Success" {
-                anyhow::bail!(
-                    "cargo-mutants: the tests fail on the unmutated tree ({}), so no mutant was tested; see its log {}",
-                    o["summary"].as_str().unwrap_or("?"),
-                    o["log_path"].as_str().unwrap_or("")
-                );
+                return Err(crate::fault::fault(
+                    format!(
+                        "cargo-mutants: the tests fail on the unmutated tree ({}), so no mutant was tested",
+                        o["summary"].as_str().unwrap_or("?")
+                    ),
+                    format!(
+                        "make the tests pass unmutated (its log {} says why they fail; `slimfit check` runs them), \
+                         then run the mutants again",
+                        o["log_path"].as_str().unwrap_or("")
+                    ),
+                ));
             }
             continue;
         }
@@ -382,7 +388,10 @@ mod t {
         let r = report("test");
         assert!(r.tests.is_none() && r.mutants[0].killed_by.is_none());
         let failed = r#"{"outcomes":[{"scenario":"Baseline","summary":"Failure","log_path":"log/baseline.log"}]}"#;
-        assert!(read(MutantsFormat::CargoMutants, &[(dir.path().join("outcomes.json"), failed.into())]).is_err());
+        let e = read(MutantsFormat::CargoMutants, &[(dir.path().join("outcomes.json"), failed.into())]).unwrap_err();
+        let f = &crate::fault::of(e)[0];
+        assert!(f.fault.contains("fail on the unmutated tree (Failure)"), "{}", f.fault);
+        assert!(f.fix.starts_with("make the tests pass unmutated (its log log/baseline.log"), "{}", f.fix);
     }
 
     #[test]
