@@ -82,5 +82,13 @@ the lines a change touched, not of every file it touched.
 
 ## Measured
 
-On factorium (see the landing's report): a ~50-line change, its mutant
-count and its wall time at 4 jobs.
+factorium 5cedfb4 against its parent (a real change: 49 source lines added,
+6 removed, in 4 files), cargo-mutants 27.1.0 with `--jobs 4`, 2026-11-18,
+1-minute load 27 on a shared host:
+
+- the change has 26 mutants (`--in-diff`); the whole workspace has 1752;
+- cargo-mutants' unmutated baseline: 130s build + 121s test;
+- stopped at 300s (the owner's 5-minute cap) with 4 mutants in flight and
+  none finished, so the full wall time was not measured. Each mutant costs
+  an incremental build plus a test run of up to ~121s; at 4 jobs, the 26
+  take about 7 rounds after the baseline.
