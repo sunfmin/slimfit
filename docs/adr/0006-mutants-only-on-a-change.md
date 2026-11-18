@@ -131,7 +131,7 @@ each commit checked out with the baseline's `mutants_at` at its parent,
 
 | change | lines added (all / `src` .rs) | mutants | outcome | mutants run | `check --mutants` wall |
 |---|---|---|---|---|---|
-| f1fc25c (factorium#110) | 69 / 39 in 4 files | 4 | 4 unviable | 3 min | 389s |
+| f1fc25c (factorium#110) | 69 / 32 in 4 files | 4 | 4 unviable | 3 min | 389s |
 | 3b6afc1 (factorium#83) | 48 / 30 in 2 files | 16 | 2 caught, 14 unviable | 7 min | 511s |
 
 The wall time is one instrumented test run, plus cargo-mutants' unmutated
