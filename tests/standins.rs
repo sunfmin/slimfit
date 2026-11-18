@@ -218,7 +218,14 @@ impl Sample {
 /// they wrote; `next` and `check` then work from that measurement.
 fn measures_through_its_tools(lang: &Lang) -> Sample {
     let s = Sample::new(lang);
-    let init = s.ok(&["init", "--mutants"]);
+    // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
+    // other tools are made to fail all the same.
+    let exit = if lang.name == "rust" { 2 } else { 3 };
+    s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
+    let (code, init, stderr) = s.slimfit(&["init", "--mutants"]);
+    assert_eq!(code, 0, "{}: {init:#}\n{stderr}", lang.name);
+    assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
+    s.fault(lang.mutants_step, None);
     let mut want: Vec<&str> = lang.test_steps.to_vec();
     want.push(lang.mutants_step);
     assert_eq!(s.steps(), want, "{}", lang.name);
@@ -239,31 +246,34 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
 
 /// A test or mutants tool that is missing, exits non-zero, or writes no
 /// report. A failing exit alone is no error: failing tests still write
-/// their reports. No report is, and the error names the report and ends
-/// with the tool's own words.
+/// their reports (a mutants tool's exit is covered at `init`). No report
+/// is, and the error names the report and ends with the tool's own words.
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
-    const TESTS: &[&str] = &["check", "--fresh"];
-    const MUTANTS: &[&str] = &["check", "--all-mutants", "--fresh"];
-    let tools = lang.test_tools.iter().map(|t| (*t, TESTS));
-    for (tool, args) in tools.chain([(lang.mutants_tool, MUTANTS)]) {
-        let link = s.unlink(tool);
-        s.error(args, &["no report at", tool]);
-        s.relink(&link);
-        s.take();
+    const ARGS: &[&str] = &["check", "--all-mutants", "--fresh"];
+    let mut tools = lang.test_tools.to_vec();
+    // A mutants tool that also runs the tests is missing for them first.
+    if !tools.contains(&lang.mutants_tool) {
+        tools.push(lang.mutants_tool);
     }
-    let steps = lang.test_steps.iter().map(|t| (*t, TESTS));
-    for (step, args) in steps.chain([(lang.mutants_step, MUTANTS)]) {
-        s.fault(step, Some(Fault { exit: 3, no_report: false }));
-        let (code, json, stderr) = s.slimfit(args);
-        assert!(code < 2, "{}: {step} exiting 3 with its report: {json:#}\n{stderr}", lang.name);
-        // The command's status is its last tool's, or the one it keeps.
-        if step == lang.test_steps[0] || step == lang.mutants_step {
-            assert!(stderr.contains("exited exit status: 3"), "{}: {step}: {stderr}", lang.name);
-        }
-        s.fault(step, Some(Fault { exit: 0, no_report: true }));
-        s.error(args, &["no report at", &format!("standin {step}: writing no report")]);
+    for tool in tools {
+        let link = s.unlink(tool);
+        s.error(ARGS, &["no report at", tool]);
+        s.relink(&link);
+    }
+    let no_report = Some(Fault { exit: 0, no_report: true });
+    let (first, mutants) = (lang.test_steps[0], lang.mutants_step);
+    s.fault(first, Some(Fault { exit: 3, no_report: false }));
+    s.fault(mutants, no_report);
+    let (code, json, stderr) = s.slimfit(ARGS);
+    assert_eq!(code, 2, "{}: {json:#}\n{stderr}", lang.name);
+    assert!(stderr.contains("test command exited exit status: 3"), "{}: {first}: {stderr}", lang.name);
+    assert!(json["error"].as_str().unwrap().contains(&format!("standin {mutants}: writing no report")), "{json:#}");
+    s.fault(first, None);
+    s.fault(mutants, None);
+    for step in lang.test_steps {
+        s.fault(step, no_report);
+        s.error(ARGS, &["no report at", &format!("standin {step}: writing no report")]);
         s.fault(step, None);
-        s.take();
     }
 }
 
@@ -292,7 +302,17 @@ fn rust() {
 
 #[test]
 fn go() {
-    faults_reach_the_agent(&measures_through_its_tools(&GO), &GO);
+    let s = measures_through_its_tools(&GO);
+    faults_reach_the_agent(&s, &GO);
+    // A command line the tool would not take is refused by its stand-in, so
+    // a preset that drifts from its tool fails here, not on a user's host.
+    let cfg = std::fs::read_to_string(s.repo.join("slimfit.toml")).unwrap();
+    let cfg = cfg.replace(
+        "preset = \"go\"",
+        "preset = \"go\"\ntest_command = \"go test ./... > \\\"$SLIMFIT_OUT/test.json\\\"\"",
+    );
+    std::fs::write(s.repo.join("slimfit.toml"), cfg).unwrap();
+    s.error(&["check", "--fresh"], &["no report at", "standin go test: no -json"]);
 }
 
 #[test]
@@ -308,17 +328,4 @@ fn kotlin() {
 #[test]
 fn swift() {
     faults_reach_the_agent(&measures_through_its_tools(&SWIFT), &SWIFT);
-}
-
-/// A command line the tool would not take is refused by its stand-in, so
-/// a preset that drifts from its tool fails here, not on a user's host.
-#[test]
-fn a_command_line_the_tool_would_not_take_is_an_error() {
-    let s = Sample::new(&GO);
-    std::fs::write(
-        s.repo.join("slimfit.toml"),
-        "[[suite]]\nname = \"go\"\npreset = \"go\"\ntest_command = \"go test ./... > \\\"$SLIMFIT_OUT/test.json\\\"\"\n",
-    )
-    .unwrap();
-    s.error(&["init"], &["no report at", "standin go test: no -json"]);
 }
