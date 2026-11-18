@@ -143,11 +143,6 @@ pub fn merge_base_with_upstream(repo: &Path) -> Option<String> {
     run(repo, &["merge-base", "HEAD", "@{upstream}"]).ok().map(|s| s.trim().to_string())
 }
 
-/// The tree with no files: what a repository with no commit is compared to.
-pub fn empty_tree(repo: &Path) -> Result<String> {
-    Ok(run(repo, &["hash-object", "-t", "tree", "/dev/null"])?.trim().to_string())
-}
-
 /// The files that differ between two trees, outside `.slimfit/` (deleted
 /// ones too).
 pub fn changed_files(repo: &Path, from: &str, to: &str) -> Result<Vec<String>> {

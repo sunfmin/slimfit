@@ -8,7 +8,7 @@ mod tests;
 mod xml;
 
 pub use coverage::read as read_coverage;
-pub use mutants::{MutationRun, read as read_mutants};
+pub use mutants::read as read_mutants;
 pub use tests::read as read_tests;
 
 use serde::{Deserialize, Serialize};
@@ -46,15 +46,4 @@ pub enum MutantsFormat {
     Gremlins,
     /// muter `--format json`.
     Muter,
-}
-
-impl MutantsFormat {
-    /// Whether the report names the tests that kill each mutant: without
-    /// that no test can be found redundant.
-    pub fn records_killers(self) -> bool {
-        match self {
-            MutantsFormat::CargoMutants | MutantsFormat::Stryker | MutantsFormat::Pitest => true,
-            MutantsFormat::Gremlins | MutantsFormat::Muter => false,
-        }
-    }
 }

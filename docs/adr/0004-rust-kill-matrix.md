@@ -1,5 +1,7 @@
 # 4. Rust records every killing test: cargo-mutants under nextest, no fail-fast
 
+**Superseded by ADR 0006** (`0006-mutants-only-on-a-change.md`): redundant tests come from per-test coverage, not a kill matrix; the Rust preset no longer passes `--no-fail-fast`, and no reader records killers.
+
 ## Context
 
 `next` finds redundant tests from a kill matrix: for each killed mutant,

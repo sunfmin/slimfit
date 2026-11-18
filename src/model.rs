@@ -48,9 +48,6 @@ pub struct Mutant {
     pub line: u32,
     pub description: String,
     pub status: MutantStatus,
-    /// The tests that killed it, when the tool records them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub killed_by: Option<Vec<String>>,
 }
 
 /// The numbers `check` compares against the baseline.
@@ -91,12 +88,9 @@ impl MutantCounts {
     }
 }
 
-/// What a mutation run covered, and what it found in the change.
+/// What a mutation run of the change covered, and what it found there.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Mutated {
-    /// Every mutant was run (`--all-mutants`, or a tool that cannot be
-    /// limited); otherwise only those of the change.
-    pub all: bool,
     /// The source files with lines in the change.
     pub files: Vec<String>,
     /// The mutants in the change's lines, by outcome: survivors here are the
@@ -123,9 +117,11 @@ pub struct SuiteMeasurement {
     pub uncovered: Vec<Span>,
     /// Empty when mutants were not run.
     pub mutants: Vec<Mutant>,
-    /// Every test the mutation tool knew of, when it records killers.
+    /// The source lines each test runs, by test id and file, when the test
+    /// run records coverage per test: what redundant-test candidates are
+    /// found from (ADR 0006). `None` when it does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mutation_tests: Option<Vec<String>>,
+    pub test_lines: Option<BTreeMap<String, BTreeMap<String, Vec<u32>>>>,
     /// What the mutation run covered; `None` without mutants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Mutated>,
@@ -167,7 +163,7 @@ mod tests {
     /// Each status counts in its own field.
     #[test]
     fn mutant_counts_count_each_status() {
-        let m = |status| Mutant { file: "a".into(), line: 1, description: String::new(), status, killed_by: None };
+        let m = |status| Mutant { file: "a".into(), line: 1, description: String::new(), status };
         use MutantStatus::*;
         let all = [m(Killed), m(Unviable), m(Unviable), m(Survived), m(Killed), m(Killed)];
         assert_eq!(MutantCounts::of(&all), MutantCounts { killed: 3, survived: 1, unviable: 2 });

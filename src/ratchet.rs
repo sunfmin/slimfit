@@ -331,8 +331,8 @@ mod t {
             tests: vec![],
             uncovered: vec![],
             mutants: vec![],
-            mutation_tests: None,
-            mutated: survived.map(|n| Mutated { all: false, files: vec!["src/a.rs".into()], change: change(n) }),
+            test_lines: None,
+            mutated: survived.map(|n| Mutated { files: vec!["src/a.rs".into()], change: change(n) }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
         }
@@ -348,6 +348,27 @@ mod t {
             since: None,
             suites: vec![suite("s", metrics, survived)],
         }
+    }
+
+    /// A baseline, and a cached measurement, written before whole-codebase
+    /// runs and the kill matrix were removed still load: the removed fields
+    /// are ignored, and the next ratchet writes the baseline without them.
+    #[test]
+    fn old_files_with_removed_fields_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".slimfit")).unwrap();
+        let old = r#"{"suites":{"rust":{"prod_lines":1,"test_lines":1,"tests":1,"failures":0,"test_seconds":1.0,
+            "covered_lines":1,"uncovered_lines":0,"mutants":{"killed":3},"mutant_files":{"a.rs":{}},"mutants_pending":["b.rs"]}},
+            "mutants_at":{"commit":"c","dirty":["x"]}}"#;
+        std::fs::write(dir.path().join(FILE), old).unwrap();
+        let b = load(dir.path()).unwrap();
+        assert_eq!((b.suites["rust"].tests, b.mutants_at.unwrap().commit), (1, "c".to_string()));
+        let cached = r#"{"tree":"t","with_mutants":true,"suites":[{"suite":"rust","metrics":{"prod_lines":1,"test_lines":1,
+            "tests":1,"failures":0,"test_seconds":1.0,"covered_lines":1,"uncovered_lines":0},"tests":[],"uncovered":[],
+            "mutants":[{"file":"a.rs","line":1,"description":"d","status":"killed","killed_by":["t"]}],"mutation_tests":["t"],
+            "mutated":{"all":true,"files":[],"change":{"killed":0,"survived":0,"unviable":0}},"command_seconds":1.0,"load_slowdown":1.0}]}"#;
+        let m: Measurement = serde_json::from_str(cached).unwrap();
+        assert_eq!(m.suites[0].mutants.len(), 1);
     }
 
     fn base(metrics: Metrics) -> Baseline {

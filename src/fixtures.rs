@@ -61,14 +61,8 @@ fn measure_with_coverage(
     let resolver = Resolver::new(Path::new("/REPO"), &totals);
     let t = formats::read_tests(tests.0, &read(lang, tests.1)).unwrap();
     let c = formats::read_coverage(coverage.0, &coverage.1).unwrap();
-    let reports: Vec<_> = mutants.1.iter().map(|n| sample(lang).join("reports").join(n)).collect();
-    let reports: Vec<_> = reports.into_iter().map(|p| (p.clone(), std::fs::read_to_string(p).unwrap())).collect();
-    let mut m = formats::read_mutants(mutants.0, &reports).unwrap();
-    if !reports.is_empty() {
-        let recorded = m.tests.is_some() || m.mutants.iter().any(|x| x.killed_by.is_some());
-        assert_eq!(recorded, mutants.0.records_killers(), "{lang}: records_killers");
-    }
-    for x in &mut m.mutants {
+    let mut m = formats::read_mutants(mutants.0, &read(lang, mutants.1)).unwrap();
+    for x in &mut m {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
     reduce(
@@ -117,23 +111,6 @@ fn rust_sample() {
     // the inline test module is test code, not uncovered prod code
     assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
     assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
-    // cargo-mutants under nextest with --no-fail-fast: each mutant's log names
-    // every killer, in JUnit's ids. One of the three `add` tests stays.
-    let redundant: Vec<String> = of_measurement(&s)
-        .into_iter()
-        .filter(|t| t.kind == TaskKind::RedundantTest)
-        .map(|t| t.evidence["test"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(redundant.len(), 2, "{redundant:?}");
-    assert!(redundant.contains(&"calc::tests::slow".to_string()), "{redundant:?}");
-    assert!(s.tests.iter().any(|t| t.id == "calc::tests::slow"));
-    // Without the logs the killers are unknown, and no test is called redundant.
-    let bare = formats::read_mutants(
-        MutantsFormat::CargoMutants,
-        &[("outcomes.json".into(), read("rust", &["outcomes.json"]).remove(0))],
-    )
-    .unwrap();
-    assert!(bare.tests.is_none() && bare.mutants.iter().all(|m| m.killed_by.is_none()));
 }
 
 /// Coverage that depends on timing reaches a line in one run and misses it
@@ -195,16 +172,6 @@ fn typescript_sample() {
         (MutantsFormat::Stryker, &["mutation.json"]),
     );
     assert_the_five_situations(&s, "src/calc.ts", 12);
-    // Stryker with --disableBail records every killer: the cheapest of the
-    // three identical `add` tests stays, the other two are redundant.
-    let redundant: Vec<String> = of_measurement(&s)
-        .into_iter()
-        .filter(|t| t.kind == TaskKind::RedundantTest)
-        .map(|t| t.evidence["test"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(redundant.len(), 2, "{redundant:?}");
-    assert!(redundant.contains(&"calc > slow".to_string()), "{redundant:?}");
-    assert!(!redundant.contains(&"calc > isAdult".to_string()));
 }
 
 #[test]
@@ -218,15 +185,6 @@ fn kotlin_sample() {
     );
     let source = "src/main/kotlin/com/example/Calc.kt";
     assert_the_five_situations(&s, source, 11);
-    // PIT's full mutation matrix names every killer, in JUnit's own ids.
-    let redundant: Vec<String> = of_measurement(&s)
-        .into_iter()
-        .filter(|t| t.kind == TaskKind::RedundantTest)
-        .map(|t| t.evidence["test"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(redundant.len(), 2, "{redundant:?}");
-    assert!(redundant.contains(&"com.example.CalcTest::slow()".to_string()), "{redundant:?}");
-    assert!(s.tests.iter().any(|t| t.id == "com.example.CalcTest::slow()"));
 }
 
 #[test]
@@ -256,18 +214,13 @@ fn swift_sample() {
 /// A workspace of two packages: `double` in `core` has no test of its own;
 /// only `app`'s test reaches it. Under the preset's mutants command every
 /// mutant runs the whole workspace's tests, so `app`'s test catches each of
-/// `double`'s mutants, and names itself their killer.
+/// `double`'s mutants.
 #[test]
 fn a_mutant_in_one_package_is_caught_by_another_packages_test() {
     let suite = preset(Preset::Rust);
     assert!(suite.mutants_command.contains("--test-workspace=true"), "{}", suite.mutants_command);
-    let outcomes = sample("rust-workspace").join("reports/outcomes.json");
-    let text = std::fs::read_to_string(&outcomes).unwrap();
-    let m = formats::read_mutants(MutantsFormat::CargoMutants, &[(outcomes, text)]).unwrap();
-    let double: Vec<_> = m.mutants.iter().filter(|x| x.file == "core/src/lib.rs" && x.line == 4).collect();
-    assert_eq!(double.len(), 5, "{:?}", m.mutants);
-    for x in double {
-        assert_eq!(x.status, MutantStatus::Killed, "{x:?}");
-        assert_eq!(x.killed_by.as_deref(), Some(&["app::double::doubles".to_string()][..]), "{x:?}");
-    }
+    let m = formats::read_mutants(MutantsFormat::CargoMutants, &read("rust-workspace", &["outcomes.json"])).unwrap();
+    let double: Vec<_> = m.iter().filter(|x| x.file == "core/src/lib.rs" && x.line == 4).collect();
+    assert_eq!(double.len(), 5, "{m:?}");
+    assert!(double.iter().all(|x| x.status == MutantStatus::Killed), "{double:?}");
 }

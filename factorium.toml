@@ -10,12 +10,3 @@ slow_limit = 1800
 steps = ["packaging/release.sh cut $FACTORIUM_VERSION"]
 formula = "sunfmin/tap/slimfit"
 limit = 1800
-
-# Mutants never in a gate (`slimfit --help`, rule 2). Every file mutated:
-# about 650 mutants, each a build and a test run, so an hour or more: only
-# while the host is idle, once a day. `next` keeps the measurement (the kill
-# matrix) for the tasks `slimfit next` gives afterwards.
-[idle]
-steps = ["slimfit next --all-mutants"]
-every = 86400
-limit = 21600
