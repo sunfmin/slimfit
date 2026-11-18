@@ -257,16 +257,22 @@ impl Sample {
 }
 
 /// `init --mutants` runs the preset's tools once each and measures what
-/// they wrote; `next` and `check` then work from that measurement.
-fn measures_through_its_tools(lang: &Lang) -> Sample {
+/// they wrote; `next` and `check` then work from that measurement. With
+/// `dry`, `init` and `ratchet` are each asked first with `--dry-run`, which
+/// writes nothing and answers what the real run then writes (on one
+/// sample: what a dry run writes does not depend on the language).
+fn measures_through_its_tools(lang: &Lang, dry: bool) -> Sample {
     let s = Sample::new(lang);
     // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
     // other tools are made to fail all the same.
     let exit = if lang.name == "rust" { 2 } else { 3 };
     s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
-    let would =
-        s.dry_run(&["init", "--mutants", "--dry-run"], &[".gitignore", ".slimfit/baseline.json", "slimfit.toml"]);
-    s.take();
+    let would = dry.then(|| {
+        let w =
+            s.dry_run(&["init", "--mutants", "--dry-run"], &[".gitignore", ".slimfit/baseline.json", "slimfit.toml"]);
+        s.take();
+        w
+    });
     let (code, init, stderr) = s.slimfit(&["init", "--mutants"]);
     assert_eq!(code, 0, "{}: {init:#}\n{stderr}", lang.name);
     // What the dry run said it would write, but for `test_seconds`: the host's load moves it.
@@ -275,11 +281,13 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
         b["suites"][lang.name]["test_seconds"] = Value::Null;
         b
     };
-    for f in [".gitignore", "slimfit.toml"] {
-        assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
-    }
     let base = s.read(".slimfit/baseline.json");
-    assert_eq!(baseline(&base), baseline(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
+    if let Some(would) = would {
+        for f in [".gitignore", "slimfit.toml"] {
+            assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
+        }
+        assert_eq!(baseline(&base), baseline(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
+    }
     assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
     s.fault(lang.mutants_step, None);
     let mut want: Vec<&str> = lang.test_steps.to_vec();
@@ -296,17 +304,26 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
     assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);
     assert!(of("surviving-mutant").next().is_some(), "{}: {next:#}", lang.name);
     s.ok(&["check"]);
-    // A bound with room to tighten: ratchet would write exactly the baseline it writes.
-    let mut looser: Value = serde_json::from_str(&base).unwrap();
-    looser["suites"][lang.name]["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 5).into();
+    if dry {
+        dry_ratchet(&s, lang, &base);
+    }
+    assert_eq!(s.steps(), Vec::<String>::new(), "{}: the commands after init reuse its measurement", lang.name);
+    s
+}
+
+/// A bound with room to tighten: `ratchet --dry-run` answers exactly the
+/// baseline `ratchet` then writes, and nothing once it is written.
+fn dry_ratchet(s: &Sample, lang: &Lang, base: &str) {
+    let b: Value = serde_json::from_str(base).unwrap();
+    let mut looser = b.clone();
+    looser["suites"][lang.name]["uncovered_lines"] =
+        (b["suites"][lang.name]["uncovered_lines"].as_u64().unwrap() + 5).into();
     std::fs::write(s.repo.join(".slimfit/baseline.json"), serde_json::to_string_pretty(&looser).unwrap()).unwrap();
     let would = s.dry_run(&["ratchet", "--dry-run"], &[".slimfit/baseline.json"]);
     s.ok(&["ratchet"]);
     assert_eq!(s.read(".slimfit/baseline.json"), would[".slimfit/baseline.json"], "{}", lang.name);
     assert_eq!(s.read(".slimfit/baseline.json"), base, "{}", lang.name);
     s.dry_run(&["ratchet", "--dry-run"], &[]);
-    assert_eq!(s.steps(), Vec::<String>::new(), "{}: next, check and ratchet reuse the measurement", lang.name);
-    s
 }
 
 /// An error's faults, one per line, each followed by its fix; a fault
@@ -362,7 +379,7 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
 
 #[test]
 fn rust() {
-    let s = measures_through_its_tools(&RUST);
+    let s = measures_through_its_tools(&RUST, true);
     // Killers come from nextest's logs: the redundant tests are found.
     let next = s.ok(&["next", "--all", "--all-mutants", "--kind", "redundant-test"]);
     let mut redundant: Vec<&str> =
@@ -385,7 +402,7 @@ fn rust() {
 
 #[test]
 fn go() {
-    let s = measures_through_its_tools(&GO);
+    let s = measures_through_its_tools(&GO, false);
     faults_reach_the_agent(&s, &GO);
     // A command line the tool would not take is refused by its stand-in, so
     // a preset that drifts from its tool fails here, not on a user's host.
@@ -403,17 +420,17 @@ fn go() {
 
 #[test]
 fn typescript() {
-    faults_reach_the_agent(&measures_through_its_tools(&TYPESCRIPT), &TYPESCRIPT);
+    faults_reach_the_agent(&measures_through_its_tools(&TYPESCRIPT, false), &TYPESCRIPT);
 }
 
 #[test]
 fn kotlin() {
-    faults_reach_the_agent(&measures_through_its_tools(&KOTLIN), &KOTLIN);
+    faults_reach_the_agent(&measures_through_its_tools(&KOTLIN, false), &KOTLIN);
 }
 
 #[test]
 fn swift() {
-    faults_reach_the_agent(&measures_through_its_tools(&SWIFT), &SWIFT);
+    faults_reach_the_agent(&measures_through_its_tools(&SWIFT, false), &SWIFT);
 }
 
 /// Every key a command prints is named on its own page (`slimfit <command>
