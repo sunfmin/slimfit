@@ -1,4 +1,5 @@
 mod config;
+mod doctor;
 mod fault;
 #[cfg(test)]
 mod fixtures;
@@ -40,7 +41,7 @@ agent_help::binary!("slimfit");
 /// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json`.
 /// 5. Commit the code and the baseline together (one task, one commit); back to 1.
 ///
-/// Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
+/// When setting up slimfit on a repo or a host, run `slimfit doctor` first and do each finding's `fix`. Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
 ///
 /// ## Output
 ///
@@ -63,6 +64,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Checks how slimfit is set up here and on this host; changes nothing.
+    ///
+    /// ## When to run it
+    ///
+    /// First, when setting up slimfit on a repo or a new host; and whenever a command is slower or stranger than it should be. It runs no tests, so it takes about a second.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the gates in `factorium.toml` (each `[gate]` entry and the lines of a repository script it names), the host's load, and whether the tools the suites' commands run are installed (on PATH, or in cargo's bin directory). It writes nothing.
+    ///
+    /// ## What it answers
+    ///
+    /// - `findings`: in the order to fix them, each with `kind`, `suite` (when it concerns one), `what` (what was found, and where) and `fix` (what to do). Empty when nothing is off.
+    /// - `host`: `load` (the 1-minute load average) and `cores`.
+    /// - `next`: the first finding's fix, or `slimfit next` when there is none.
+    ///
+    /// The kinds of finding:
+    ///
+    /// {table:finding}
+    ///
+    /// ## What it may refuse
+    ///
+    /// It exits 0 whenever it ran: findings are an answer, not an error. It refuses with exit 2 only on a bad command line or outside a git repository.
+    ///
+    /// ## What trips you up
+    ///
+    /// - It reads gates only from `factorium.toml`, and only one script deep: a gate defined elsewhere (CI, a Makefile), or a test run in a script that the gate's script calls, is not seen.
+    /// - A tool is found by name, not run: a tool that is installed but broken, or the wrong version, is not a finding.
+    #[command(next_help_heading = "Run first, when setting up on a repo or a host", verbatim_doc_comment)]
+    Doctor,
     /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
     ///
     /// ## When to run it
@@ -355,6 +386,7 @@ fn help() -> Help {
         .topic::<PiecewiseBaseline>()
         .topic::<DryRun>()
         .topic::<Factorium>()
+        .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
         .constant("COVERAGE_SLACK", check.coverage_slack)
@@ -557,6 +589,12 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 })),
                 0,
             ))
+        }
+        Cmd::Doctor => {
+            let host = doctor::Host::current();
+            let findings = doctor::diagnose(&repo, &host);
+            let next = findings.first().map_or("slimfit next".to_string(), |f| f.fix.clone());
+            Ok((json!({ "findings": findings, "host": host, "next": next }), 0))
         }
         Cmd::Help { .. } => unreachable!("`parse` answers it"),
         Cmd::Report { commits, points, fresh } => {
