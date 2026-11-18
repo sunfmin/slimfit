@@ -1,6 +1,6 @@
 # 1. `--mutants` mutates only the files changed since the baseline
 
-**Superseded by ADR 0005** (`0005-mutants-of-the-change.md`): no mutant count is kept, and `--mutants` runs the mutants of the changed lines.
+**Superseded by ADR 0005** (`0005-mutants-of-the-change.md`): no mutant count is kept, and `--mutants` runs the mutants of the changed lines. Its full runs (`--all-mutants`, `init --mutants`) are gone too (ADR 0006).
 
 ## Context
 

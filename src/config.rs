@@ -221,9 +221,9 @@ pub fn preset(p: Preset) -> Suite {
                  cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
             ),
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
-            // nextest without fail-fast runs every test on every mutant, so each
-            // mutant's log names all its killers (docs/adr/0004).
-            mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
+            // nextest stops a mutant's tests at its first failure: only whether a
+            // mutant is caught is read (ADR 0006).
+            mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest \
                 --output \"$SLIMFIT_OUT\""
                 .into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),

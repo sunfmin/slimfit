@@ -3,6 +3,10 @@
 Supersedes `0001-mutate-only-changed-files.md` and
 `0002-mutants-baseline-in-pieces.md`.
 
+**Amended by ADR 0006** (`0006-mutants-only-on-a-change.md`): `next
+--all-mutants` is gone too, so nothing runs every mutant, and redundant-test
+tasks no longer come from mutants.
+
 ## Context
 
 ADR 0001 held `survived_mutants` against a count of the whole suite's

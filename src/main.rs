@@ -30,7 +30,7 @@ agent_help::binary!("slimfit");
 /// You (the agent) change code; slimfit measures each change and ratchets the result. Never argue with a number: change the code until `slimfit check` passes. Run `slimfit <command> --help` before a command's first run. What matters most, first:
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
-/// 2. MUTANTS NEVER IN A GATE. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. Run it on an idle host at background priority (in factorium: `[idle]`, see [setting up in factorium](help:factorium)).
+/// 2. MUTANTS NEVER IN A GATE, AND ONLY ON A CHANGE. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase: `--mutants` runs only the mutants of the lines a change added (see [mutants scope](help:mutants-scope)). Run it on an idle host at background priority (in factorium: `[idle]`, see [setting up in factorium](help:factorium)).
 /// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike.
 ///
 /// ## The loop
@@ -142,14 +142,14 @@ enum Cmd {
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides: mutants not run, only the change's mutants run, or a mutation tool that does not record which test kills which mutant (only {const:KILLERS_RECORDED} record it, so only they get redundant-test tasks).
+    /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it).
     /// - `next`: what to do now.
     ///
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
     ///
     /// - `failing-test`: `test` and `log`, the test run's log.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
-    /// - `redundant-test`: `test`, its `seconds`, `mutants_killed`, and `also_killed_by`, the tests that kill those mutants too.
+    /// - `redundant-test`: `test`, its `seconds`, `lines` (how many source lines it runs) and `other_test`, the test whose lines it overlaps most: one that runs every one of them too, when there is one.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
     /// - `surviving-mutant`: `survivors`, each with its `line` and `mutant` (the change it makes).
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
@@ -160,8 +160,9 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - Without `--mutants` or `--all-mutants` there are no surviving-mutant or redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says, so never run them in a gate.
-    /// - `--mutants` runs only the change's mutants: its tasks name only what they show, and a test it calls redundant is redundant only among them. `--all-mutants` runs every mutant (see [mutants scope](help:mutants-scope)).
+    /// - Without `--mutants` there are no surviving-mutant tasks: `notes` says so. `--mutants` costs what [costs](help:costs) says, so never run it in a gate.
+    /// - `--mutants` runs only the change's mutants, so surviving-mutant tasks name only the survivors in what changed; nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Next {
@@ -174,9 +175,6 @@ enum Cmd {
         /// Measure the mutants of the change too, the lines changed since the baseline's `mutants_at`: tasks from what they show (see [mutants scope](help:mutants-scope)).
         #[arg(long, verbatim_doc_comment)]
         mutants: bool,
-        /// Measure every mutant: tasks from the whole suite's mutants, redundant tests across it.
-        #[arg(long, verbatim_doc_comment)]
-        all_mutants: bool,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -203,7 +201,7 @@ enum Cmd {
     ///
     /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; and `mutants_unchecked`, true when mutants were not measured.
     /// - `metrics`: per suite, {const:METRICS}.
-    /// - `mutated`: per suite, `all` (whether every mutant ran), `files` (the source files the change touches) and `change` (its mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
+    /// - `mutated`: per suite, `files` (the source files the change touches) and `change` (its mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
     ///
     /// It exits {const:EXIT_OK} when `ok`, {const:EXIT_VIOLATION} when a bound is violated.
@@ -366,7 +364,6 @@ fn help() -> Help {
         .constant("EXIT_VIOLATION", EXIT_VIOLATION)
         .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
         .constant("LANGUAGES", languages("and"))
-        .constant("KILLERS_RECORDED", languages_where(|s| s.mutants_report.format.records_killers()))
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
@@ -419,6 +416,13 @@ fn main() {
 /// The command line's answer and exit code (help and version print and exit
 /// here, as clap does).
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
+    let args: Vec<std::ffi::OsString> = args.into_iter().collect();
+    if args.iter().any(|a| a == "--all-mutants") {
+        return Err(fault::fault(
+            "`--all-mutants` is gone: slimfit never mutates the whole codebase",
+            "measure the change's mutants instead: `slimfit check --mutants` (`slimfit next --mutants` for its tasks)",
+        ));
+    }
     // `--help`, `-h` and `help` too: clap prints the manual's answer, on stdout.
     let cli = match command_line(args) {
         Ok(cli) => cli,
@@ -494,13 +498,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Next { all, kind, mutants, all_mutants, fresh } => {
+        Cmd::Next { all, kind, mutants, fresh } => {
             let (cfg, base) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
                 &cfg,
                 &base,
-                &measure::Options { mutants: scope(mutants, all_mutants), fresh, dry_run: false },
+                &measure::Options { mutants: scope(mutants), fresh, dry_run: false },
             )?;
             let mut list = tasks::all(&repo, &cfg, &m)?;
             if let Some(k) = kind {
@@ -514,19 +518,14 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut notes = Vec::new();
             if !m.with_mutants {
                 notes.push(
-                    "mutants not measured: redundant-test and surviving-mutant tasks need `slimfit next --mutants`"
+                    "mutants not measured: surviving-mutant tasks need `slimfit next --mutants`, which runs the \
+                     change's mutants"
                         .to_string(),
                 );
             }
-            for s in m.suites.iter().filter(|s| {
-                m.with_mutants && s.mutation_tests.is_none() && s.mutants.iter().all(|m| m.killed_by.is_none())
-            }) {
-                notes.push(format!("{}: the mutation tool does not record which test kills which mutant, so redundant tests cannot be found", s.suite));
-            }
-            for s in m.suites.iter().filter(|s| s.mutated.as_ref().is_some_and(|x| !x.all)) {
+            for s in m.suites.iter().filter(|s| s.test_lines.is_none()) {
                 notes.push(format!(
-                    "{}: only the change's mutants ran: tasks name only what they show (a redundant test only \
-                     among them); the whole suite's need `slimfit next --all-mutants`",
+                    "{}: its test run records no coverage per test, so no redundant test can be proposed",
                     s.suite
                 ));
             }
@@ -554,7 +553,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &repo,
                 &cfg,
                 &base,
-                &measure::Options { mutants: scope(mutants, false), fresh, dry_run: false },
+                &measure::Options { mutants: scope(mutants), fresh, dry_run: false },
             )?;
             let v = ratchet::check(&base, &m, &cfg.check);
             let next = if !v.ok {
@@ -569,12 +568,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Ratchet { loosen, reason, mutants, fresh, dry_run } => {
             let (cfg, old) = loaded(&repo)?;
-            let m = measure::current(
-                &repo,
-                &cfg,
-                &old,
-                &measure::Options { mutants: scope(mutants, false), fresh, dry_run },
-            )?;
+            let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(mutants), fresh, dry_run })?;
             let mut new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             // A baseline with no mutants_at starts it here, as `init` does.
             if new.mutants_at.is_none() {
@@ -673,12 +667,8 @@ fn parse(help: &Help, args: impl IntoIterator<Item = std::ffi::OsString>) -> Res
     })
 }
 
-fn scope(mutants: bool, all_mutants: bool) -> measure::Mutants {
-    match (mutants, all_mutants) {
-        (_, true) => measure::Mutants::All,
-        (true, false) => measure::Mutants::Change,
-        (false, false) => measure::Mutants::None,
-    }
+fn scope(mutants: bool) -> measure::Mutants {
+    if mutants { measure::Mutants::Change } else { measure::Mutants::None }
 }
 
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {

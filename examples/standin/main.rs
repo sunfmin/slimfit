@@ -161,12 +161,11 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
                 std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
             }
             let outcomes = out.join(CARGO_MUTANTS_OUTCOMES);
-            let logs = outcomes.parent().unwrap().join("log");
             // cargo-mutants exits 2 when a mutant was missed.
             let missed =
                 std::fs::read_to_string(reports.join("outcomes.json")).is_ok_and(|t| t.contains("\"MissedMutant\""));
             Ok(Work {
-                copies: vec![("outcomes.json".into(), outcomes), ("log".into(), logs)],
+                copies: vec![("outcomes.json".into(), outcomes)],
                 exit: if missed { 2 } else { 0 },
                 ..Work::default()
             })

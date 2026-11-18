@@ -20,7 +20,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Every mutant this test kills, a cheaper set of tests kills too. Delete it unless it pins behaviour mutants don't reach. Needs `--all-mutants`.
+    /// Coverage proposes a test that runs no source line another test does not run too, or whose lines mostly overlap another's. Read both tests' assertions and decide: delete it, merge the two, or keep it. Needs a test run that records coverage per test; runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
@@ -38,8 +38,7 @@ impl TaskKind {
     /// The command that must pass after a task of this kind is done.
     pub fn accept(self) -> &'static str {
         match self {
-            TaskKind::FailingTest | TaskKind::Uncovered => "slimfit check",
-            TaskKind::RedundantTest => "slimfit check",
+            TaskKind::FailingTest | TaskKind::Uncovered | TaskKind::RedundantTest => "slimfit check",
             TaskKind::SlowTest | TaskKind::SurvivingMutant | TaskKind::Deepen => "slimfit check --mutants",
         }
     }
@@ -169,78 +168,76 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
         .collect()
 }
 
-/// Tests whose killed mutants are all killed by a cheaper cover of the
-/// rest: a time-weighted greedy set cover over the kill matrix of the
-/// mutants that ran. When only the change's ran, a test that killed none of
-/// them is not named: it may kill others.
+/// Two tests overlap enough to be merge candidates when the lines both run
+/// are at least this share of the lines either runs (ADR 0006).
+pub const MERGE_OVERLAP: f64 = 0.8;
+
+/// Redundant-test candidates from per-test coverage (ADR 0006): a test whose
+/// lines are all run by another test too (when both run the same lines, the
+/// slower of the two is proposed), or that shares at least [`MERGE_OVERLAP`]
+/// of the lines either runs with another (the slower of the two is
+/// proposed). Each is named once, with the other test it most overlaps;
+/// the slowest first. Coverage only proposes:
+/// the steps decide by reading the assertions.
 fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
-    let every = s.mutated.as_ref().is_none_or(|m| m.all);
-    let killed: Vec<(usize, &Vec<String>)> = s
-        .mutants
+    let Some(per_test) = &s.test_lines else { return vec![] };
+    let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.seconds);
+    // Each test, the (file, line)s it runs, and its seconds.
+    let lines: Vec<_> = per_test
         .iter()
-        .enumerate()
-        .filter(|(_, m)| m.status == MutantStatus::Killed)
-        .filter_map(|(i, m)| m.killed_by.as_ref().map(|k| (i, k)))
-        .collect();
-    if killed.is_empty() && s.mutation_tests.is_none() {
-        return vec![];
-    }
-    let mut kills: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-    for t in s.mutation_tests.iter().flatten() {
-        kills.entry(t.clone()).or_default();
-    }
-    for (i, ks) in &killed {
-        for k in *ks {
-            kills.entry(k.clone()).or_default().insert(*i);
-        }
-    }
-    let seconds = |name: &str| -> Option<f64> {
-        s.tests
-            .iter()
-            .find(|t| t.id == name || t.id.ends_with(&format!("::{name}")) || t.id.ends_with(&format!(" {name}")))
-            .map(|t| t.seconds)
-    };
-    let mut covered: BTreeSet<usize> = BTreeSet::new();
-    let mut chosen: BTreeSet<String> = BTreeSet::new();
-    loop {
-        let best = kills
-            .iter()
-            .filter(|(t, _)| !chosen.contains(*t))
-            .map(|(t, ks)| (t, ks.difference(&covered).count(), seconds(t).unwrap_or(0.0).max(0.001)))
-            .filter(|(_, gain, _)| *gain > 0)
-            .max_by(|a, b| (a.1 as f64 / a.2).total_cmp(&(b.1 as f64 / b.2)));
-        let Some((t, _, _)) = best else { break };
-        covered.extend(&kills[t]);
-        chosen.insert(t.clone());
-    }
-    let mut spare: Vec<(&String, &BTreeSet<usize>, Option<f64>)> = kills
-        .iter()
-        .filter(|(t, ks)| !chosen.contains(*t) && (every || !ks.is_empty()))
-        .map(|(t, ks)| (t, ks, seconds(t)))
-        .collect();
-    spare.sort_by(|a, b| b.2.unwrap_or(0.0).total_cmp(&a.2.unwrap_or(0.0)).then(a.0.cmp(b.0)));
-    spare
-        .into_iter()
-        .map(|(t, ks, secs)| Task {
-            kind: TaskKind::RedundantTest,
-            suite: s.suite.clone(),
-            summary: if ks.is_empty() {
-                format!("{t} kills no mutant")
-            } else if every {
-                format!("{t} kills only mutants other tests also kill ({})", ks.len())
-            } else {
-                format!("{t} kills only mutants other tests also kill ({}, of the change's)", ks.len())
-            },
-            files: vec![],
-            evidence: json!({ "test": t, "seconds": secs, "mutants_killed": ks.len(),
-                              "also_killed_by": ks.iter().flat_map(|i| s.mutants[*i].killed_by.iter().flatten()).filter(|k| *k != t).collect::<BTreeSet<_>>() }),
-            steps: "Read the test. If it checks behaviour no other test pins down (a user-visible outcome the mutants here don't reach), keep it and strengthen the code it covers instead. \
-                    Otherwise delete it. No bound proves a deletion lost nothing: a deletion adds no line, so no mutant is run for it, and the evidence covers only the mutants that ran. \
-                    When those were only a change's, read what else the test asserts before deleting it."
-                .into(),
-            accept: TaskKind::RedundantTest.accept().into(),
+        .map(|(t, files)| {
+            let ls: BTreeSet<(&str, u32)> =
+                files.iter().flat_map(|(f, ls)| ls.iter().map(move |l| (f.as_str(), *l))).collect();
+            (t, ls, seconds(t))
         })
-        .collect()
+        .filter(|(_, ls, _)| !ls.is_empty())
+        .collect();
+    let mut out: Vec<(f64, Task)> = Vec::new();
+    for (t, mine, secs) in &lines {
+        // The other test with the most overlap; its share and whether it runs all of mine.
+        let best = lines
+            .iter()
+            .filter(|(o, _, _)| o != t)
+            .map(|(o, theirs, o_secs)| {
+                let both = mine.intersection(theirs).count();
+                let slower = (secs, t) > (o_secs, o);
+                let within = both == mine.len() && (mine.len() < theirs.len() || slower);
+                // Lines that only overlap: the pair is named once, by its slower test.
+                let overlap = both < mine.len() && both < theirs.len() && slower;
+                (o, both as f64 / mine.union(theirs).count() as f64, within, overlap)
+            })
+            .filter(|(_, share, within, overlap)| *within || (*overlap && *share >= MERGE_OVERLAP))
+            .map(|(o, share, within, _)| (o, share, within))
+            .max_by(|a, b| (a.2, a.1).partial_cmp(&(b.2, b.1)).unwrap_or(std::cmp::Ordering::Equal).then(b.0.cmp(a.0)));
+        let Some((other, share, within)) = best else { continue };
+        out.push((
+            *secs,
+            Task {
+                kind: TaskKind::RedundantTest,
+                suite: s.suite.clone(),
+                summary: if within {
+                    format!("{t} runs no line {other} does not run too ({} lines)", mine.len())
+                } else {
+                    format!("{t} shares {:.0}% of its lines with {other}", share * 100.0)
+                },
+                files: vec![],
+                evidence: json!({ "test": t, "seconds": secs, "lines": mine.len(), "other_test": other }),
+                steps: "Coverage only proposes; the assertions decide. Read both tests. For every assertion of `test`, find the \
+                        assertion in `other_test` (or another test you name) that checks the same outcome on the same setup. Then do one: \
+                        DELETE `test` when every assertion maps (put the mapping in the commit message). \
+                        MERGE when some assertion does not map but the two build compatible setups: fold the unmapped assertions, and the setup they need, \
+                        into one test, or turn both into one test over a table of cases, so the setup is paid once; the merged test keeps every \
+                        assertion of both, each failing with its own message, and the commit message lists where each assertion went. \
+                        KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed. \
+                        No mutant is run for this: the accept command holds that no line becomes uncovered, no test fails and test time does not \
+                        rise; after a merge, `test_seconds` must fall."
+                    .into(),
+                accept: TaskKind::RedundantTest.accept().into(),
+            },
+        ));
+    }
+    out.sort_by(|a, b| b.0.total_cmp(&a.0));
+    out.into_iter().map(|(_, t)| t).collect()
 }
 
 fn slow(s: &SuiteMeasurement) -> Vec<Task> {
@@ -329,17 +326,7 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
 #[cfg(test)]
 mod t {
     use super::*;
-    use crate::model::{Metrics, Mutant, Mutated, TestCase};
-
-    fn mutant(status: MutantStatus, killers: &[&str]) -> Mutant {
-        Mutant {
-            file: "a".into(),
-            line: 1,
-            description: "m".into(),
-            status,
-            killed_by: Some(killers.iter().map(|s| s.to_string()).collect()),
-        }
-    }
+    use crate::model::{Metrics, TestCase};
 
     #[test]
     fn cap_keeps_the_first_few_of_each_kind_in_each_suite() {
@@ -355,41 +342,38 @@ mod t {
         assert_eq!((n("b", TaskKind::Uncovered), n("b", TaskKind::Deepen)), (5, 3));
     }
 
+    /// A test whose lines another runs too is proposed (of two that run the
+    /// same lines, the slower); a test overlapping another by at least
+    /// MERGE_OVERLAP is proposed for a merge; one apart from the rest, or
+    /// overlapping less, is not; without per-test coverage, none is.
     #[test]
-    fn redundant_tests_are_those_outside_the_cheapest_cover() {
+    fn redundant_tests_are_proposed_from_per_test_lines() {
+        let tests = [("wide", 0.1, 1..=10), ("inside", 0.3, 2..=4), ("twin", 0.2, 1..=10), ("near", 0.1, 20..=29)];
+        let tests =
+            tests.into_iter().chain([("near2", 0.5, 21..=30), ("apart", 0.1, 40..=45), ("loose", 0.1, 41..=50)]);
+        let mut per_test = BTreeMap::new();
+        let mut cases = Vec::new();
+        for (name, secs, lines) in tests {
+            per_test.insert(name.to_string(), [("a.rs".to_string(), lines.collect())].into());
+            cases.push(TestCase { id: name.into(), seconds: secs, passed: true, start: None });
+        }
         let s = SuiteMeasurement {
             suite: "s".into(),
             metrics: Metrics::default(),
-            tests: ["slow", "fast", "idle"]
-                .iter()
-                .zip([3.0, 0.1, 0.1])
-                .map(|(n, secs)| TestCase { id: format!("x::{n}"), seconds: secs, passed: true, start: None })
-                .collect(),
+            tests: cases,
             uncovered: vec![],
-            mutants: vec![
-                mutant(MutantStatus::Killed, &["slow", "fast"]),
-                mutant(MutantStatus::Killed, &["fast"]),
-                mutant(MutantStatus::Survived, &[]),
-            ],
-            mutation_tests: Some(vec!["slow".into(), "fast".into(), "idle".into()]),
+            mutants: vec![],
+            test_lines: Some(per_test),
             mutated: None,
             command_seconds: 0.0,
             load_slowdown: 1.0,
         };
-        let names = |s: &SuiteMeasurement| -> Vec<(String, String)> {
-            redundant(s).into_iter().map(|t| (t.evidence["test"].as_str().unwrap().into(), t.summary)).collect()
-        };
-        let all = names(&s);
-        assert_eq!(all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow", "idle"]);
-        assert!(all[1].1.contains("kills no mutant"));
-        // Only the change's mutants ran: a test that killed none of them may
-        // kill others, so it is not named.
-        let change = SuiteMeasurement {
-            mutated: Some(Mutated { all: false, files: vec!["a".into()], change: Default::default() }),
-            ..s
-        };
-        let some = names(&change);
-        assert_eq!(some.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow"]);
-        assert!(some[0].1.ends_with("(1, of the change's)"), "{some:?}");
+        let got: Vec<(String, String)> = redundant(&s)
+            .into_iter()
+            .map(|t| (t.evidence["test"].as_str().unwrap().into(), t.evidence["other_test"].as_str().unwrap().into()))
+            .collect();
+        let want = [("near2", "near"), ("inside", "twin"), ("twin", "wide")];
+        assert_eq!(got, want.map(|(a, b)| (a.to_string(), b.to_string())));
+        assert!(redundant(&SuiteMeasurement { test_lines: None, ..s }).is_empty());
     }
 }

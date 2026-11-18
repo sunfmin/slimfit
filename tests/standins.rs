@@ -317,9 +317,10 @@ fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
     doctor
 }
 
-/// `init` runs the preset's test tools once each, and no mutant;
-/// `next --all-mutants` runs only the mutants tool, keeping the test run
-/// of the same tree; `check` then works from that measurement. With
+/// `init` runs the preset's test tools once each, and no mutant; `next`
+/// and `check` then work from that measurement. A preset whose mutants tool
+/// cannot be limited to a change refuses `--mutants` and runs nothing
+/// (Rust's, given the change's diff, is driven in `rust`). With
 /// `dry`, `init` and `ratchet` are each asked first with `--dry-run`, which
 /// writes nothing and answers what the real run then writes (on one
 /// sample: what a dry run writes does not depend on the language). What
@@ -354,19 +355,12 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     assert!(b["tests"].as_u64() >= Some(4) && b["failures"] == 0, "{}: {b:#}", lang.name);
     assert!(b["uncovered_lines"].as_u64() > Some(0) && b.get("mutants").is_none(), "{}: {b:#}", lang.name);
 
-    // cargo-mutants exits 2 on a missed mutant, as the stand-in does; the
-    // other tools are made to fail all the same.
-    let exit = if lang.name == "rust" { 2 } else { 3 };
-    s.fault(lang.mutants_step, Some(Fault { exit, no_report: false }));
-    let (code, next, stderr) = s.slimfit(&["next", "--all", "--all-mutants"]);
-    assert_eq!(code, 0, "{}: {next:#}\n{stderr}", lang.name);
-    assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
-    s.fault(lang.mutants_step, None);
-    assert_eq!(s.steps(), [lang.mutants_step], "{}", lang.name);
+    let next = s.ok(&["next", "--all"]);
     let tasks = next["tasks"].as_array().unwrap();
-    let of = |k: &'static str| tasks.iter().filter(move |t| t["kind"] == k);
-    assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);
-    assert!(of("surviving-mutant").next().is_some(), "{}: {next:#}", lang.name);
+    assert!(tasks.iter().any(|t| t["kind"] == "uncovered" && t["files"][0] == lang.source), "{}: {next:#}", lang.name);
+    if lang.name != "rust" {
+        s.error(&["next", "--mutants"], &["cannot be limited to a change", "never mutates the whole codebase"]);
+    }
     let check = s.ok(&["check"]);
     if dry {
         printed.extend(dry_ratchet(s, lang, &base));
@@ -409,34 +403,49 @@ fn faults(json: &Value) -> String {
 
 /// A test or mutants tool that is missing, exits non-zero, or writes no
 /// report. A failing exit alone is no error: failing tests still write
-/// their reports (a mutants tool's exit is covered by `next --all-mutants`). No report
+/// their reports (a mutants tool's exit is covered in `rust`). No report
 /// is, and the error names the report and ends with the tool's own words.
+/// The mutants tool runs only on a change, and only where it can be
+/// limited to one (Rust's).
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
-    const ARGS: &[&str] = &["next", "--all-mutants", "--fresh"];
+    let mutates = lang.name == "rust";
     let mut tools = lang.test_tools.to_vec();
-    // A mutants tool that also runs the tests is missing for them first.
-    if !tools.contains(&lang.mutants_tool) {
-        tools.push(lang.mutants_tool);
-    }
+    let args: &[&str] = if mutates {
+        let source = s.repo.join(lang.source);
+        std::fs::write(&source, std::fs::read_to_string(&source).unwrap() + "// a change\n").unwrap();
+        // A mutants tool that also runs the tests is missing for them first.
+        if !tools.contains(&lang.mutants_tool) {
+            tools.push(lang.mutants_tool);
+        }
+        &["next", "--mutants", "--fresh"]
+    } else {
+        &["next", "--fresh"]
+    };
     for tool in tools {
         let link = s.unlink(tool);
-        s.error(ARGS, &["_report at", "fix: fix the command's failure in its log", tool]);
+        s.error(args, &["_report at", "fix: fix the command's failure in its log", tool]);
         s.relink(&link);
     }
     let no_report = Some(Fault { exit: 0, no_report: true });
     let (first, mutants) = (lang.test_steps[0], lang.mutants_step);
     s.fault(first, Some(Fault { exit: 3, no_report: false }));
-    s.fault(mutants, no_report);
-    let (code, json, stderr) = s.slimfit(ARGS);
-    assert_eq!(code, 2, "{}: {json:#}\n{stderr}", lang.name);
+    if mutates {
+        s.fault(mutants, no_report);
+    }
+    let (code, json, stderr) = s.slimfit(args);
     assert!(stderr.contains("test command exited exit status: 3"), "{}: {first}: {stderr}", lang.name);
-    assert!(faults(&json).contains(&format!("standin {mutants}: writing no report")), "{json:#}");
+    if mutates {
+        assert_eq!(code, 2, "{}: {json:#}\n{stderr}", lang.name);
+        assert!(faults(&json).contains(&format!("standin {mutants}: writing no report")), "{json:#}");
+    } else {
+        assert_eq!(code, 0, "{}: {json:#}\n{stderr}", lang.name);
+    }
     s.fault(first, None);
     s.fault(mutants, None);
     for step in lang.test_steps {
         s.fault(step, no_report);
         s.error(
-            ARGS,
+            args,
             &["_report at", "fix: fix the command's failure in its log", &format!("standin {step}: writing no report")],
         );
         s.fault(step, None);
@@ -445,8 +454,8 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
 
 /// The Rust sample, measured, in the states that make each command print
 /// its optional keys: violations, improvements, loosenings, the change's
-/// mutants and `mutants_at`. Killers come from nextest's logs, and a
-/// changed line gives cargo-mutants the change's diff.
+/// mutants and `mutants_at`. A changed line gives cargo-mutants the
+/// change's diff; `--all-mutants` is refused.
 fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mut run = |cmd: &'static str, args: &[&str], code: i32| -> Value {
         let mut all = vec![cmd];
@@ -464,21 +473,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     };
 
     run("next", &[], 0);
-    // The redundant tests are found.
-    let next = run("next", &["--all", "--all-mutants"], 0);
-    let mut redundant: Vec<&str> = next["tasks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|t| t["kind"] == "redundant-test")
-        .map(|t| t["evidence"]["test"].as_str().unwrap())
-        .collect();
-    redundant.sort();
-    assert!(
-        redundant == ["calc::tests::adds", "calc::tests::slow"]
-            || redundant == ["calc::tests::adds_again", "calc::tests::slow"],
-        "{next:#}"
-    );
+    let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
+    assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
     run("report", &["--points", "1"], 0);
     // Better than the baseline: improved.
     edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
@@ -493,6 +489,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
     s.take();
     let check = run("check", &["--mutants"], 1);
+    let next = run("next", &["--all", "--mutants"], 0);
+    assert!(next["tasks"].as_array().unwrap().iter().any(|t| t["kind"] == "surviving-mutant"), "{next:#}");
     assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
     assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
     let calls = s.take();
@@ -531,7 +529,7 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
         let page = String::from_utf8(page.stdout).unwrap();
         let reached: &[&str] = match *cmd {
             "init" => &["mutants_diff_flag", "mutants_file_flag"],
-            "next" => &["also_killed_by", "survivors", "start", "counts", "remaining"],
+            "next" => &["survivors", "start", "counts", "remaining", "notes"],
             "check" => &["fix", "improved", "mutated", "change", "unviable"],
             "ratchet" => &["from", "reason", "mutants_at", "tree"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],

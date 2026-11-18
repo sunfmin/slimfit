@@ -5,15 +5,13 @@
 #   next --all                → an `uncovered` task names the `unused` function's file
 #   check                     → passes
 #   add an untested function  → check exits 1 on uncovered_lines
-# With E2E_MUTANTS=1, also (before the injection):
-#   next --all --all-mutants  → a `surviving-mutant` task (the is_adult boundary);
-#                               for rust, `redundant-test` tasks name `slow` and
-#                               one of the two identical `add` tests (adds_again
-#                               is the deliberate copy; which one goes is a tie)
-# and after it, for rust:
+# With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool is
+# limited to a change; nothing mutates a whole sample), after the injection:
 #   check --mutants           → cargo-mutants runs only the injected lines'
 #                               mutants, and their survivors fail the check
-# A language whose toolchain for this run is incomplete (the mutants tool too
+#   next --all --mutants      → a `surviving-mutant` task in src/lib.rs, from
+#                               the same measurement
+# A language whose toolchain for this run is incomplete (cargo-mutants too
 # under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
 # Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
 set -eu
@@ -38,14 +36,13 @@ missing() {
   mut() { [ "${E2E_MUTANTS:-}" = 1 ] && need "$1"; return 0; }
   case "$1" in
     rust) need cargo-llvm-cov; need cargo-nextest; mut cargo-mutants ;;
-    go) need go; mut gremlins ;;
+    go) need go ;;
     typescript) need npm ;;
     kotlin) [ -n "${JAVA_HOME:-}" ] && "$JAVA_HOME/bin/java" -version >/dev/null 2>&1 || m="$m java (JAVA_HOME)" ;;
     swift)
       need swift
       # Command Line Tools ship swift but not XCTest; only Xcode has it.
-      { have xcrun && xcrun --find xctest >/dev/null 2>&1; } || m="$m XCTest (Xcode)"
-      mut muter ;;
+      { have xcrun && xcrun --find xctest >/dev/null 2>&1; } || m="$m XCTest (Xcode)" ;;
   esac
   echo "${m# }"
 }
@@ -81,14 +78,6 @@ for lang in $langs; do
     git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit
     "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
     "$bin" check >/dev/null 2>&1
-    if [ "${E2E_MUTANTS:-}" = 1 ]; then
-      "$bin" next --all --all-mutants 2>mutants.log | json '[t["kind"] for t in d["tasks"]]' >kinds.txt || { tail -20 mutants.log; exit 1; }
-      grep -q surviving-mutant kinds.txt || { echo "no surviving-mutant task: $(cat kinds.txt)" >&2; exit 1; }
-      if [ "$lang" = rust ]; then
-        "$bin" next --all --all-mutants --kind redundant-test 2>/dev/null | json '" ".join(sorted(t["evidence"]["test"] for t in d["tasks"]))' >redundant.txt
-        grep -qE '^calc::tests::adds(_again)? calc::tests::slow$' redundant.txt || { echo "redundant tests: $(cat redundant.txt)" >&2; exit 1; }
-      fi
-    fi
     inject "$lang"
     if "$bin" check >check.json 2>/dev/null; then
       echo "e2e $lang: check passed with an untested function added" >&2
@@ -97,8 +86,10 @@ for lang in $langs; do
     json '[v["metric"] for v in d["verdict"]["violations"]]' <check.json | grep -q uncovered_lines
     if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
       "$bin" check --mutants >change.json 2>change.log && { echo "check --mutants passed the untested function" >&2; exit 1; }
-      json 'd["mutated"]["rust"]["all"], d["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <change.json \
-        | grep -qx "False \['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
+      json 'd["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <change.json \
+        | grep -qx "\['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
+      "$bin" next --all --mutants 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
+        | grep -q "src/lib.rs" || { echo "no surviving-mutant task in src/lib.rs" >&2; exit 1; }
     fi
     echo "e2e $lang: ok ($(( $(date +%s) - start ))s)"
   ) || { echo "e2e $lang: FAILED"; failed=1; }
