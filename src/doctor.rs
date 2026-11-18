@@ -19,9 +19,9 @@ pub enum Kind {
     NoBaseline,
     /// A gate runs the project's own tests and also `slimfit check`, which is a test run: the tests run twice. Fix: take the project's test command out of that gate.
     TestsRunTwice,
-    /// A gate runs mutation testing (`--mutants` or a mutation tool): it holds up every landing for hours. Fix: move it to idle work (in factorium, `[idle] steps`).
+    /// A gate or an `[idle]` step runs mutation testing (`--mutants` or a mutation tool): in a gate it holds up every landing; idle work commits nothing, so `mutants_at` never moves. Fix: take it out; the agent runs `slimfit check --mutants` on its own change at background priority, then `slimfit ratchet` (see [mutants scope](help:mutants-scope)).
     MutantsInGate,
-    /// A command in `factorium.toml` (a gate or idle work) mutates the whole codebase: `--all-mutants`, which slimfit refuses, or a mutation tool run without slimfit and without a diff. Mutants run only on a change. Fix: `slimfit check --mutants`, the mutants of the lines changed since the baseline's `mutants_at`.
+    /// A command in `factorium.toml` (a gate or idle work) mutates the whole codebase: `--all-mutants`, which slimfit refuses, or a mutation tool run without slimfit and without a diff. Mutants run only on a change. Fix: take it out; the agent runs `slimfit check --mutants`, the mutants of its changed lines, as for `mutants_in_gate`.
     WholeCodebaseMutants,
     /// The baseline records no `mutants_at`: `--mutants` takes the change from the merge base with the branch's upstream, and refuses without one (see [mutants scope](help:mutants-scope)). Fix: one `slimfit ratchet` (it records the tree now as `mutants_at`), then commit the baseline.
     MutantsUnscoped,
@@ -223,33 +223,24 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
     out
 }
 
-/// The commands a factorium gate runs, by where they are written: each
-/// `[gate]` entry of `factorium.toml`, and the lines of each repository
-/// script it names (not the scripts those name).
+/// The commands a factorium gate or idle step runs, by where they are
+/// written: each `[gate]` entry and `[idle]` step of `factorium.toml`, and the
+/// lines of each repository script it names (not the scripts those name).
 fn gates(repo: &Path) -> Vec<Finding> {
     let Ok(text) = std::fs::read_to_string(repo.join("factorium.toml")) else { return Vec::new() };
     let Ok(t) = toml::from_str::<toml::Table>(&text) else { return Vec::new() };
     let mut out = Vec::new();
     let steps = t.get("idle").and_then(|i| i.get("steps")).and_then(|s| s.as_array()).cloned().unwrap_or_default();
     for (i, step) in steps.iter().filter_map(|s| s.as_str()).enumerate() {
-        out.extend(whole(&run_by(repo, &format!("factorium.toml [idle] steps[{i}]"), step)));
+        let lines = run_by(repo, &format!("factorium.toml [idle] steps[{i}]"), step);
+        out.extend(mutation(&lines, "as idle work, which commits nothing, so `mutants_at` never moves"));
     }
     let Some(toml::Value::Table(gate)) = t.get("gate") else { return out };
     for (key, entry) in gate {
         let Some(entry) = entry.as_str() else { continue };
         let at = format!("factorium.toml [gate] {key}");
         let lines = run_by(repo, &at, entry);
-        out.extend(whole(&lines));
-        for (place, line) in &lines {
-            if MUTATION.iter().any(|m| line.contains(m)) {
-                out.push(finding(
-                    Kind::MutantsInGate,
-                    None,
-                    format!("{place} runs mutation testing in the `{key}` gate: `{line}`"),
-                    format!("take `{line}` out of {place}; run it as idle work: factorium.toml `[idle] steps`"),
-                ));
-            }
-        }
+        out.extend(mutation(&lines, &format!("in the `{key}` gate, holding up every landing")));
         let checks = lines.iter().any(|(_, l)| l.contains("slimfit check"));
         for (place, line) in lines.iter().filter(|(_, l)| !l.contains("slimfit")) {
             if checks && let Some(r) = TEST_RUNNERS.iter().find(|r| line.contains(*r)) {
@@ -289,23 +280,26 @@ fn run_by(repo: &Path, at: &str, entry: &str) -> Vec<(String, String)> {
     lines
 }
 
-/// A finding for each of `lines` that mutates the whole codebase.
-fn whole(lines: &[(String, String)]) -> Vec<Finding> {
-    lines
-        .iter()
-        .filter(|(_, l)| whole_codebase(l))
-        .map(|(place, line)| {
-            finding(
-                Kind::WholeCodebaseMutants,
-                None,
-                format!("{place} mutates the whole codebase: `{line}`"),
-                format!(
-                    "replace `{line}` at {place} with `slimfit check --mutants`: mutants run only on a change, the lines \
-                     changed since the baseline's mutants_at"
-                ),
-            )
-        })
-        .collect()
+/// Where mutants run instead of a gate or idle work.
+const RUN_ON_THE_CHANGE: &str = "the agent that made a change runs `slimfit check --mutants` on its changed lines, at \
+     background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants`), then \
+     `slimfit ratchet`, and commits the baseline with the change";
+
+/// A finding for each of `lines` (run `how`, in a gate or idle work) that
+/// runs mutants: one that mutates the whole codebase is named as that.
+fn mutation(lines: &[(String, String)], how: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (place, line) in lines {
+        let fix = format!("take `{line}` out of {place}; {RUN_ON_THE_CHANGE}");
+        if whole_codebase(line) {
+            let what = format!("{place} mutates the whole codebase: `{line}`");
+            out.push(finding(Kind::WholeCodebaseMutants, None, what, fix));
+        } else if MUTATION.iter().any(|m| line.contains(m)) {
+            let what = format!("{place} runs mutation testing {how}: `{line}`");
+            out.push(finding(Kind::MutantsInGate, None, what, fix));
+        }
+    }
+    out
 }
 
 fn baseline(b: &Baseline) -> Vec<Finding> {
@@ -458,10 +452,10 @@ mod tests {
         assert!(f[0].fix.contains("`cargo test --workspace` out of gate.sh:4"), "{f:#?}");
     }
 
-    /// Mutants in a gate, written in its entry or its script; in `[idle]`
-    /// the change's are fine.
+    /// Mutants in a gate, written in its entry or its script, or in an
+    /// `[idle]` step: each goes to the agent's own change.
     #[test]
-    fn mutants_in_a_gate_go_to_idle_work() {
+    fn mutants_in_a_gate_or_idle_work_go_to_the_change() {
         let r = repo(&[
             (
                 "factorium.toml",
@@ -470,9 +464,11 @@ mod tests {
             ("slow.sh", "cargo mutants --in-diff d\n"),
         ]);
         let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::MutantsInGate, Kind::MutantsInGate], "{f:#?}");
-        assert!(f[0].what.contains("[gate] fast") && f[1].what.contains("slow.sh:1"), "{f:#?}");
-        assert!(f.iter().all(|f| f.fix.contains("[idle]")), "{f:#?}");
+        assert_eq!(kinds(&f), vec![Kind::MutantsInGate; 3], "{f:#?}");
+        assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] runs mutation testing as idle work"), "{f:#?}");
+        assert!(f[1].what.contains("[gate] fast") && f[2].what.contains("slow.sh:1"), "{f:#?}");
+        let fix = "--background -- slimfit check --mutants`), then `slimfit ratchet`";
+        assert!(f.iter().all(|f| f.fix.contains(fix)), "{f:#?}");
     }
 
     /// `--all-mutants`, or a mutation tool run on its own without a diff,
@@ -487,9 +483,9 @@ mod tests {
             ("slow.sh", "cargo mutants --workspace\n"),
         ]);
         let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::WholeCodebaseMutants, Kind::WholeCodebaseMutants, Kind::MutantsInGate]);
+        assert_eq!(kinds(&f), vec![Kind::WholeCodebaseMutants, Kind::MutantsInGate, Kind::WholeCodebaseMutants]);
         assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] mutates the whole codebase"), "{f:#?}");
-        assert!(f[1].what.starts_with("slow.sh:1") && f[1].fix.contains("`slimfit check --mutants`"), "{f:#?}");
+        assert!(f[2].what.starts_with("slow.sh:1") && f[2].fix.contains("`slimfit check --mutants`"), "{f:#?}");
     }
 
     /// No mutants_at: `--mutants` would measure only what is uncommitted.
