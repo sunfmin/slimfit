@@ -97,20 +97,16 @@ fn find(path: &[PathBuf], exe: &str) -> Option<PathBuf> {
 /// A JDK: `$JAVA_HOME/bin/java`, one macOS knows of, or a `java` on PATH
 /// other than macOS's stub, which only offers to install one.
 fn jdk(path: &[PathBuf]) -> bool {
-    if std::env::var_os("JAVA_HOME").is_some_and(|h| Path::new(&h).join("bin/java").is_file()) {
-        return true;
-    }
+    let mut dirs: Vec<PathBuf> = std::env::var_os("JAVA_HOME").map(|h| Path::new(&h).join("bin")).into_iter().collect();
+    dirs.extend_from_slice(path);
     let java_home = Path::new("/usr/libexec/java_home");
-    if java_home.exists()
-        && std::process::Command::new(java_home)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    {
-        return true;
-    }
-    find(path, "java").is_some_and(|j| j != Path::new("/usr/bin/java"))
+    find(&dirs, "java").is_some_and(|j| j != Path::new("/usr/bin/java"))
+        || java_home.exists()
+            && std::process::Command::new(java_home)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
 }
 
 /// A tool a preset's commands run: found by `needle` in a command line.
@@ -440,6 +436,10 @@ mod tests {
         let f = diagnose(r.path(), &host(&every_tool()));
         assert_eq!(kinds(&f), vec![Kind::NoBaseline]);
         assert!(f[0].fix.contains("slimfit init"), "{f:#?}");
+        let r = repo(&[(ratchet::FILE, "not json")]);
+        let f = diagnose(r.path(), &host(&every_tool()));
+        assert_eq!(kinds(&f), vec![Kind::NoBaseline]);
+        assert!(f[0].what.contains(ratchet::FILE) && f[0].fix.contains("restore"), "{f:#?}");
     }
 
     /// The gate's script runs `cargo test` and `slimfit check`: the fix
@@ -497,6 +497,18 @@ mod tests {
         assert_eq!(kinds(&f), vec![Kind::MutantsPending], "{f:#?}");
         assert!(f[0].what.starts_with("2 file(s)") && f[0].what.contains("src/a.rs"), "{f:#?}");
         assert!(f[0].fix.contains("--pending-seconds"), "{f:#?}");
+    }
+
+    /// This host: its cores, PATH and cargo's bin directory searched; a
+    /// `java` on the path is a JDK.
+    #[test]
+    fn the_host_is_read_from_the_environment() {
+        let h = Host::current();
+        assert!(h.cores >= 1 && h.load >= 0.0, "{h:?}");
+        assert!(h.path.last().is_some_and(|d| d.ends_with("bin")), "{h:?}");
+        let bin = tempfile::tempdir().unwrap();
+        install(bin.path(), "java");
+        assert!(jdk(&[bin.path().into()]));
     }
 
     /// A load above the core count is busy; at it, not yet.
