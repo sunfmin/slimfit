@@ -8,7 +8,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 3.353763834,
+          "duration": 17.50249,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -21,15 +21,14 @@
         },
         {
           "phase": "Test",
-          "duration": 1.334873042,
+          "duration": 1.9874869579999999,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--package=calc@0.1.0"
           ]
         }
       ]
@@ -74,7 +73,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.23956725,
+          "duration": 5.23355275,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -82,12 +81,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.186403,
+          "duration": 4.159819125,
           "process_status": {
             "Failure": 100
           },
@@ -96,8 +95,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -142,7 +140,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.247986167,
+          "duration": 5.838408709,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -150,12 +148,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.1795513340000001,
+          "duration": 1.454475875,
           "process_status": {
             "Failure": 100
           },
@@ -164,8 +162,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -210,7 +207,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.589224834,
+          "duration": 1.064405584,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -218,12 +215,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.244277625,
+          "duration": 1.162156791,
           "process_status": {
             "Failure": 100
           },
@@ -232,8 +229,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -278,7 +274,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.3947115,
+          "duration": 1.164361667,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -286,12 +282,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.2932008750000001,
+          "duration": 1.330145,
           "process_status": {
             "Failure": 100
           },
@@ -300,8 +296,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -346,7 +341,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.2819477080000001,
+          "duration": 1.566922167,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -354,12 +349,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.2836050829999999,
+          "duration": 1.165271458,
           "process_status": {
             "Failure": 100
           },
@@ -368,8 +363,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -414,7 +408,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.336283791,
+          "duration": 1.057777459,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -422,20 +416,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.336689041,
+          "duration": 1.217890083,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -480,7 +473,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.282417417,
+          "duration": 1.257776916,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -488,20 +481,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.245257042,
+          "duration": 1.12685175,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -546,7 +538,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.436041625,
+          "duration": 2.939231917,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -554,20 +546,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.077078291,
+          "duration": 1.264895,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -612,7 +603,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.191878375,
+          "duration": 1.316319625,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -620,20 +611,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.245949,
+          "duration": 1.7159495,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -678,7 +668,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.385253417,
+          "duration": 1.5320883749999998,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -686,20 +676,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.203729875,
+          "duration": 1.3739715000000001,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -744,7 +733,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.137118333,
+          "duration": 1.844330625,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -752,20 +741,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.2908855830000001,
+          "duration": 1.414533584,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -810,7 +798,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.55152725,
+          "duration": 1.280460542,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -818,20 +806,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.2417989170000001,
+          "duration": 1.006297459,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -876,7 +863,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.5373291249999999,
+          "duration": 1.056060291,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -884,20 +871,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.188991083,
+          "duration": 1.131511167,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -942,7 +928,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.3430164580000001,
+          "duration": 1.257592208,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -950,20 +936,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.132405834,
+          "duration": 1.15944,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -1008,7 +993,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.4981365,
+          "duration": 1.224557375,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -1016,20 +1001,19 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.242777625,
+          "duration": 1.09613325,
           "process_status": "Success",
           "argv": [
             "cargo",
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -1074,7 +1058,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.184847917,
+          "duration": 2.481440709,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -1082,12 +1066,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.28699725,
+          "duration": 1.007811625,
           "process_status": {
             "Failure": 100
           },
@@ -1096,8 +1080,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -1142,7 +1125,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.434950042,
+          "duration": 1.369602833,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -1150,12 +1133,12 @@
             "run",
             "--no-run",
             "--verbose",
-            "--package=calc@0.1.0"
+            "--workspace"
           ]
         },
         {
           "phase": "Test",
-          "duration": 1.185411709,
+          "duration": 1.7409382089999998,
           "process_status": {
             "Failure": 100
           },
@@ -1164,8 +1147,7 @@
             "nextest",
             "run",
             "--verbose",
-            "--package=calc@0.1.0",
-            "--no-fail-fast"
+            "--workspace"
           ]
         }
       ]
@@ -1177,7 +1159,7 @@
   "timeout": 0,
   "unviable": 0,
   "success": 0,
-  "start_time": "2026-11-18T07:21:26.805659Z",
-  "end_time": "2026-11-18T07:22:15.572718Z",
+  "start_time": "2026-11-18T17:32:51.004826Z",
+  "end_time": "2026-11-18T17:34:08.609398Z",
   "cargo_mutants_version": "27.1.0"
 }
