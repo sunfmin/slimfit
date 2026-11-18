@@ -187,7 +187,7 @@ pub fn preset(p: Preset) -> Suite {
         Preset::Rust => Suite {
             inline_tests: true,
             test_command: "printf '[profile.default.junit]\\npath = \"junit.xml\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
-                cargo llvm-cov nextest --workspace --config-file \"$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
+                cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
                 .into(),
             tests_report: report(TestsFormat::Junit, "target/nextest/default/junit.xml"),
             // nextest without fail-fast runs every test on every mutant, so each

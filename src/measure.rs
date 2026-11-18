@@ -66,7 +66,8 @@ pub struct Options {
 /// `base` is the baseline a `Mutants::Changed` run builds on.
 pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Result<Measurement> {
     let started = Instant::now();
-    let tree = git::tree_key(repo)?;
+    let wt = git::worktree(repo)?;
+    let tree = wt.key.clone();
     let cache = repo.join(OUT).join("measurement.json");
     let filling = matches!(opts.mutants, Mutants::Fill(_));
     if !opts.fresh
@@ -80,10 +81,8 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
     {
         return Ok(m);
     }
-    let files = git::files(repo)?;
-    let snapshot = git::snapshot(repo)?;
     let changed = match (&base.mutants_at, opts.mutants) {
-        (Some(then), Mutants::Changed | Mutants::Fill(_)) => match git::changed_since(repo, then) {
+        (Some(then), Mutants::Changed | Mutants::Fill(_)) => match git::changed_since(repo, &wt, then) {
             Ok(c) => Some(c),
             Err(e) => {
                 eprintln!("slimfit: mutating every file: no diff from the baseline's commit ({e:#})");
@@ -121,9 +120,15 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             }
             Mutants::All => Some(Prior { changed: None, base: None, all: true }),
         };
-        suites.push(measure_suite(repo, &files, &suite, prior, spending.as_mut())?);
+        suites.push(measure_suite(repo, &wt.files, &suite, prior, spending.as_mut())?);
     }
-    let m = Measurement { tree, with_mutants: opts.mutants != Mutants::None, piece: filling, snapshot, suites };
+    let m = Measurement {
+        tree,
+        with_mutants: opts.mutants != Mutants::None,
+        piece: filling,
+        snapshot: wt.snapshot,
+        suites,
+    };
     std::fs::create_dir_all(repo.join(OUT))?;
     std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
     Ok(m)
