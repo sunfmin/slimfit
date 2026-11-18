@@ -351,3 +351,91 @@ fn kotlin() {
 fn swift() {
     faults_reach_the_agent(&measures_through_its_tools(&SWIFT), &SWIFT);
 }
+
+/// Every key a command prints is named on its own page (`slimfit <command>
+/// --help`), as `` `key` ``: the agent reads the page, never the source.
+/// Keys that are names (a suite's, a file's) are not keys to name. Each
+/// command runs on the Rust sample in the states that make it print its
+/// optional keys: violations, improvements, loosenings, a piece's
+/// not-recorded bounds, pending mutants, mutated files.
+#[test]
+fn every_printed_key_is_on_its_page() {
+    let s = Sample::new(&RUST);
+    let mut printed: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+    let mut run = |cmd: &'static str, args: &[&str], code: i32| {
+        let mut all = vec![cmd];
+        all.extend(args);
+        let (got, json, stderr) = s.slimfit(&all);
+        assert_eq!(got, code, "slimfit {all:?}: {json:#}\n{stderr}");
+        printed.entry(cmd).or_default().push(json);
+    };
+    let baseline = s.repo.join(".slimfit/baseline.json");
+    let edit = |f: &dyn Fn(&mut Value)| {
+        let mut b: Value = serde_json::from_str(&std::fs::read_to_string(&baseline).unwrap()).unwrap();
+        f(&mut b["suites"]["rust"]);
+        std::fs::write(&baseline, serde_json::to_string(&b).unwrap()).unwrap();
+    };
+
+    run("init", &["--mutants"], 0);
+    run("next", &[], 0);
+    run("next", &["--all", "--all-mutants"], 0);
+    run("check", &[], 0);
+    run("report", &["--points", "1"], 0);
+    // Better than the baseline: improved.
+    edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
+    run("check", &[], 0);
+    // Worse: violations, then a loosening.
+    edit(&|b| b["uncovered_lines"] = 0.into());
+    run("check", &[], 1);
+    run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
+    // A changed file and a pending one: mutated, mutants_pending.
+    let lib = s.repo.join("src/lib.rs");
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
+    edit(&|b| b["mutants_pending"] = serde_json::json!(["src/lib.rs"]));
+    run("check", &["--mutants"], 0);
+    // A piece over its time bound, with no slack: not_recorded.
+    edit(&|b| b["test_seconds"] = 0.into());
+    let cfg = s.repo.join("slimfit.toml");
+    let text = std::fs::read_to_string(&cfg).unwrap();
+    let text =
+        text.replace("time_tolerance = 0.2", "time_tolerance = 0.0").replace("time_slack = 1.0", "time_slack = 0.0");
+    std::fs::write(&cfg, text).unwrap();
+    run("ratchet", &["--pending-files", "1", "--fresh"], 0);
+    run("report", &["--points", "1"], 0);
+
+    fn keys(v: &Value, out: &mut std::collections::BTreeSet<String>) {
+        match v {
+            Value::Object(m) => {
+                for (k, v) in m {
+                    if k != "rust" && !k.contains('/') && !k.contains('.') {
+                        out.insert(k.clone());
+                    }
+                    keys(v, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|v| keys(v, out)),
+            _ => {}
+        }
+    }
+    let mut missing = Vec::new();
+    for (cmd, outputs) in &printed {
+        let page = Command::new(env!("CARGO_BIN_EXE_slimfit")).args([cmd, "--help"]).output().unwrap();
+        let page = String::from_utf8(page.stdout).unwrap();
+        let mut ks = Default::default();
+        outputs.iter().for_each(|o| keys(o, &mut ks));
+        let reached: &[&str] = match *cmd {
+            "init" => &["mutants_file_flag", "mutant_files"],
+            "next" => &["also_killed_by", "survivors", "start", "counts", "remaining"],
+            "check" => &["fix", "improved", "mutants_pending", "unviable"],
+            "ratchet" => &["from", "reason", "fix"],
+            _ => &["history", "commit", "from"],
+        };
+        for k in reached {
+            assert!(ks.contains(*k), "{cmd} printed no {k:?}: the states above no longer reach it");
+        }
+        for k in ks.iter().filter(|k| !page.contains(&format!("`{k}`"))) {
+            missing.push(format!("{cmd}: {k}"));
+        }
+    }
+    assert!(missing.is_empty(), "printed but not named on the command's page:\n{}", missing.join("\n"));
+}

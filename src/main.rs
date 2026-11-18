@@ -65,20 +65,31 @@ struct Cli {
 enum Cmd {
     /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
     ///
-    /// Run it once, when adopting slimfit on a repo; time it first (see [costs](help:costs)). It detects Rust, Go, Swift, Kotlin and TypeScript projects, one suite per project found, each from its language's preset; edit `slimfit.toml` to override any preset field.
+    /// ## When to run it
+    ///
+    /// Once, when adopting slimfit on a repo, on a quiet host; time it first (see [costs](help:costs)). Run it again only to start the baseline over: it overwrites `.slimfit/baseline.json` with what it measures now, worse bounds included.
     ///
     /// ## What it reads and writes
     ///
-    /// It writes `slimfit.toml` when the repo has none, and keeps it otherwise. It measures every suite once (one instrumented test run, never from the cache) and writes `.slimfit/baseline.json` from that measurement, keeping any loosened bounds already there. It adds `.slimfit/out` to `.gitignore`.
+    /// It detects Rust, Go, Swift, Kotlin and TypeScript projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run; with `--mutants`, every mutant too), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`.
     ///
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in.
-    /// - `baseline`: per suite, the metrics now held (see `slimfit check --help`).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report` and `mutants_file_flag` (the flag that limits the mutation tool to one file; empty when it has none).
+    /// - `baseline`: per suite, {const:HELD}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     ///
-    /// It refuses when it finds no project of a language it knows: write `slimfit.toml` by hand.
+    /// ## What it may refuse
+    ///
+    /// - No project of a language it knows, and no `slimfit.toml`: write `slimfit.toml` by hand.
+    /// - {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
+    /// - On a busy host its `test_seconds` comes out high, and the baseline holds it from then on: run it on a quiet host (see [host load](help:host-load)).
+    /// - Without `--mutants` the baseline holds no mutants, and `--mutants` later mutates every file, not just the changed ones (see [mutants scope](help:mutants-scope)). On a large workspace build the mutants baseline in pieces instead (see [the piecewise baseline](help:piecewise-baseline)).
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init {
         /// Also run mutation testing of every file, for the first mutants baseline: hours on a large workspace (see [the piecewise baseline](help:piecewise-baseline)).
@@ -87,20 +98,39 @@ enum Cmd {
     },
     /// The next task to do, with its evidence and accept command.
     ///
-    /// Run it at the start of each turn of the loop. Tasks come cheapest and safest first, in the order of `--kind`'s values below. Each task carries its evidence and the command that accepts it; do exactly that task, then run its accept command, then `slimfit ratchet` and commit.
+    /// ## When to run it
+    ///
+    /// At the start of each turn of the loop, after the last task's change is ratcheted and committed. Do exactly the task it gives, then run its `accept` command, then `slimfit ratchet` and commit. Tasks come cheapest and safest first, in the order of `--kind`'s values below.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and the git history of the last 90 days (for `deepen` tasks). It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken; it writes nothing else.
     ///
     /// ## What it answers
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
-    /// - `remaining` (`counts` with `--all`): how many tasks of each kind there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides, e.g. mutants not run, or a mutation tool that does not record which test kills which mutant (only Rust, TypeScript and Kotlin record it, so only they get redundant-test tasks).
+    /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
+    /// - `notes`: what was not measured and what that hides: mutants not run, only the changed files mutated, or a mutation tool that does not record which test kills which mutant (only Rust, TypeScript and Kotlin record it, so only they get redundant-test tasks).
     /// - `next`: what to do now.
     ///
-    /// A task has `kind`, `suite`, `summary`, `files`, `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after).
+    /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
+    ///
+    /// - `failing-test`: `test` and `log`, the test run's log.
+    /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
+    /// - `redundant-test`: `test`, its `seconds`, `mutants_killed`, and `also_killed_by`, the tests that kill those mutants too.
+    /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
+    /// - `surviving-mutant`: `survivors`, each with its `line` and `mutant` (the change it makes).
+    /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in 90 days.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
     ///
-    /// Without `--mutants` there are no surviving-mutant tasks, and without `--all-mutants` no redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says.
+    /// - Without `--mutants` there are no surviving-mutant tasks, and without `--all-mutants` no redundant-test tasks: `notes` says so. Those flags cost what [costs](help:costs) says, so never run them in a gate.
+    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (no `slimfit ratchet --mutants` yet): see [mutants scope](help:mutants-scope).
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Next {
         /// List every task, not just the first (at most {const:LISTED_PER_KIND} of each kind per suite, {const:LISTED_DEEPEN} deepen); `counts` counts them all.
@@ -121,7 +151,13 @@ enum Cmd {
     },
     /// Fails if any bound is worse than the baseline; exits 1 on a violation.
     ///
-    /// Run it after each change, and in the gate in place of the project's own test run: it IS that test run (see [setting up in factorium](help:factorium)). It reads `slimfit.toml` and `.slimfit/baseline.json` and writes nothing but its cache in `.slimfit/out/`.
+    /// ## When to run it
+    ///
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` and `--all-mutants` only on an idle host, never in a gate.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache and the suites' reports and logs beside it. The baseline is never written: `slimfit ratchet` does that.
     ///
     /// ## What it holds
     ///
@@ -136,10 +172,23 @@ enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`; `violations`, each with `suite`, `metric`, `baseline`, `limit`, `current` and `fix` (what to do); `improved`, the bounds that got better (`slimfit ratchet` locks them in); `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and, while a mutants baseline is built in pieces, `mutants_pending`, per suite the files whose mutants are not held yet.
-    /// - `metrics`: per suite, `prod_lines`, `test_lines`, `tests`, `failures`, `test_seconds`, `covered_lines`, `uncovered_lines` and, when measured, `mutants` (`killed`, `survived`, `unviable`).
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and, while a mutants baseline is built in pieces, `mutants_pending`, per suite the files whose mutants are not held yet.
+    /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `"all"` or the files mutated; `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
+    ///
+    /// It exits 0 when `ok`, 1 when a bound is violated.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
+    /// - `test_seconds` swells on a busy host. slimfit corrects for load, but a violation on a loaded host is worth one `--fresh` run on a quiet one before you chase it (see [host load](help:host-load)).
+    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (see [mutants scope](help:mutants-scope)).
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Check {
         /// Also check `survived_mutants`, mutating the files changed since the baseline's mutants were measured and keeping the baseline's counts for the rest (see [mutants scope](help:mutants-scope)). Never in a gate.
@@ -154,17 +203,37 @@ enum Cmd {
     },
     /// Moves the baseline to the current measurement; bounds only tighten.
     ///
-    /// Run it after a task's accept command passes, then commit `.slimfit/baseline.json` with the change it records. It refuses, writing nothing, when a bound got worse, unless `--loosen` allows that bound to rise; `failures` never may. A loosening's reason is kept in the baseline, and every report shows it.
+    /// ## When to run it
     ///
-    /// With `--mutants` or `--all-mutants` it also records the commit the mutants were measured at, so the next `--mutants` mutates only what changed after it. `--pending-seconds` and `--pending-files` build the mutants baseline in pieces (see [the piecewise baseline](help:piecewise-baseline)).
+    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). After a task accepted with `--mutants` or `--all-mutants`, ratchet with the same flag, so the mutant counts are recorded too. On an idle host, `--pending-seconds` builds the mutants baseline in pieces (see [the piecewise baseline](help:piecewise-baseline)).
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. With `--mutants`, `--all-mutants` or a piece it also records the commit the mutants were measured at, so the next `--mutants` mutates only what changed after it.
     ///
     /// ## What it answers
     ///
     /// - `changed`: whether the baseline moved. `false` is nothing to ratchet: an answer (exit 0), and the baseline is not rewritten.
-    /// - `baseline`: per suite, the metrics now held.
-    /// - `loosened`: every loosening kept in the baseline, with its reason.
-    /// - `not_recorded`: in a piece, a `test_seconds` over its bound, left at its old value (see [host load](help:host-load)).
+    /// - `baseline`: per suite, {const:HELD}.
+    /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
+    /// - `not_recorded`: in a piece, a `test_seconds` over its bound, left at its old value (see [host load](help:host-load)): {const:VIOLATION}.
     /// - `next`: commit, then `slimfit next` (or, when nothing changed, just `slimfit next`).
+    ///
+    /// ## What it may refuse
+    ///
+    /// It writes nothing when it refuses.
+    ///
+    /// - A bound got worse: `failures` always; any other unless `--loosen` names it. A piece is not refused for `test_seconds`: that goes to `not_recorded`.
+    /// - `--loosen` without `--reason`.
+    /// - `--pending-seconds` or `--pending-files` with `--all-mutants`, and `--pending-files 0`.
+    /// - {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
+    /// - A piece always measures at least one pending file, even past `--pending-seconds`, and the budget counts the whole command, the test run included. Commit after each piece; repeat until `slimfit check --mutants` lists no `mutants_pending`.
+    /// - `--mutants` mutates every file, not just the changed ones, while the baseline records no commit its mutants were measured at (see [mutants scope](help:mutants-scope)).
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
         /// Allow this bound to rise (repeatable); needs `--reason`.
@@ -191,15 +260,30 @@ enum Cmd {
     },
     /// Current metrics against the baseline, and line counts over git history.
     ///
-    /// Run it to see where the codebase stands and how its size moved. It measures as `slimfit check` does (from the cache when the tree is unchanged) and reads line counts at commits spread over the history.
+    /// ## When to run it
+    ///
+    /// To see where the codebase stands and how its size moved, e.g. before and after a run of tasks. It decides nothing: `slimfit check` is what holds the bounds.
+    ///
+    /// ## What it reads and writes
+    ///
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
     ///
     /// ## What it answers
     ///
-    /// - `current`: per suite, the metrics measured now (see `slimfit check --help`).
-    /// - `baseline`: per suite, the metrics held.
-    /// - `loosened`: every loosening kept in the baseline, with its reason.
-    /// - `history`: oldest first, each point's `commit`, `date` and per suite `prod` and `test` lines.
+    /// - `current`: per suite, the metrics measured now: {const:METRICS}.
+    /// - `baseline`: per suite, {const:HELD}.
+    /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
+    /// - `history`: oldest first, each point's `commit`, `date` and `suites`: per suite, `prod` and `test` lines.
     /// - `next`: `slimfit next`.
+    ///
+    /// ## What it may refuse
+    ///
+    /// {const:MEASURE_REFUSALS}
+    ///
+    /// ## What trips you up
+    ///
+    /// - `history` counts lines with today's `slimfit.toml`: a commit from before a suite existed counts it as it is configured now.
+    /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
         /// How many first-parent commits back to sample line counts from.
@@ -262,6 +346,12 @@ fn help() -> Help {
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
+        .constant("METRICS", model::METRICS_HELP)
+        .constant("HELD", format!("{}, with {}", model::METRICS_HELP, model::HELD_HELP))
+        .constant("VIOLATION", ratchet::VIOLATION_HELP)
+        .constant("LOOSENING", ratchet::LOOSENING_HELP)
+        .constant("MEASURE_REFUSALS", measure::REFUSALS_HELP)
+        .constant("CACHE_PITFALL", measure::CACHE_HELP)
 }
 
 fn main() {
