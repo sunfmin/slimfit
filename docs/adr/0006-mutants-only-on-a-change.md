@@ -123,4 +123,25 @@ per-test run gives. Until both exist, a kept test would be proposed again.
 
 ## Measured
 
-See below; filled in from the landing's run.
+`slimfit check --mutants` (this ADR's build, cargo-mutants 27.1.0, nextest
+0.9.151, the Rust preset without `--no-fail-fast`) on a clone of factorium,
+each commit checked out with the baseline's `mutants_at` at its parent,
+2026-11-19, under factorium's `worker exclusive --background`, 1-minute load
+2-19 on a shared 18-core host:
+
+| change | lines added (all / `src` .rs) | mutants | outcome | mutants run | `check --mutants` wall |
+|---|---|---|---|---|---|
+| f1fc25c (factorium#110) | 69 / 39 in 4 files | 4 | 4 unviable | 3 min | 389s |
+| 3b6afc1 (factorium#83) | 48 / 30 in 2 files | 16 | 2 caught, 14 unviable | 7 min | 511s |
+
+The wall time is one instrumented test run, plus cargo-mutants' unmutated
+baseline (100-118s build, 66-69s test), plus the mutants: an unviable one
+about 1s, a caught one an incremental build (7s) and its test run (18s and
+200s here; the second mutant made a test run long before it failed). The
+whole workspace has about 1960 mutants (factorium#93).
+
+How many of factorium's tests the line-level rule proposes cannot be counted
+here: no preset records coverage per test yet. By function coverage the
+control session's experiment found 86 of 207; the line rule is narrower, so
+at most that many are subset candidates, plus the overlap pairs. Either way
+the review step decides.
