@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="4" failures="0" errors="0" time="0.605901959">
+    <testsuite name="src/calc.test.ts" timestamp="2026-11-18T01:49:08.228Z" hostname="host" tests="4" failures="0" errors="0" skipped="0" time="0.605901959">
+        <testcase classname="src/calc.test.ts" name="calc &gt; adds" time="0.001602791">
+        </testcase>
+        <testcase classname="src/calc.test.ts" name="calc &gt; adds again" time="0.000101125">
+        </testcase>
+        <testcase classname="src/calc.test.ts" name="calc &gt; isAdult" time="0.00007925">
+        </testcase>
+        <testcase classname="src/calc.test.ts" name="calc &gt; slow" time="0.602032625">
+        </testcase>
+    </testsuite>
+</testsuites>

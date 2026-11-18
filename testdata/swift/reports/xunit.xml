@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<testsuites>
+<testsuite name="TestResults" errors="0" tests="4" failures="0" time="0.947472667">
+<testcase classname="CalcTests.CalcTests" name="testAdds" time="0.085825375">
+</testcase>
+<testcase classname="CalcTests.CalcTests" name="testAddsAgain" time="0.089969667">
+</testcase>
+<testcase classname="CalcTests.CalcTests" name="testIsAdult" time="0.088964833">
+</testcase>
+<testcase classname="CalcTests.CalcTests" name="testSlow" time="0.682712792">
+</testcase>
+</testsuite>
+</testsuites>

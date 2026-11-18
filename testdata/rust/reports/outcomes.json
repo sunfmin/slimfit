@@ -1,0 +1,1129 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.641565375,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.132927041,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i64 with 0",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.213025292,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.920834458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i64 with 1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.21163575,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.912891833,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:5: replace add -> i64 with -1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 5
+            },
+            "end": {
+              "line": 2,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.270902875,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.911898333,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:7: replace + with - in add",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.219227833,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.91776225,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:2:7: replace + with * in add",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "add",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 1,
+                "column": 1
+              },
+              "end": {
+                "line": 3,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_2_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_2_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.221585625,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.973389833,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace unused -> i64 with 0",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 16
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.271483,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.96663275,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace unused -> i64 with 1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 16
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.217462875,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.971133625,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:5: replace unused -> i64 with -1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 5
+            },
+            "end": {
+              "line": 8,
+              "column": 16
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.270335,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.960964583,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:21: replace * with + in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 21
+            },
+            "end": {
+              "line": 6,
+              "column": 22
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_21.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_21.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.218472708,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.00307225,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:6:21: replace * with / in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "column": 21
+            },
+            "end": {
+              "line": 6,
+              "column": 22
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_6_col_21_001.log",
+      "diff_path": "diff/src__lib.rs_line_6_col_21_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.167103083,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.065120875,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:7:27: replace + with - in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 7,
+              "column": 27
+            },
+            "end": {
+              "line": 7,
+              "column": 28
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_7_col_27.log",
+      "diff_path": "diff/src__lib.rs_line_7_col_27.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.213214458,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.064101875,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:7:27: replace + with * in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 7,
+              "column": 27
+            },
+            "end": {
+              "line": 7,
+              "column": 28
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_7_col_27_001.log",
+      "diff_path": "diff/src__lib.rs_line_7_col_27_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.207275834,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.151294958,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:13: replace / with % in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 13
+            },
+            "end": {
+              "line": 8,
+              "column": 14
+            }
+          },
+          "replacement": "%",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_13.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_13.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.21546475,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.013948084,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:8:13: replace / with * in unused",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "unused",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 5,
+                "column": 1
+              },
+              "end": {
+                "line": 9,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "column": 13
+            },
+            "end": {
+              "line": 8,
+              "column": 14
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_8_col_13_001.log",
+      "diff_path": "diff/src__lib.rs_line_8_col_13_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.216393209,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.227477125,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace is_adult -> bool with true",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_adult",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 14
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__lib.rs_line_12_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.268418625,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.97062225,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:5: replace is_adult -> bool with false",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_adult",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 5
+            },
+            "end": {
+              "line": 12,
+              "column": 14
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_12_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.166544375,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.103891917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:12:9: replace >= with < in is_adult",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "is_adult",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 11,
+                "column": 1
+              },
+              "end": {
+                "line": 13,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 12,
+              "column": 9
+            },
+            "end": {
+              "line": 12,
+              "column": 11
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_12_col_9.log",
+      "diff_path": "diff/src__lib.rs_line_12_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.21098575,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.957973917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=calc@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 17,
+  "missed": 10,
+  "caught": 7,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-11-18T01:48:03.125754Z",
+  "end_time": "2026-11-18T01:48:25.862001Z",
+  "cargo_mutants_version": "27.1.0"
+}

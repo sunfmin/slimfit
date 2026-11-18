@@ -1,0 +1,27 @@
+{
+  "fileReports": [
+    {
+      "fileName": "Calc.swift",
+      "appliedOperators": [
+        {
+          "testSuiteOutcome": "passed",
+          "mutationPoint": {
+            "filePath": "/TMP/surv_mutated/Sources/Calc/Calc.swift",
+            "position": {
+              "utf8Offset": 301,
+              "line": 11,
+              "column": 47
+            },
+            "mutationOperatorId": "RelationalOperatorReplacement"
+          }
+        }
+      ],
+      "mutationScore": 0
+    }
+  ],
+  "projectCodeCoverage": 44,
+  "totalAppliedMutationOperators": 1,
+  "timeElapsed": "00:00:05.056",
+  "globalMutationScore": 0,
+  "numberOfKilledMutants": 0
+}

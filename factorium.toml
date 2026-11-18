@@ -1,0 +1,7 @@
+# How factorium gates slimfit.
+
+[gate]
+fast = "./gate.sh"
+fast_limit = 600
+slow = "./slow.sh"
+slow_limit = 1800
