@@ -1,19 +1,89 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 2199,
-      "test_lines": 453,
-      "tests": 24,
+      "prod_lines": 2569,
+      "test_lines": 620,
+      "tests": 28,
       "failures": 0,
       "test_seconds": 0.512,
-      "covered_lines": 899,
-      "uncovered_lines": 444,
+      "covered_lines": 1125,
+      "uncovered_lines": 375,
       "mutants": {
-        "killed": 249,
-        "survived": 170,
-        "unviable": 33
+        "killed": 353,
+        "survived": 158,
+        "unviable": 40
+      },
+      "mutant_files": {
+        "src/config.rs": {
+          "killed": 20,
+          "survived": 26,
+          "unviable": 8
+        },
+        "src/formats/coverage.rs": {
+          "killed": 61,
+          "survived": 10,
+          "unviable": 0
+        },
+        "src/formats/mutants.rs": {
+          "killed": 29,
+          "survived": 1,
+          "unviable": 0
+        },
+        "src/formats/tests.rs": {
+          "killed": 20,
+          "survived": 2,
+          "unviable": 2
+        },
+        "src/formats/xml.rs": {
+          "killed": 12,
+          "survived": 7,
+          "unviable": 0
+        },
+        "src/git.rs": {
+          "killed": 15,
+          "survived": 11,
+          "unviable": 1
+        },
+        "src/loc.rs": {
+          "killed": 70,
+          "survived": 9,
+          "unviable": 1
+        },
+        "src/main.rs": {
+          "killed": 0,
+          "survived": 24,
+          "unviable": 1
+        },
+        "src/measure.rs": {
+          "killed": 33,
+          "survived": 27,
+          "unviable": 12
+        },
+        "src/model.rs": {
+          "killed": 14,
+          "survived": 4,
+          "unviable": 0
+        },
+        "src/ratchet.rs": {
+          "killed": 49,
+          "survived": 12,
+          "unviable": 5
+        },
+        "src/report.rs": {
+          "killed": 0,
+          "survived": 10,
+          "unviable": 1
+        },
+        "src/tasks.rs": {
+          "killed": 30,
+          "survived": 15,
+          "unviable": 9
+        }
       }
     }
   },
-  "loosened": []
+  "loosened": [],
+  "mutants_at": {
+    "commit": "5849c654d18652d62733d5ef22c50d87a4ba57da"
+  }
 }
