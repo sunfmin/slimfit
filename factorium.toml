@@ -5,3 +5,8 @@ fast = "./gate.sh"
 fast_limit = 600
 slow = "./slow.sh"
 slow_limit = 1800
+
+[cut]
+steps = ["packaging/release.sh cut $FACTORIUM_VERSION"]
+formula = "sunfmin/tap/slimfit"
+limit = 1800
