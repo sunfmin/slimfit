@@ -14,11 +14,23 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskKind {
+    /// A test fails. Fix it first; nothing else is measured honestly.
+    #[value(verbatim_doc_comment)]
     FailingTest,
+    /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
+    #[value(verbatim_doc_comment)]
     Uncovered,
+    /// Every mutant this test kills, a cheaper set of tests kills too. Delete it unless it pins behaviour mutants don't reach. Needs `--all-mutants`.
+    #[value(verbatim_doc_comment)]
     RedundantTest,
+    /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
+    #[value(verbatim_doc_comment)]
     SlowTest,
+    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs `--mutants`.
+    #[value(verbatim_doc_comment)]
     SurvivingMutant,
+    /// A big file that keeps changing. Load the codebase-design and improve-codebase-architecture skills; design the deeper interface first, then move to it one passing step at a time.
+    #[value(verbatim_doc_comment)]
     Deepen,
 }
 
@@ -33,10 +45,14 @@ pub struct Task {
     pub accept: String,
 }
 
-/// How many tasks of one kind in one suite are listed; the rest are only
-/// counted.
+/// How many tasks of one kind in one suite `next --all` lists; the rest are
+/// only counted.
+pub const LISTED_PER_KIND: usize = 5;
+/// As [`LISTED_PER_KIND`], for deepen tasks.
+pub const LISTED_DEEPEN: usize = 3;
+
 fn per_kind(kind: TaskKind) -> usize {
-    if kind == TaskKind::Deepen { 3 } else { 5 }
+    if kind == TaskKind::Deepen { LISTED_DEEPEN } else { LISTED_PER_KIND }
 }
 
 /// The tasks worth listing: the first few of each kind in each suite, in

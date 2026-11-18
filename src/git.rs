@@ -1,5 +1,6 @@
 //! The few git questions slimfit asks, each one command.
 
+use crate::fault::fault;
 use anyhow::{Context, Result, bail};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -23,8 +24,15 @@ fn run_with_index(repo: &Path, index: Option<&Path>, args: &[&str]) -> Result<St
 }
 
 pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
-    let s = run(dir, &["rev-parse", "--show-toplevel"]).context("slimfit runs inside a git repository")?;
-    Ok(s.trim().into())
+    let fix = "run slimfit inside the repository, or pass `--repo <its path>`; a project with no repository yet \
+               needs `git init` and a first commit";
+    if !dir.is_dir() {
+        return Err(fault(format!("{} is not a directory", dir.display()), fix));
+    }
+    match run(dir, &["rev-parse", "--show-toplevel"]) {
+        Ok(s) => Ok(s.trim().into()),
+        Err(e) => Err(fault(format!("{} is not inside a git repository ({e:#})", dir.display()), fix)),
+    }
 }
 
 /// Tracked files plus untracked ones git does not ignore, relative to

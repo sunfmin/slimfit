@@ -1,8 +1,10 @@
 //! `slimfit.toml`: which suites a repository has and how each is measured.
 //! A suite names a preset; any field the preset sets can be overridden.
 
+use crate::fault::{Fault, Faults, fault};
 use crate::formats::{CoverageFormat, MutantsFormat, TestsFormat};
-use anyhow::{Context, Result, bail};
+use crate::tools::*;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -196,16 +198,17 @@ pub fn preset(p: Preset) -> Suite {
     match p {
         Preset::Rust => Suite {
             inline_tests: true,
-            test_command: "printf '[profile.default.junit]\\npath = \"junit.xml\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
-                cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
-                .into(),
-            tests_report: report(TestsFormat::Junit, "target/nextest/default/junit.xml"),
+            test_command: format!(
+                "printf '[profile.default.junit]\\npath = \"{NEXTEST_JUNIT}\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
+                 cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
+            ),
+            tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
             // nextest without fail-fast runs every test on every mutant, so each
             // mutant's log names all its killers (docs/adr/0004).
             mutants_command: "cargo mutants --workspace --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
                 --output \"$SLIMFIT_OUT\""
                 .into(),
-            mutants_report: report(MutantsFormat::CargoMutants, "$SLIMFIT_OUT/mutants.out/outcomes.json"),
+            mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
             mutants_diff_flag: "--in-diff".into(),
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
@@ -220,11 +223,12 @@ pub fn preset(p: Preset) -> Suite {
         Preset::Swift => Suite {
             // XCTest writes xunit only with --parallel; one worker keeps per-test times.
             // .build/debug is a symlink, so find needs the trailing slash.
-            test_command: "swift test --parallel --num-workers 1 --enable-code-coverage --xunit-output \"$SLIMFIT_OUT/xunit.xml\"; rc=$?; \
-                bin=$(find .build/debug/ -maxdepth 1 -name '*.xctest' | head -1); \
-                xcrun llvm-cov export -format=lcov -instr-profile=.build/debug/codecov/default.profdata \
-                \"$bin/Contents/MacOS/$(basename \"$bin\" .xctest)\" > \"$SLIMFIT_OUT/lcov.info\"; exit $rc"
-                .into(),
+            test_command: format!(
+                "swift test --parallel --num-workers 1 --enable-code-coverage --xunit-output \"$SLIMFIT_OUT/xunit.xml\"; rc=$?; \
+                 bin=$(find {SWIFT_DEBUG}/ -maxdepth 1 -name '*.xctest' | head -1); \
+                 xcrun llvm-cov export -format=lcov -instr-profile={SWIFT_PROFDATA} \
+                 \"$bin/Contents/MacOS/$(basename \"$bin\" .xctest)\" > \"$SLIMFIT_OUT/lcov.info\"; exit $rc"
+            ),
             tests_report: report(TestsFormat::Junit, "$SLIMFIT_OUT/xunit*.xml"),
             mutants_command: "[ -f muter.conf.yml ] || muter init; muter run --skip-update-check --format json --output \"$SLIMFIT_OUT/muter.json\"".into(),
             mutants_report: report(MutantsFormat::Muter, "$SLIMFIT_OUT/muter.json"),
@@ -232,10 +236,10 @@ pub fn preset(p: Preset) -> Suite {
         },
         Preset::Kotlin => Suite {
             test_command: "./gradlew --quiet test koverXmlReport --continue".into(),
-            tests_report: report(TestsFormat::Junit, "**/build/test-results/test/*.xml"),
-            coverage_report: report(CoverageFormat::Jacoco, "**/build/reports/kover/report.xml"),
+            tests_report: report(TestsFormat::Junit, &format!("**/{GRADLE_TEST_RESULTS}/*.xml")),
+            coverage_report: report(CoverageFormat::Jacoco, &format!("**/{KOVER_XML}")),
             mutants_command: "./gradlew --quiet pitest".into(),
-            mutants_report: report(MutantsFormat::Pitest, "**/build/reports/pitest/mutations.xml"),
+            mutants_report: report(MutantsFormat::Pitest, &format!("**/{PITEST_XML}")),
             ..base(&["**/src/main/**/*.kt", "**/src/main/**/*.java"], &["**/src/test/**", "**/src/androidTest/**"])
         },
         Preset::Typescript => Suite {
@@ -245,7 +249,7 @@ pub fn preset(p: Preset) -> Suite {
             tests_report: report(TestsFormat::Junit, "$SLIMFIT_OUT/junit.xml"),
             coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/coverage/lcov.info"),
             mutants_command: "npx stryker run --reporters json --disableBail".into(),
-            mutants_report: report(MutantsFormat::Stryker, "reports/mutation/mutation.json"),
+            mutants_report: report(MutantsFormat::Stryker, STRYKER_JSON),
             ..base(
                 &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mts"],
                 &["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "test/**", "tests/**", "**/*.config.*", "**/*.d.ts"],
@@ -300,19 +304,47 @@ pub fn detect(files: &[String]) -> Vec<SuiteConfig> {
         .collect()
 }
 
+/// `slimfit.toml`, or every fault found in it.
 pub fn load(repo: &Path) -> Result<Config> {
     let path = repo.join(FILE);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("no {FILE}: run `slimfit init` first"))?;
-    let cfg: Config = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        fault(
+            format!("cannot read {} ({e})", path.display()),
+            "`slimfit init` writes it (or restore it from git: `git checkout -- slimfit.toml`)",
+        )
+    })?;
+    let cfg: Config = toml::from_str(&text).map_err(|e| {
+        fault(
+            format!("{FILE} is not valid: {}", e.to_string().trim()),
+            format!(
+                "edit {FILE} where the fault points; each [[suite]] needs name and preset (rust, go, swift, \
+                     kotlin or typescript), and may set root"
+            ),
+        )
+    })?;
+    let mut faults = Vec::new();
     if cfg.suites.is_empty() {
-        bail!("{FILE} names no [[suite]]");
+        faults.push(Fault {
+            fault: format!("{FILE} names no [[suite]]"),
+            fix: format!("add one: `[[suite]]` with name, preset and root, or delete {FILE} and run `slimfit init`"),
+        });
     }
-    let mut names: Vec<&str> = cfg.suites.iter().map(|s| s.name.as_str()).collect();
-    names.sort();
-    if names.windows(2).any(|w| w[0] == w[1]) {
-        bail!("{FILE}: two suites share a name");
+    for (i, s) in cfg.suites.iter().enumerate() {
+        // Once per name: at its second suite.
+        if cfg.suites[..i].iter().filter(|t| t.name == s.name).count() == 1 {
+            faults.push(Fault {
+                fault: format!("{FILE}: more than one [[suite]] is named {:?}", s.name),
+                fix: format!("rename all but one of the suites named {:?}: each needs its own name", s.name),
+            });
+        }
+        if !repo.join(&s.root).is_dir() {
+            faults.push(Fault {
+                fault: format!("{FILE}: suite {:?} has root {:?}, which is no directory", s.name, s.root),
+                fix: format!("set root of suite {:?} to its directory, relative to the repository", s.name),
+            });
+        }
     }
-    Ok(cfg)
+    if faults.is_empty() { Ok(cfg) } else { Err(Faults(faults).into()) }
 }
 
 #[cfg(test)]
@@ -339,6 +371,37 @@ mod tests {
             got,
             vec![("rust", ".", Preset::Rust), ("svc", "svc", Preset::Go), ("web", "web", Preset::Typescript)]
         );
+    }
+
+    /// Every fault of slimfit.toml at once, each with its fix.
+    #[test]
+    fn load_names_every_fault_with_its_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let faults = |text: Option<&str>| {
+            if let Some(t) = text {
+                std::fs::write(dir.path().join(FILE), t).unwrap();
+            }
+            crate::fault::of(load(dir.path()).unwrap_err())
+        };
+        let f = faults(None);
+        assert!(f[0].fault.starts_with("cannot read") && f[0].fix.starts_with("`slimfit init` writes it"), "{f:?}");
+        let f = faults(Some("[[suite]]\nname = \"a\"\npreset = \"cobol\"\n"));
+        assert!(f[0].fault.starts_with("slimfit.toml is not valid") && f[0].fault.contains("cobol"), "{f:?}");
+        assert!(f[0].fix.contains("preset (rust, go, swift, kotlin or typescript)"), "{f:?}");
+        let f = faults(Some("suite = []\n"));
+        assert!(f[0].fix.starts_with("add one: `[[suite]]`"), "{f:?}");
+        let s = |name: &str, root: &str| format!("[[suite]]\nname = \"{name}\"\npreset = \"go\"\nroot = \"{root}\"\n");
+        let f = faults(Some(&[s("a", "."), s("a", "."), s("a", "."), s("b", "gone")].concat()));
+        let fixes: Vec<&str> = f.iter().map(|f| f.fix.as_str()).collect();
+        assert_eq!(
+            fixes,
+            [
+                "rename all but one of the suites named \"a\": each needs its own name",
+                "set root of suite \"b\" to its directory, relative to the repository"
+            ]
+        );
+        std::fs::write(dir.path().join(FILE), s("a", ".")).unwrap();
+        assert_eq!(load(dir.path()).unwrap().suites.len(), 1);
     }
 
     #[test]

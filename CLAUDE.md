@@ -11,11 +11,13 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/tasks.rs`: turns a measurement into tasks for `slimfit next`.
 - `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release (`packaging/release.sh cut`) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited.
 - `testdata/<language>/`: one sample project per language, with real reports in `reports/`. Every sample holds the same five situations (see `src/fixtures.rs`).
+- `src/tools.rs`: where the tools write reports on their own, shared with the stand-ins.
+- `examples/standin/`: one stand-in for every tool the presets drive, linked under each tool's name first on PATH. It takes arguments as the real tool does, writes the sample's real reports, records each call and injects faults, all in one JSON state file. `tests/standins.rs` runs the real binary through it on each sample. A preset change updates the stand-in in the same commit.
 
 ## Checks
 
 - `./gate.sh` (fast): fmt, clippy, then slimfit checks itself (tests, coverage and time against `.slimfit/baseline.json`).
-- `./slow.sh`: the fast gate, plus `./e2e.sh` (the Rust sample by default; `E2E_LANGS` picks others; `E2E_MUTANTS=1` adds the samples' mutants e2e, on request).
+- `./slow.sh`: the fast gate; `E2E_LANGS` adds `./e2e.sh` on those languages' real toolchains (`E2E_MUTANTS=1` adds the samples' mutants e2e, on request).
 - No gate and no commit runs mutation testing on slimfit itself: mutants are never in a gate (`slimfit --help`, rule 2). They run as idle work (`factorium.toml` `[idle]`: `slimfit next --all-mutants` once a day while the host is idle, whose measurement `slimfit next` then reads). `check --mutants` holds a change's own lines (ADR 0005); `slimfit next --mutants` is for working surviving-mutant and redundant-test tasks; such a task is accepted with its own accept command, and that commit carries the ratcheted `.slimfit/baseline.json`.
 - A new report format or preset change needs real output from the real tool in `testdata/<language>/reports/`, never a hand-written one. Replace absolute paths with `/REPO`.
 

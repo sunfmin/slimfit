@@ -3,13 +3,14 @@
 //! `.slimfit/out/` and reused while the tree is unchanged.
 
 use crate::config::{Config, Report, Suite};
+use crate::fault::{self, Faults, fault};
 use crate::formats::{self, MutationRun};
 use crate::git;
 use crate::load;
 use crate::loc::{Classifier, Kind, Totals};
 use crate::model::*;
 use crate::ratchet::Baseline;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -68,8 +69,11 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             }
         );
         let mutants = change.as_ref().map(|c| (c, opts.mutants == Mutants::All));
-        suites.push(measure_suite(repo, &wt.files, &suite, mutants)?);
+        let r = measure_suite(repo, &wt.files, &suite, mutants);
+        suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
     }
+    // Every suite is measured, so one that fails does not hide another's faults.
+    let suites = fault::all(suites)?;
     let m = Measurement {
         tree,
         with_mutants,
@@ -210,13 +214,20 @@ fn measure_suite(
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
 
+    // Reports left by an earlier run would be read as this run's.
+    for old in report_paths(&root, &out, &suite.tests_report)?.into_iter().chain(report_paths(
+        &root,
+        &out,
+        &suite.coverage_report,
+    )?) {
+        std::fs::remove_file(old)?;
+    }
     let started = Instant::now();
     let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
     let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
-    let tests = formats::read_tests(suite.tests_report.format, &read_report(&root, &out, &suite.tests_report, &log)?)?;
-    let coverage =
-        formats::read_coverage(suite.coverage_report.format, &read_report(&root, &out, &suite.coverage_report, &log)?)?;
+    let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
+    let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
 
     let mutation = match mutants {
         None => None,
@@ -299,11 +310,12 @@ fn mutate(
         std::fs::remove_file(old)?;
     }
     let (log, ok) = shell(root, out, command, "mutants")?;
-    let reports = match read_reports(root, out, &suite.mutants_report, &log) {
+    let reports = match read_reports(root, out, "mutants_report", &suite.mutants_report, &log) {
         Err(_) if may_find_none && ok => vec![],
         r => r?,
     };
-    let mut run = formats::read_mutants(suite.mutants_report.format, &reports)?;
+    let mut run = formats::read_mutants(suite.mutants_report.format, &reports)
+        .map_err(|e| unreadable("mutants_report", suite.mutants_report.format, e))?;
     for m in &mut run.mutants {
         m.file = resolver.resolve(&m.file).unwrap_or_else(|| m.file.clone());
     }
@@ -328,7 +340,10 @@ impl From<MutationRun> for Mutation {
 /// flag says whether the command exited 0.
 fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf, bool)> {
     if command.trim().is_empty() {
-        bail!("no {label} command configured");
+        return Err(fault(
+            format!("no {label} command configured"),
+            format!("set `{label}_command` in the suite's [[suite]] in slimfit.toml"),
+        ));
     }
     let log = out.join(format!("{label}.log"));
     let file = std::fs::File::create(&log)?;
@@ -336,7 +351,7 @@ fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf
         .arg("-c")
         .arg(command)
         .current_dir(root)
-        .env("SLIMFIT_OUT", out)
+        .env(crate::tools::OUT_ENV, out)
         .stdout(file.try_clone()?)
         .stderr(file)
         .status()
@@ -346,7 +361,7 @@ fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf
 }
 
 fn report_pattern<F>(root: &Path, out: &Path, report: &Report<F>) -> String {
-    let pattern = report.path.replace("$SLIMFIT_OUT", &out.to_string_lossy());
+    let pattern = report.path.replace(&format!("${}", crate::tools::OUT_ENV), &out.to_string_lossy());
     if Path::new(&pattern).is_absolute() { pattern } else { root.join(&pattern).to_string_lossy().into_owned() }
 }
 
@@ -354,18 +369,58 @@ fn report_paths<F>(root: &Path, out: &Path, report: &Report<F>) -> Result<Vec<Pa
     expand(&report_pattern(root, out, report))
 }
 
-fn read_report<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Result<Vec<String>> {
-    Ok(read_reports(root, out, report, log)?.into_iter().map(|(_, text)| text).collect())
+/// The report `field` names, read in its format by `read`.
+fn read_report<F: Copy + serde::Serialize, T>(
+    root: &Path,
+    out: &Path,
+    field: &str,
+    report: &Report<F>,
+    log: &Path,
+    read: impl FnOnce(F, &[String]) -> Result<T>,
+) -> Result<T> {
+    let texts: Vec<String> = read_reports(root, out, field, report, log)?.into_iter().map(|(_, text)| text).collect();
+    read(report.format, &texts).map_err(|e| unreadable(field, report.format, e))
 }
 
-/// The report's files, each with its path.
-fn read_reports<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Result<Vec<(PathBuf, String)>> {
+/// A report that is not in the format slimfit.toml names: its fault, with
+/// the fix. Faults the reader names itself are kept as they are.
+fn unreadable(field: &str, format: impl serde::Serialize, e: anyhow::Error) -> anyhow::Error {
+    if e.is::<Faults>() {
+        return e;
+    }
+    let format = serde_json::to_value(format).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+    fault(
+        format!("its {field} is not {format}: {e:#}"),
+        format!(
+            "make the command write {format} there, or set `{field}` in slimfit.toml to the format the tool writes"
+        ),
+    )
+}
+
+/// The report's files, each with its path; `field` names it in slimfit.toml.
+fn read_reports<F>(
+    root: &Path,
+    out: &Path,
+    field: &str,
+    report: &Report<F>,
+    log: &Path,
+) -> Result<Vec<(PathBuf, String)>> {
     let pattern = report_pattern(root, out, report);
-    let paths = expand(&pattern)?;
+    // An empty file is no report: a shell redirect creates one even when
+    // the tool behind it is missing.
+    let paths: Vec<PathBuf> =
+        expand(&pattern)?.into_iter().filter(|p| p.metadata().is_ok_and(|m| m.len() > 0)).collect();
     if paths.is_empty() {
         let tail = std::fs::read_to_string(log).unwrap_or_default();
         let tail: Vec<&str> = tail.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
-        bail!("no report at {pattern}; the command's log ends:\n{}", tail.join("\n"));
+        return Err(fault(
+            format!("no {field} at {pattern}; the command's log ends:\n{}", tail.join("\n")),
+            format!(
+                "fix the command's failure in its log {}; if it ran, make it write the report there, or set \
+                 `{field}` path in slimfit.toml to where it writes",
+                log.display()
+            ),
+        ));
     }
     paths
         .into_iter()
@@ -534,11 +589,11 @@ fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function]) -> Vec<S
 }
 
 #[cfg(test)]
-mod t {
+pub(crate) mod t {
     use super::*;
     use crate::ratchet::Bound;
 
-    fn git(dir: &Path, args: &[&str]) {
+    pub(crate) fn git(dir: &Path, args: &[&str]) {
         let ok = Command::new("git")
             .args(["-c", "user.email=t@slimfit", "-c", "user.name=t", "-C"])
             .arg(dir)
@@ -552,7 +607,7 @@ mod t {
 
     /// The Rust sample, its tools replaced by copies of their real reports;
     /// the mutation "tool" also records the arguments it was given.
-    fn sample_repo() -> (tempfile::TempDir, Config) {
+    pub(crate) fn sample_repo() -> (tempfile::TempDir, Config) {
         let reports = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust/reports");
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
@@ -752,5 +807,48 @@ mod t {
         let s = spans("a", &hits, &f);
         assert_eq!(s.iter().map(|s| (s.start, s.end, s.lines)).collect::<Vec<_>>(), vec![(3, 6, 3), (9, 9, 1)]);
         assert_eq!(s[0].function.as_deref(), Some("g"));
+    }
+}
+
+#[cfg(test)]
+mod faults {
+    use super::*;
+
+    /// One suite's fault does not hide another's: each failing suite is
+    /// named with its fault and its fix, and the healthy one is measured.
+    #[test]
+    fn every_suite_that_cannot_be_measured_names_its_fault_and_fix() {
+        let (dir, mut cfg) = t::sample_repo();
+        let bad: Config = toml::from_str(
+            r#"
+            [[suite]]
+            name = "nocmd"
+            preset = "kotlin"
+            test_command = ""
+            [[suite]]
+            name = "noreport"
+            preset = "rust"
+            test_command = "echo built"
+            [[suite]]
+            name = "garbled"
+            preset = "rust"
+            test_command = "echo '<testsuites' > \"$SLIMFIT_OUT/junit.xml\""
+            tests_report = { format = "junit", path = "$SLIMFIT_OUT/junit.xml" }
+            "#,
+        )
+        .unwrap();
+        cfg.suites.extend(bad.suites);
+        let opts = Options { mutants: Mutants::None, fresh: true };
+        let faults = crate::fault::of(current(dir.path(), &cfg, &Baseline::default(), &opts).unwrap_err());
+        let got: Vec<(&str, &str)> =
+            faults.iter().map(|f| (f.fault.split(':').next().unwrap(), f.fix.as_str())).collect();
+        assert_eq!(got.len(), 3, "{faults:?}");
+        assert_eq!(got[0], ("suite nocmd", "set `test_command` in the suite's [[suite]] in slimfit.toml"));
+        assert_eq!(got[1].0, "suite noreport");
+        assert!(faults[1].fault.contains("no tests_report at") && faults[1].fault.contains("built"), "{faults:?}");
+        assert!(got[1].1.ends_with("or set `tests_report` path in slimfit.toml to where it writes"), "{faults:?}");
+        assert_eq!(got[2].0, "suite garbled");
+        assert!(faults[2].fault.contains("its tests_report is not junit"), "{faults:?}");
+        assert!(got[2].1.starts_with("make the command write junit there, or set `tests_report`"), "{faults:?}");
     }
 }
