@@ -5,6 +5,7 @@
 use crate::config::{Config, Report, Suite};
 use crate::formats::{self, MutationRun};
 use crate::git;
+use crate::load;
 use crate::loc::{Classifier, Kind, Totals};
 use crate::model::*;
 use crate::ratchet::Baseline;
@@ -202,9 +203,16 @@ fn measure_suite(
     let resolver = Resolver::new(repo, &totals);
 
     let started = Instant::now();
-    let (log, _) = shell(&root, &out, &suite.test_command, "test")?;
+    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
+    let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
-    let tests = formats::read_tests(suite.tests_report.format, &read_report(&root, &out, &suite.tests_report, &log)?)?;
+    let mut tests =
+        formats::read_tests(suite.tests_report.format, &read_report(&root, &out, &suite.tests_report, &log)?)?;
+    // A test's duration as the runner timed it, less what the host's load
+    // added to it (ADR 0003).
+    for t in &mut tests {
+        t.seconds /= slowdown;
+    }
     let coverage =
         formats::read_coverage(suite.coverage_report.format, &read_report(&root, &out, &suite.coverage_report, &log)?)?;
 
@@ -252,7 +260,9 @@ fn measure_suite(
             }
         }),
     };
-    Ok(reduce(suite, &totals, &resolver, tests, coverage, mutation, command_seconds))
+    let mut m = reduce(suite, &totals, &resolver, tests, coverage, mutation, command_seconds);
+    m.load_slowdown = (slowdown * 1000.0).round() / 1000.0;
+    Ok(m)
 }
 
 /// One run of the mutation tool, its paths resolved to the suite's files.
@@ -469,6 +479,7 @@ pub(crate) fn reduce(
         mutation_tests,
         mutated,
         command_seconds: (command_seconds * 1000.0).round() / 1000.0,
+        load_slowdown: 1.0,
     }
 }
 

@@ -276,6 +276,7 @@ mod t {
             mutation_tests: None,
             mutated: None,
             command_seconds: 0.0,
+            load_slowdown: 1.0,
         }
     }
 

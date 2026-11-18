@@ -318,6 +318,7 @@ mod t {
             mutation_tests: Some(vec!["slow".into(), "fast".into(), "idle".into()]),
             mutated: None,
             command_seconds: 0.0,
+            load_slowdown: 1.0,
         };
         let tasks = redundant(&s);
         let names: Vec<&str> = tasks.iter().map(|t| t.evidence["test"].as_str().unwrap()).collect();
