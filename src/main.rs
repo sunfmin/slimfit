@@ -430,7 +430,7 @@ fn main() {
 /// here, as clap does).
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
     // `--help`, `-h` and `help` too: clap prints the manual's answer, on stdout.
-    let cli = match parse(&help(), args) {
+    let cli = match command_line(args) {
         Ok(cli) => cli,
         Err(e) if !e.use_stderr() || e.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
             e.exit()
@@ -634,6 +634,17 @@ fn loaded(repo: &std::path::Path) -> Result<(config::Config, ratchet::Baseline)>
 /// `help [<topic>]` answer comes back as the error clap prints on stdout,
 /// exiting 0; a topic that does not exist, as one it prints on stderr,
 /// exiting 2, as for any other bad argument.
+/// The command line, parsed without the manual when it needs none: rendering
+/// the manual's pages took most of a short run (121M of 135M instructions for
+/// `next`, slimfit#27). Help, and a line clap refuses, go through the manual.
+fn command_line(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Cli, clap::Error> {
+    let args: Vec<_> = args.into_iter().collect();
+    match Cli::try_parse_from(&args) {
+        Ok(cli) if !matches!(cli.command, Cmd::Help { .. }) => Ok(cli),
+        _ => parse(&help(), args),
+    }
+}
+
 fn parse(help: &Help, args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Cli, clap::Error> {
     let cli = Cli::from_arg_matches(&help.clap().expect("checked by the_manual_is_whole").try_get_matches_from(args)?)?;
     let Cmd::Help { topic } = &cli.command else { return Ok(cli) };

@@ -71,7 +71,15 @@ fn measure_with_coverage(
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), Timing { command_seconds: 0.0, slowdown: 1.0 })
+    reduce(
+        &suite,
+        &totals,
+        &resolver,
+        t,
+        c,
+        Some(m.into()),
+        Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 },
+    )
 }
 
 /// What every sample must show, whatever the language.
