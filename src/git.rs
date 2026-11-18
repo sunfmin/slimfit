@@ -25,56 +25,76 @@ pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
     Ok(s.trim().into())
 }
 
-/// Tracked files plus untracked ones git does not ignore, relative to `repo`.
-pub fn files(repo: &Path) -> Result<Vec<String>> {
-    let s = run(repo, &["ls-files", "-co", "--exclude-standard", "-z"])?;
-    Ok(s.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
+/// Tracked files plus untracked ones git does not ignore, relative to
+/// `repo`, each with whether git tracks it.
+fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
+    let s = run(repo, &["ls-files", "-co", "-t", "--exclude-standard", "-z"])?;
+    s.split('\0')
+        .filter(|e| !e.is_empty())
+        .map(|e| {
+            let (tag, path) = e.split_once(' ').with_context(|| format!("ls-files -t entry {e:?}"))?;
+            Ok((tag != "?", path.to_string()))
+        })
+        .collect()
 }
 
-/// HEAD plus a hash of every local change outside `.slimfit/`, so a
-/// measurement can be reused exactly while the tree is unchanged.
-pub fn tree_key(repo: &Path) -> Result<String> {
+/// The working tree, read with three git commands: each spawn costs more
+/// on a loaded host than the load probe corrects for (ADR 0003).
+pub struct Worktree {
+    /// Tracked files plus untracked ones git does not ignore, relative to `repo`.
+    pub files: Vec<String>,
+    /// HEAD and the files that differ from it, outside `.slimfit/`; `None`
+    /// before the first commit.
+    pub snapshot: Option<Snapshot>,
+    /// HEAD plus a hash of every local change outside `.slimfit/`, so a
+    /// measurement can be reused exactly while the tree is unchanged.
+    pub key: String,
+    untracked: Vec<String>,
+}
+
+pub fn worktree(repo: &Path) -> Result<Worktree> {
     use std::hash::{Hash, Hasher};
-    let head = run(repo, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "unborn".into());
-    let exclude = ":(exclude).slimfit";
-    let diff = run(repo, &["diff", "HEAD", "--", ".", exclude]).unwrap_or_default();
-    let untracked = run(repo, &["ls-files", "-o", "--exclude-standard", "--", ".", exclude])?;
+    let outside = |f: &String| !f.starts_with(".slimfit/");
+    let listing = listing(repo)?;
+    let untracked: Vec<String> = listing.iter().filter(|(t, f)| !t && outside(f)).map(|(_, f)| f.clone()).collect();
+    let files: Vec<String> = listing.into_iter().map(|(_, f)| f).collect();
+    let head = run(repo, &["rev-parse", "--verify", "HEAD"]).ok().map(|h| h.trim().to_string());
+    // Before the first commit every file is a local change.
+    let changed = match &head {
+        Some(commit) => differing(repo, commit, &untracked)?,
+        None => files.iter().filter(|f| outside(f)).cloned().collect(),
+    };
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    diff.hash(&mut h);
-    for f in untracked.lines() {
+    for f in &changed {
         f.hash(&mut h);
-        if let Ok(bytes) = std::fs::read(repo.join(f)) {
-            bytes.hash(&mut h);
-        }
+        let p = repo.join(f);
+        // A symlink by its target, as git records it; the rest by contents and mode.
+        std::fs::read_link(&p).ok().hash(&mut h);
+        std::fs::read(&p).ok().hash(&mut h);
+        std::fs::symlink_metadata(&p)
+            .ok()
+            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+            .hash(&mut h);
     }
-    Ok(format!("{}+{:016x}", head.trim(), h.finish()))
-}
-
-/// HEAD and the files that differ from it, outside `.slimfit/`; `None`
-/// before the first commit.
-pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
-    let Ok(head) = run(repo, &["rev-parse", "--verify", "HEAD"]) else { return Ok(None) };
-    let commit = head.trim().to_string();
-    let dirty = differing(repo, &commit)?.into_iter().collect();
-    Ok(Some(Snapshot { commit, dirty }))
+    let key = format!("{}+{:016x}", head.as_deref().unwrap_or("unborn"), h.finish());
+    let snapshot = head.map(|commit| Snapshot { commit, dirty: changed.into_iter().collect() });
+    Ok(Worktree { files, snapshot, key, untracked })
 }
 
 /// The files whose contents may differ between the tree `then` names and
 /// the working tree now: those changed since its commit, and those that
 /// differed from it then. Fails when the commit is not in this repository.
-pub fn changed_since(repo: &Path, then: &Snapshot) -> Result<BTreeSet<String>> {
-    let mut out = differing(repo, &then.commit)?;
+pub fn changed_since(repo: &Path, now: &Worktree, then: &Snapshot) -> Result<BTreeSet<String>> {
+    let mut out = differing(repo, &then.commit, &now.untracked)?;
     out.extend(then.dirty.iter().cloned());
     Ok(out)
 }
 
 /// Files of the working tree that differ from `commit` (both sides of a
-/// rename, deleted ones too), plus untracked ones.
-fn differing(repo: &Path, commit: &str) -> Result<BTreeSet<String>> {
-    let exclude = ":(exclude).slimfit";
-    let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", commit, "--", ".", exclude])?;
-    let untracked = run(repo, &["ls-files", "-o", "--exclude-standard", "-z", "--", ".", exclude])?;
-    Ok(diff.split('\0').chain(untracked.split('\0')).filter(|p| !p.is_empty()).map(String::from).collect())
+/// rename, deleted ones too), plus the untracked ones.
+fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<BTreeSet<String>> {
+    let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", commit, "--", ".", ":(exclude).slimfit"])?;
+    Ok(diff.split('\0').filter(|p| !p.is_empty()).map(String::from).chain(untracked.iter().cloned()).collect())
 }
 
 /// The blobs of `commit`: (path, contents), read through one `cat-file --batch`.

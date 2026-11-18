@@ -1,17 +1,17 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 2987,
-      "test_lines": 906,
+      "prod_lines": 3012,
+      "test_lines": 909,
       "tests": 39,
       "failures": 0,
-      "test_seconds": 1.508,
-      "covered_lines": 1382,
-      "uncovered_lines": 332,
+      "test_seconds": 1.899,
+      "covered_lines": 1396,
+      "uncovered_lines": 328,
       "mutants": {
-        "killed": 456,
-        "survived": 141,
-        "unviable": 46
+        "killed": 460,
+        "survived": 139,
+        "unviable": 47
       },
       "mutant_files": {
         "src/config.rs": {
@@ -40,9 +40,9 @@
           "unviable": 0
         },
         "src/git.rs": {
-          "killed": 15,
-          "survived": 11,
-          "unviable": 1
+          "killed": 19,
+          "survived": 9,
+          "unviable": 2
         },
         "src/load.rs": {
           "killed": 9,
@@ -94,9 +94,16 @@
       "from": 0.512,
       "to": 1.508,
       "reason": "slimfit#13: test_seconds is now each test's duration divided by the host's load slowdown (ADR 0003); re-baselined once under the new measure, which adds the load test"
+    },
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 1.508,
+      "to": 1.899,
+      "reason": "slimfit#16: 1.508 was under what the gate measures on a quiet host: 2.7-3.0, the CPU-hog test's `yes` processes slowing the tests beside it by more than the load probe corrects. With the hog test run alone, the gate's own measure is 1.870-1.907 quiet (5 runs, median 1.900). Corrects a mis-measured baseline; time_slack unchanged."
     }
   ],
   "mutants_at": {
-    "commit": "2bdaa4ab6c9cf0ba6b936075f92ec38e6652de5d"
+    "commit": "6d8227d5c86751137c7e14bfe091d563c9376ee8"
   }
 }

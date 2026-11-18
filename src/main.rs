@@ -256,7 +256,7 @@ fn run() -> Result<()> {
         Cmd::Init { mutants } => {
             let created = !repo.join(config::FILE).exists();
             if created {
-                let suites = config::detect(&git::files(&repo)?);
+                let suites = config::detect(&git::worktree(&repo)?.files);
                 if suites.is_empty() {
                     anyhow::bail!(
                         "no Rust, Go, Swift, Kotlin or TypeScript project found; write {} by hand",

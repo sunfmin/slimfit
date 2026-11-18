@@ -85,6 +85,9 @@ mod tests {
     /// contend for their cache lines, which no host load does.
     /// Not run under mutants (.cargo/mutants.toml): its timing verdict on a
     /// busy host would count kills that are not the mutant's.
+    /// Each run is held to its own CPU time, not to the other run: on a
+    /// host with fast and slow cores the same work took 0.25s or 0.87s of
+    /// CPU, by which core it got, which no load probe can correct.
     #[test]
     fn a_cpu_hog_leaves_the_normalised_time_within_tolerance() {
         let tolerance = crate::config::CheckConfig::default().time_tolerance;
@@ -99,7 +102,7 @@ mod tests {
             h.wait().unwrap();
         }
         assert!(
-            near(loaded, unloaded) && near(unloaded, unloaded_cpu) && near(loaded, loaded_cpu),
+            near(unloaded, unloaded_cpu) && near(loaded, loaded_cpu),
             "normalised (CPU) seconds: unloaded {unloaded:.3} ({unloaded_cpu:.3}), under a CPU hog {loaded:.3} ({loaded_cpu:.3})"
         );
     }

@@ -64,6 +64,19 @@ the normalised time grew 27× that way, a contention no host load causes.
   the host, the case this ADR is about, is the same in both phases.
 - Memory bandwidth and cache contention are not CPU share, and the probe
   does not see them. Time lost to them still counts against the tests.
+- Nor does it see what a load costs a test that spawns processes and waits
+  for them: each child, and the parent when it wakes, queues for a core.
+  Beside 36 busy processes on 18 cores, 100 `git rev-parse` took 3.7× as
+  long while a spin took 2.0× (2.25× and 1.4× beside busy loops that make
+  no syscalls). Such tests stay slower under load once normalised, and
+  only `time_slack` absorbs it, so a suite keeps its spawns few. slimfit
+  reads its working tree with three git commands, not nine (slimfit#16).
+- A test that loads the host itself, like `load.rs`'s CPU-hog test, slows
+  the tests that run beside it by more than the probe corrects: with it in
+  slimfit's suite, an unchanged tree measured 2.6-3.0s quiet, 1.5s without.
+  It runs alone (`.config/nextest.toml`). The Rust preset passes its junit
+  setting with `--tool-config-file`, so a repository's own nextest config
+  still applies.
 - Baselines written before this change hold wall time, which is higher. The
   baseline is re-measured once, with the change, under `--loosen
   test_seconds`.
