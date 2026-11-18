@@ -35,7 +35,7 @@ agent_help::binary!("slimfit");
 ///
 /// 1. `slimfit next`: one task, with its kind, evidence, files, steps and accept command.
 /// 2. Do exactly that task, nothing else.
-/// 3. Run the task's accept command (`slimfit check`, `slimfit check --mutants` or `slimfit check --all-mutants`).
+/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}).
 /// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json`.
 /// 5. Commit the code and the baseline together (one task, one commit); back to 1.
 ///
@@ -43,7 +43,7 @@ agent_help::binary!("slimfit");
 ///
 /// ## Output
 ///
-/// Every command prints one JSON object on stdout with a `next` field: the command to run next. Progress goes to stderr. A failure prints `{"error": "..."}` and exits 2; `slimfit check` exits 1 when a bound is violated. Measurements are cached per working tree in `.slimfit/out/`; `--fresh` measures again.
+/// Every command prints one JSON object on stdout with a `next` field: the command to run next. Progress goes to stderr. A failure prints `{"error": "..."}` and exits {const:EXIT_ERROR}; `slimfit check` exits {const:EXIT_VIOLATION} when a bound is violated. Measurements are cached per working tree in `.slimfit/out/`; `--fresh` measures again.
 #[derive(Parser)]
 #[command(
     name = "slimfit",
@@ -64,7 +64,7 @@ struct Cli {
 enum Cmd {
     /// Detects the suites, writes `slimfit.toml` (if missing), measures, and writes the baseline.
     ///
-    /// Run it once, when adopting slimfit on a repo; time it first (see [costs](help:costs)). It detects Rust, Go, Swift, Kotlin and TypeScript projects, one suite per project found, each from its language's preset; edit `slimfit.toml` to override any preset field.
+    /// Run it once, when adopting slimfit on a repo; time it first (see [costs](help:costs)). It detects {const:LANGUAGES} projects, one suite per project found, each from its language's preset; edit `slimfit.toml` to override any preset field.
     ///
     /// ## What it reads and writes
     ///
@@ -92,10 +92,10 @@ enum Cmd {
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): how many tasks of each kind there are, past the listed ones too.
-    /// - `notes`: what was not measured and what that hides, e.g. mutants not run, or a mutation tool that does not record which test kills which mutant (only Rust, TypeScript and Kotlin record it, so only they get redundant-test tasks).
+    /// - `notes`: what was not measured and what that hides, e.g. mutants not run, or a mutation tool that does not record which test kills which mutant (only {const:KILLERS_RECORDED} record it, so only they get redundant-test tasks).
     /// - `next`: what to do now.
     ///
-    /// A task has `kind`, `suite`, `summary`, `files`, `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after).
+    /// A task has {const:TASK_KEYS}: `evidence` is the numbers that make it a task, `steps` what to do, and `accept` the command that must pass after (by kind, see `--kind` below).
     ///
     /// ## What trips you up
     ///
@@ -118,7 +118,7 @@ enum Cmd {
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
     },
-    /// Fails if any bound is worse than the baseline; exits 1 on a violation.
+    /// Fails if any bound is worse than the baseline; exits {const:EXIT_VIOLATION} on a violation.
     ///
     /// Run it after each change, and in the gate in place of the project's own test run: it IS that test run (see [setting up in factorium](help:factorium)). It reads `slimfit.toml` and `.slimfit/baseline.json` and writes nothing but its cache in `.slimfit/out/`.
     ///
@@ -126,17 +126,14 @@ enum Cmd {
     ///
     /// Per suite, against `.slimfit/baseline.json`:
     ///
-    /// - `failures`: 0.
-    /// - `test_seconds`: at most baseline × (1 + `time_tolerance`) + `time_slack` (`slimfit.toml`'s `[check]`; by default {const:TIME_TOLERANCE} and {const:TIME_SLACK} seconds). It is the sum of the tests' own durations, build time excluded, corrected for the host's load (see [host load](help:host-load)).
-    /// - `uncovered_lines`: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
-    /// - `survived_mutants`: at most the baseline, checked only with `--mutants` or `--all-mutants`: deleting a test can never lower what the suite catches.
+    /// {table:bound}
     ///
     /// Line counts are recorded and reported, not bounded. To raise a bound, see `slimfit ratchet --help`.
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`; `violations`, each with `suite`, `metric`, `baseline`, `limit`, `current` and `fix` (what to do); `improved`, the bounds that got better (`slimfit ratchet` locks them in); `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and, while a mutants baseline is built in pieces, `mutants_pending`, per suite the files whose mutants are not held yet.
-    /// - `metrics`: per suite, `prod_lines`, `test_lines`, `tests`, `failures`, `test_seconds`, `covered_lines`, `uncovered_lines` and, when measured, `mutants` (`killed`, `survived`, `unviable`).
+    /// - `verdict`: `ok`; `violations`, each with {const:VIOLATION_KEYS}, `fix` saying what to do; `improved`, the bounds that got better (`slimfit ratchet` locks them in); `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and, while a mutants baseline is built in pieces, `mutants_pending`, per suite the files whose mutants are not held yet.
+    /// - `metrics`: per suite, {const:METRICS_KEYS}; when measured, also `mutants` ({const:MUTANT_COUNTS_KEYS}).
     /// - `mutated`: per suite, `"all"` or the files mutated; `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
@@ -255,11 +252,54 @@ fn help() -> Help {
         .topic::<MutantsScope>()
         .topic::<PiecewiseBaseline>()
         .topic::<Factorium>()
+        .table::<ratchet::Bound>("bound")
+        .constant("EXIT_ERROR", EXIT_ERROR)
+        .constant("EXIT_VIOLATION", EXIT_VIOLATION)
+        .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
+        .constant("LANGUAGES", languages("and"))
+        .constant("KILLERS_RECORDED", languages_where(|s| s.mutants_report.format.records_killers()))
+        .constant("FILE_LIMITED", languages_where(|s| !s.mutants_file_flag.is_empty()))
+        .constant("TASK_KEYS", keys(&tasks::Task::example()))
+        .constant("VIOLATION_KEYS", keys(&ratchet::Violation::example()))
+        .constant("METRICS_KEYS", keys(&model::Metrics::default()))
+        .constant("MUTANT_COUNTS_KEYS", keys(&model::MutantCounts::default()))
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
+}
+
+/// What a failure exits with.
+const EXIT_ERROR: i32 = 2;
+/// What `check` exits with when a bound is violated.
+const EXIT_VIOLATION: i32 = 1;
+
+/// `items` as prose: `a`, `a and b`, `a, b and c`, with `conjunction` for "and".
+fn prose_list(items: impl IntoIterator<Item = String>, conjunction: &str) -> String {
+    let mut items: Vec<String> = items.into_iter().collect();
+    let last = items.pop().unwrap_or_default();
+    if items.is_empty() { last } else { format!("{} {conjunction} {last}", items.join(", ")) }
+}
+
+/// The languages slimfit has a preset for.
+fn languages(conjunction: &str) -> String {
+    prose_list(config::Preset::all().iter().map(|p| p.language().to_string()), conjunction)
+}
+
+/// The languages whose preset has `property`.
+fn languages_where(property: impl Fn(&config::Suite) -> bool) -> String {
+    let presets = config::Preset::all().iter().filter(|p| property(&config::preset(**p)));
+    prose_list(presets.map(|p| p.language().to_string()), "and")
+}
+
+/// The keys `value` is written with, in the order written, in backticks, as prose.
+fn keys(value: &impl serde::Serialize) -> String {
+    let text = serde_json::to_string(value).expect("json");
+    let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text).expect("an object");
+    let mut keys: Vec<&String> = object.keys().collect();
+    keys.sort_by_key(|k| text.find(&format!("\"{k}\":")));
+    prose_list(keys.into_iter().map(|k| format!("`{k}`")), "and")
 }
 
 fn print(v: serde_json::Value) {
@@ -269,7 +309,7 @@ fn print(v: serde_json::Value) {
 fn main() {
     if let Err(e) = run() {
         print(json!({ "error": format!("{e:#}") }));
-        std::process::exit(2);
+        std::process::exit(EXIT_ERROR);
     }
 }
 
@@ -284,10 +324,7 @@ fn run() -> Result<()> {
             if created {
                 let suites = config::detect(&git::worktree(&repo)?.files);
                 if suites.is_empty() {
-                    anyhow::bail!(
-                        "no Rust, Go, Swift, Kotlin or TypeScript project found; write {} by hand",
-                        config::FILE
-                    );
+                    anyhow::bail!("no {} project found; write {} by hand", languages("or"), config::FILE);
                 }
                 let cfg = config::Config { suites, check: Default::default() };
                 std::fs::write(repo.join(config::FILE), toml::to_string_pretty(&cfg)?)?;
@@ -382,7 +419,7 @@ fn run() -> Result<()> {
             let ok = v.ok;
             print(json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }));
             if !ok {
-                std::process::exit(1);
+                std::process::exit(EXIT_VIOLATION);
             }
         }
         Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh } => {

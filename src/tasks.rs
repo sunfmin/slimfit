@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum, agent_help::Help)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskKind {
     /// A test fails. Fix it first; nothing else is measured honestly.
@@ -34,6 +34,28 @@ pub enum TaskKind {
     Deepen,
 }
 
+impl TaskKind {
+    /// The command that must pass after a task of this kind is done.
+    pub fn accept(self) -> &'static str {
+        match self {
+            TaskKind::FailingTest | TaskKind::Uncovered => "slimfit check",
+            TaskKind::RedundantTest => "slimfit check --all-mutants",
+            TaskKind::SlowTest | TaskKind::SurvivingMutant | TaskKind::Deepen => "slimfit check --mutants",
+        }
+    }
+
+    /// Every accept command, each once, in the order of the kinds.
+    pub fn accepts() -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for k in <TaskKind as clap::ValueEnum>::value_variants() {
+            if !out.contains(&k.accept()) {
+                out.push(k.accept());
+            }
+        }
+        out
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
     pub kind: TaskKind,
@@ -43,6 +65,22 @@ pub struct Task {
     pub evidence: Value,
     pub steps: String,
     pub accept: String,
+}
+
+impl Task {
+    /// A task of no substance: what help lists the keys of.
+    pub fn example() -> Self {
+        let kind = TaskKind::FailingTest;
+        Task {
+            kind,
+            suite: String::new(),
+            summary: String::new(),
+            files: vec![],
+            evidence: Value::Null,
+            steps: String::new(),
+            accept: kind.accept().into(),
+        }
+    }
 }
 
 /// How many tasks of one kind in one suite `next --all` lists; the rest are
@@ -96,7 +134,7 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
             files: vec![],
             evidence: json!({ "test": t.id, "log": format!(".slimfit/out/{}/test.log", s.suite) }),
             steps: "Read the log, find why it fails, fix the code (or the test if the test is wrong). Nothing else is measured honestly until every test passes.".into(),
-            accept: "slimfit check".into(),
+            accept: TaskKind::FailingTest.accept().into(),
         })
         .collect()
 }
@@ -123,7 +161,7 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
                     The new test must be fast (milliseconds, no sleeps, network or process spawns): if only a slow test can reach the line, delete the code or escalate, never add the slow test. \
                     It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence."
                 .into(),
-            accept: "slimfit check".into(),
+            accept: TaskKind::Uncovered.accept().into(),
         })
         .collect()
 }
@@ -193,7 +231,7 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
             steps: "Read the test. If it checks behaviour no other test pins down (a user-visible outcome the mutants here don't reach), keep it and strengthen the code it covers instead. \
                     Otherwise delete it. The mutation bound proves nothing was lost: the accept command mutates every file, since a deleted test can let mutants of unchanged files survive."
                 .into(),
-            accept: "slimfit check --all-mutants".into(),
+            accept: TaskKind::RedundantTest.accept().into(),
         })
         .collect()
 }
@@ -214,7 +252,7 @@ fn slow(s: &SuiteMeasurement) -> Vec<Task> {
                     Make it cheaper without testing less: shrink the input, share setup, replace a slow dependency with an in-memory adapter at an existing seam. \
                     If it overlaps faster tests, merge or delete it."
                 .into(),
-            accept: "slimfit check --mutants".into(),
+            accept: TaskKind::SlowTest.accept().into(),
         })
         .collect()
 }
@@ -238,7 +276,7 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
                     If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
                     The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
                 .into(),
-            accept: "slimfit check --mutants".into(),
+            accept: TaskKind::SurvivingMutant.accept().into(),
         })
         .collect()
 }
@@ -275,7 +313,7 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
                     shallow interfaces, pass-through functions, one concept spread over many small modules, tests that reach past the interface. \
                     Write the deeper interface down first (GLOSSARY names, ADR if it settles a trade-off), then move to it one step per commit, each step passing the accept command."
                 .into(),
-            accept: "slimfit check --mutants".into(),
+            accept: TaskKind::Deepen.accept().into(),
         })
         .collect())
 }
@@ -297,15 +335,7 @@ mod t {
 
     #[test]
     fn cap_keeps_the_first_few_of_each_kind_in_each_suite() {
-        let task = |suite: &str, kind| Task {
-            kind,
-            suite: suite.into(),
-            summary: String::new(),
-            files: vec![],
-            evidence: Value::Null,
-            steps: String::new(),
-            accept: String::new(),
-        };
+        let task = |suite: &str, kind| Task { kind, suite: suite.into(), ..Task::example() };
         let mut all = Vec::new();
         for suite in ["a", "b"] {
             all.extend((0..7).map(|_| task(suite, TaskKind::Uncovered)));
