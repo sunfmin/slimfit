@@ -13,7 +13,7 @@ No command mutates the whole codebase: what a mutants run costs grows with the c
 A mutant can make a test loop forever (`+=` to `*=` in a loop). Such a mutant counts as caught, but it costs whatever ends the test:
 
 - Without a timeout per test, the mutation tool's own timeout for the whole test run: cargo-mutants sets it from its unmutated baseline run (5× that run; 71s on factorium, so 3 hanging mutants were 213s of a 274s run), or 300s when that run is skipped.
-- {const:REACHED}: each test has its own timeout, {const:TIMEOUT_FLOOR}s plus {const:TIMEOUT_FACTOR}× its duration in the test run (`seconds` in the tests report), and the hanging test is ended then: on factorium 20-24s (tests of about 3.4s) instead of 71s, for the same verdicts (ADR 0007). Only the tests that ran the mutant's function run at all, so a hang in one costs that test's timeout, not the suite's.
+- {const:REACHED}: each test has its own timeout, {const:TIMEOUT_FLOOR}s plus {const:TIMEOUT_FACTOR}× its duration in the test run (`seconds` in the tests report), and the hanging test is ended then: on factorium 20-24s (tests of about 3.4s) instead of 71s, for the same verdicts. Only the tests that ran the mutant's function run at all, so a hang in one costs that test's timeout, not the suite's.
 
 ## Before adopting slimfit on a repo
 
