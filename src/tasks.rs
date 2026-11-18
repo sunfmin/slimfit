@@ -104,6 +104,7 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
             evidence: json!(sp),
             steps: "Find who calls this code. No caller on any user path: delete it, and whatever only it used. \
                     A user path needs it: add a test through the module's interface that runs it (never test past the interface). \
+                    The new test must be fast (milliseconds, no sleeps, network or process spawns): if only a slow test can reach the line, delete the code or escalate, never add the slow test. \
                     It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence."
                 .into(),
             accept: "slimfit check".into(),
@@ -218,7 +219,8 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
             files: vec![file.to_string()],
             evidence: json!({ "survivors": ms }),
             steps: "For each survivor: the change it makes is behaviour no test checks. If the behaviour matters, add an assertion through the module's interface that the mutant breaks. \
-                    If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist."
+                    If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
+                    The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
                 .into(),
             accept: "slimfit check --mutants".into(),
         })
