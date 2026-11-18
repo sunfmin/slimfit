@@ -11,8 +11,8 @@
 #                               mutants, each with only the tests that ran
 #                               its function (none, for the untested one),
 #                               and their survivors fail the check
-#   next --all --mutants      → a `surviving-mutant` task in src/lib.rs, from
-#                               the same measurement
+#   next --all                → a `surviving-mutant` task in src/lib.rs, from
+#                               the same measurement (cached; no mutant runs again)
 # A language whose toolchain for this run is incomplete (cargo-mutants too
 # under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
 # Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
@@ -92,7 +92,7 @@ for lang in $langs; do
         | grep -qx "\['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
       grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
         || { echo "the untested function's mutants ran tests" >&2; tail -20 change.log; exit 1; }
-      "$bin" next --all --mutants 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
+      "$bin" next --all 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
         | grep -q "src/lib.rs" || { echo "no surviving-mutant task in src/lib.rs" >&2; exit 1; }
     fi
     echo "e2e $lang: ok ($(( $(date +%s) - start ))s)"
