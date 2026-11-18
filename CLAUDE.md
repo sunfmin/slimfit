@@ -15,8 +15,8 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 ## Checks
 
 - `./gate.sh` (fast): fmt, clippy, then slimfit checks itself (tests, coverage and time against `.slimfit/baseline.json`).
-- `./slow.sh`: the fast gate, plus `slimfit check --mutants` on slimfit itself and `E2E_MUTANTS=1 ./e2e.sh` (the Rust sample by default; `E2E_LANGS` picks others).
-- A commit that changes source files carries its mutants measurement: run `slimfit check --mutants`, then `slimfit ratchet`, and commit `.slimfit/baseline.json` with the change. That moves `mutants_at`, so the slow gate mutates only what changed since (ADR 0001, Consequences). A change that only deletes or edits tests outside `src/` is checked with `--all-mutants`.
+- `./slow.sh`: the fast gate, plus `./e2e.sh` (the Rust sample by default; `E2E_LANGS` picks others; `E2E_MUTANTS=1` adds the samples' mutants e2e, on request).
+- No gate and no commit runs mutation testing on slimfit itself: mutants are never in a gate (`slimfit --help`, rule 2). They run as idle work (`factorium.toml` `[idle]`: `slimfit check --all-mutants` once a day while the host is idle). `slimfit next --mutants` is for working surviving-mutant and redundant-test tasks; such a task is accepted with its own accept command, and that commit carries the ratcheted `.slimfit/baseline.json`.
 - A new report format or preset change needs real output from the real tool in `testdata/<language>/reports/`, never a hand-written one. Replace absolute paths with `/REPO`.
 
 ## Agent skills
