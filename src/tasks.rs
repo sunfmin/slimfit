@@ -67,8 +67,9 @@ pub struct Task {
     pub accept: String,
 }
 
+#[cfg(test)]
 impl Task {
-    /// A task of no substance: what help lists the keys of.
+    /// A task of no substance.
     pub fn example() -> Self {
         let kind = TaskKind::FailingTest;
         Task {
@@ -88,6 +89,8 @@ impl Task {
 pub const LISTED_PER_KIND: usize = 5;
 /// As [`LISTED_PER_KIND`], for deepen tasks.
 pub const LISTED_DEEPEN: usize = 3;
+/// How far back in git history `deepen` counts a file's changes, in days.
+pub const DEEPEN_DAYS: u32 = 90;
 
 fn per_kind(kind: TaskKind) -> usize {
     if kind == TaskKind::Deepen { LISTED_DEEPEN } else { LISTED_PER_KIND }
@@ -285,7 +288,8 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
 /// off soonest.
 fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<Vec<Task>> {
     let log =
-        git::run(repo, &["log", "--since=90.days", "--no-merges", "--format=", "--name-only"]).unwrap_or_default();
+        git::run(repo, &["log", &format!("--since={DEEPEN_DAYS}.days"), "--no-merges", "--format=", "--name-only"])
+            .unwrap_or_default();
     let mut changes: BTreeMap<&str, u64> = BTreeMap::new();
     for f in log.lines().filter(|l| !l.is_empty()) {
         if classifier.kind(f) == Some(Kind::Source) {
@@ -306,7 +310,7 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
         .map(|(f, n, l)| Task {
             kind: TaskKind::Deepen,
             suite: s.suite.clone(),
-            summary: format!("{f}: {l} lines, changed in {n} commits in 90 days"),
+            summary: format!("{f}: {l} lines, changed in {n} commits in {DEEPEN_DAYS} days"),
             files: vec![f.clone()],
             evidence: json!({ "file": f, "prod_lines": l, "commits_90d": n }),
             steps: "Load the codebase-design and improve-codebase-architecture skills. Look at the module this file belongs to: \

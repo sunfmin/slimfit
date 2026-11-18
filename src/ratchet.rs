@@ -54,6 +54,14 @@ pub enum Bound {
     SurvivedMutants,
 }
 
+/// What a [`Loosening`] prints, as the command pages name it.
+pub const LOOSENING_HELP: &str =
+    "each with `suite`, `metric`, `from` (the bound before), `to` (the bound after) and `reason`";
+
+/// What a [`Violation`] prints, as the command pages name it.
+pub const VIOLATION_HELP: &str =
+    "each with `suite`, `metric`, `baseline`, `limit` (the most it may be), `current` and `fix` (what to do)";
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Violation {
     pub suite: String,
@@ -64,6 +72,7 @@ pub struct Violation {
     pub fix: String,
 }
 
+#[cfg(test)]
 impl Violation {
     /// A violation of no substance: what help lists the keys of.
     pub fn example() -> Self {
