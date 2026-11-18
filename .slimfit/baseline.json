@@ -5,9 +5,14 @@
       "test_lines": 453,
       "tests": 24,
       "failures": 0,
-      "test_seconds": 0.566,
+      "test_seconds": 0.512,
       "covered_lines": 899,
-      "uncovered_lines": 444
+      "uncovered_lines": 444,
+      "mutants": {
+        "killed": 249,
+        "survived": 170,
+        "unviable": 33
+      }
     }
   },
   "loosened": []
