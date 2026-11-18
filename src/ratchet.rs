@@ -4,7 +4,7 @@
 
 use crate::config::CheckConfig;
 use crate::fault::{Fault, Faults, fault};
-use crate::model::{Measurement, Metrics, ReachTest, Snapshot, SuiteMeasurement};
+use crate::model::{Measurement, Metrics, ReachTest, SuiteMeasurement};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -18,11 +18,6 @@ pub struct Baseline {
     /// Every time a bound was raised, and why.
     #[serde(default)]
     pub loosened: Vec<Loosening>,
-    /// The tree mutants were last measured at: `--mutants` runs the mutants
-    /// of the lines changed since (ADR 0005). `init` sets it, so adopting
-    /// slimfit runs no mutant.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mutants_at: Option<Snapshot>,
     /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
     /// each against its test's text: not proposed again until it changes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -76,6 +71,9 @@ pub enum Bound {
     /// Mutants no test kills in the changed lines: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
+    /// Source lines the change adds that no ratcheted mutants run measured: none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
+    #[value(verbatim_doc_comment)]
+    UnmeasuredMutants,
 }
 
 /// What a [`Loosening`] prints, as the command pages name it.
@@ -156,7 +154,7 @@ fn value(m: &Metrics, b: Bound) -> Option<f64> {
         Bound::Failures => m.failures as f64,
         Bound::TestSeconds => m.test_seconds,
         Bound::UncoveredLines => m.uncovered_lines as f64,
-        Bound::SurvivedMutants => return None,
+        Bound::SurvivedMutants | Bound::UnmeasuredMutants => return None,
     })
 }
 
@@ -201,8 +199,14 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             "mutants survive in the changed lines: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
         ),
+        Bound::UnmeasuredMutants => MEASURE_THE_CHANGE.into(),
     }
 }
+
+/// What clears `unmeasured_mutants`: the rule of every change to source.
+pub const MEASURE_THE_CHANGE: &str = "measure the change's mutants at background priority, never in a gate: \
+     `factorium worker exclusive --background -- slimfit check --mutants` (outside factorium, `nice -n 19 slimfit \
+     check --mutants`), then `slimfit ratchet`, then commit .slimfit/mutants/ with the change";
 
 pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
     let mut v = Verdict {
@@ -260,8 +264,8 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
 
 /// The new baseline: each bound at the better of baseline and current;
 /// a loosened bound at current, recorded with its reason. Refuses while
-/// any other bound is violated. With mutants measured, `mutants_at` moves
-/// to the tree measured: its change is accepted.
+/// any other bound is violated. The lines a mutants run measured are
+/// recorded by the caller (`landing::record`), not in the baseline.
 pub fn ratchet(
     base: &Baseline,
     m: &Measurement,
@@ -287,6 +291,14 @@ pub fn ratchet(
             }
         })
         .collect();
+    if loosen.contains(&Bound::UnmeasuredMutants) {
+        faults.push(Fault {
+            fault: "--loosen unmeasured_mutants: unmeasured lines are never loosened".into(),
+            fix: format!(
+                "{MEASURE_THE_CHANGE}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
+            ),
+        });
+    }
     if !loosen.is_empty() && reason.is_none_or(|r| r.trim().is_empty()) {
         faults.push(Fault {
             fault: "--loosen without --reason".into(),
@@ -297,7 +309,6 @@ pub fn ratchet(
     if !faults.is_empty() {
         return Err(Faults(faults).into());
     }
-    let mutants_at = if m.with_mutants { m.snapshot.clone() } else { base.mutants_at.clone() };
     // A keep verdict whose test changed, or is gone, holds no more.
     let kept = base
         .kept
@@ -309,7 +320,7 @@ pub fn ratchet(
         })
         .cloned()
         .collect();
-    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at, kept };
+    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), kept };
     for s in &m.suites {
         let mut metrics = s.metrics.clone();
         if loosen.contains(&Bound::SurvivedMutants)
@@ -366,7 +377,11 @@ mod t {
             uncovered: vec![],
             mutants: vec![],
             reach: None,
-            mutated: survived.map(|n| Mutated { files: vec!["src/a.rs".into()], change: change(n) }),
+            mutated: survived.map(|n| Mutated {
+                files: vec!["src/a.rs".into()],
+                change: change(n),
+                lines: Default::default(),
+            }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
         }
@@ -374,19 +389,18 @@ mod t {
 
     /// `survived`: the change's survivors, when mutants were measured.
     fn measurement(metrics: Metrics, survived: Option<u64>) -> Measurement {
-        let snapshot = survived.map(|_| Snapshot { commit: "c".into(), tree: Some("t".into()) });
         Measurement {
             tree: "t".into(),
             with_mutants: survived.is_some(),
-            snapshot,
-            since: None,
+            since: survived.map(|_| "c".into()),
             suites: vec![suite("s", metrics, survived)],
         }
     }
 
     /// A baseline, and a cached measurement, written before whole-codebase
-    /// runs and the kill matrix were removed still load: the removed fields
-    /// are ignored, and the next ratchet writes the baseline without them.
+    /// runs, the kill matrix and `mutants_at` were removed still load: the
+    /// removed fields are ignored, and the next ratchet writes the baseline
+    /// without them.
     #[test]
     fn old_files_with_removed_fields_still_load() {
         let dir = tempfile::tempdir().unwrap();
@@ -396,7 +410,8 @@ mod t {
             "mutants_at":{"commit":"c","dirty":["x"]}}"#;
         std::fs::write(dir.path().join(FILE), old).unwrap();
         let b = load(dir.path()).unwrap();
-        assert_eq!((b.suites["rust"].tests, b.mutants_at.unwrap().commit), (1, "c".to_string()));
+        assert_eq!(b.suites["rust"].tests, 1);
+        assert!(!render(&b).unwrap().contains("mutants_at"));
         let cached = r#"{"tree":"t","with_mutants":true,"suites":[{"suite":"rust","metrics":{"prod_lines":1,"test_lines":1,
             "tests":1,"failures":0,"test_seconds":1.0,"covered_lines":1,"uncovered_lines":0},"tests":[],"uncovered":[],
             "mutants":[{"file":"a.rs","line":1,"description":"d","status":"killed","killed_by":["t"]}],"mutation_tests":["t"],
@@ -430,9 +445,9 @@ mod t {
 
     /// No baseline keeps a mutant count: a survivor in the change fails the
     /// check, in a new suite too, until it is killed or loosened with a
-    /// reason. Ratcheting a mutants run moves `mutants_at` to its tree.
+    /// reason; `unmeasured_mutants` is never loosened.
     #[test]
-    fn the_changes_own_survivors_fail_until_loosened_and_a_ratchet_moves_mutants_at() {
+    fn the_changes_own_survivors_fail_until_loosened() {
         let cfg = CheckConfig::default();
         let two = measurement(m(10, 10.0), Some(2));
         for b in [base(m(10, 10.0)), Baseline::default()] {
@@ -446,9 +461,11 @@ mod t {
         let next = ratchet(&base(m(10, 10.0)), &two, &cfg, &[Bound::SurvivedMutants], Some("equivalent")).unwrap();
         let l = &next.loosened[0];
         assert_eq!((l.metric, l.from, l.to, l.reason.as_str()), (Bound::SurvivedMutants, 0.0, 2.0, "equivalent"));
-        assert_eq!(next.mutants_at, two.snapshot);
         let clean = ratchet(&base(m(10, 10.0)), &measurement(m(10, 10.0), Some(0)), &cfg, &[], None).unwrap();
-        assert!(clean.loosened.is_empty() && clean.mutants_at.is_some());
+        assert!(clean.loosened.is_empty());
+        let never = ratchet(&base(m(10, 10.0)), &two, &cfg, &[Bound::UnmeasuredMutants], Some("x")).unwrap_err();
+        let f = crate::fault::of(never);
+        assert!(f.iter().any(|f| f.fault.contains("never loosened") && f.fix.contains("--background")), "{f:?}");
     }
 
     #[test]
@@ -463,13 +480,11 @@ mod t {
     }
 
     #[test]
-    fn ratchet_keeps_the_better_time_and_mutants_at_when_unmeasured() {
+    fn ratchet_keeps_the_better_time() {
         let cfg = CheckConfig::default();
-        let at = Some(Snapshot { commit: "old".into(), tree: None });
-        let old = Baseline { mutants_at: at.clone(), ..base(m(10, 10.0)) };
-        let next = ratchet(&old, &measurement(m(8, 11.0), None), &cfg, &[], None).unwrap();
+        let next = ratchet(&base(m(10, 10.0)), &measurement(m(8, 11.0), None), &cfg, &[], None).unwrap();
         let s = &next.suites["s"];
-        assert_eq!((s.uncovered_lines, s.test_seconds, next.mutants_at), (8, 10.0, at));
+        assert_eq!((s.uncovered_lines, s.test_seconds), (8, 10.0));
     }
 
     #[test]

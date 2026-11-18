@@ -3,7 +3,7 @@
 //! host, changes nothing, and answers each finding with its fix.
 
 use crate::config::{self, Suite};
-use crate::ratchet::{self, Baseline};
+use crate::ratchet;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -19,12 +19,12 @@ pub enum Kind {
     NoBaseline,
     /// A gate runs the project's own tests and also `slimfit check`, which is a test run: the tests run twice. Fix: take the project's test command out of that gate.
     TestsRunTwice,
-    /// A gate or an `[idle]` step runs mutation testing (`--mutants` or a mutation tool): in a gate it holds up every landing; idle work commits nothing, so `mutants_at` never moves. Fix: take it out; the agent runs `slimfit check --mutants` on its own change at background priority, then `slimfit ratchet` (see [mutants scope](help:mutants-scope)).
+    /// A gate or an `[idle]` step runs mutation testing (`--mutants` or a mutation tool): in a gate it holds up every landing; idle work commits nothing, so its measurement is never recorded. Fix: take it out; the agent runs `slimfit check --mutants` on its own change at background priority, then `slimfit ratchet`, and commits; the gate's plain `slimfit check` holds that it did (see [what the gate holds](help:mutants-scope)).
     MutantsInGate,
     /// A command in `factorium.toml` (a gate or idle work) mutates the whole codebase: `--all-mutants`, which slimfit refuses, or a mutation tool run without slimfit and without a diff. Mutants run only on a change. Fix: take it out; the agent runs `slimfit check --mutants`, the mutants of its changed lines, as for `mutants_in_gate`.
     WholeCodebaseMutants,
-    /// The baseline records no `mutants_at`: `--mutants` takes the change from the merge base with the branch's upstream, and refuses without one (see [mutants scope](help:mutants-scope)). Fix: one `slimfit ratchet` (it records the tree now as `mutants_at`), then commit the baseline.
-    MutantsUnscoped,
+    /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change's lines to a mutants measurement, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
+    NoTarget,
     /// The host's 1-minute load is above its core count: what is measured now runs slow and its wall times are skewed (see [host load](help:host-load)). Fix: measure when the host is quiet, or at `nice -n 19`.
     HostBusy,
     /// A tool a suite's commands run is not installed on this host: the command that needs it fails. Fix: install it as the finding says.
@@ -185,7 +185,10 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
         config::detect(&files).iter().map(|s| s.resolve()).collect()
     } else {
         match config::load(repo) {
-            Ok(c) => c.suites.iter().map(|s| s.resolve()).collect(),
+            Ok(c) => {
+                out.extend(no_target(repo, &c));
+                c.suites.iter().map(|s| s.resolve()).collect()
+            }
             Err(e) => {
                 out.push(finding(
                     Kind::BadConfig,
@@ -200,7 +203,7 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
     out.extend(gates(repo));
     if repo.join(config::FILE).exists() {
         match ratchet::load(repo) {
-            Ok(b) if repo.join(ratchet::FILE).exists() => out.extend(baseline(&b)),
+            Ok(_) if repo.join(ratchet::FILE).exists() => {}
             Ok(_) => out.push(finding(
                 Kind::NoBaseline,
                 None,
@@ -240,7 +243,7 @@ fn gates(repo: &Path) -> Vec<Finding> {
     let steps = t.get("idle").and_then(|i| i.get("steps")).and_then(|s| s.as_array()).cloned().unwrap_or_default();
     for (i, step) in steps.iter().filter_map(|s| s.as_str()).enumerate() {
         let lines = run_by(repo, &format!("factorium.toml [idle] steps[{i}]"), step);
-        out.extend(mutation(&lines, "as idle work, which commits nothing, so `mutants_at` never moves"));
+        out.extend(mutation(&lines, "as idle work, which commits nothing, so what it measures is never recorded"));
     }
     let Some(toml::Value::Table(gate)) = t.get("gate") else { return out };
     for (key, entry) in gate {
@@ -309,17 +312,29 @@ fn mutation(lines: &[(String, String)], how: &str) -> Vec<Finding> {
     out
 }
 
-fn baseline(b: &Baseline) -> Vec<Finding> {
-    if b.mutants_at.is_some() || b.suites.is_empty() {
+/// A finding when a suite runs mutants but no branch to land on is found.
+fn no_target(repo: &Path, cfg: &config::Config) -> Vec<Finding> {
+    let mutates = cfg
+        .suites
+        .iter()
+        .map(|s| s.resolve())
+        .any(|s| !s.mutants_diff_flag.is_empty() || !s.mutants_file_flag.is_empty());
+    let target = cfg.check.target.as_deref().unwrap_or(crate::landing::DEFAULT_TARGET);
+    // Outside git (a bare directory) there is no branch to ask about.
+    if !mutates || !repo.join(".git").exists() || crate::git::merge_base(repo, target).is_some() {
         return vec![];
     }
+    let what = match &cfg.check.target {
+        Some(t) => format!("slimfit.toml's [check] target {t} shares no commit with HEAD"),
+        None => format!("slimfit.toml sets no [check] target and there is no {target}"),
+    };
     vec![finding(
-        Kind::MutantsUnscoped,
+        Kind::NoTarget,
         None,
-        "the baseline records no mutants_at: `--mutants` takes the change from the merge base with the branch's \
-         upstream, and refuses without one"
+        format!("{what}: `check` cannot hold the change's lines to a mutants measurement, and `--mutants` refuses"),
+        "set `target` under [check] in slimfit.toml to the branch changes land on (e.g. \"origin/main\"), or \
+         `git remote set-head origin --auto`"
             .into(),
-        "`slimfit ratchet` (it records the tree now as mutants_at), then commit .slimfit/baseline.json".into(),
     )]
 }
 
@@ -350,9 +365,11 @@ fn tools(suites: &[Suite], host: &Host) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Metrics, Snapshot};
+    use crate::measure::t::git;
+    use crate::model::Metrics;
+    use crate::ratchet::Baseline;
 
-    /// A repository with a Rust suite, a baseline and `files` as written.
+    /// A directory with a Rust suite, a baseline and `files` as written.
     fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let empty = ratchet::render(&Baseline::default()).unwrap();
@@ -394,12 +411,8 @@ mod tests {
         f.iter().map(|f| f.kind).collect()
     }
 
-    fn with_mutants_at(at: Option<&str>) -> String {
-        let b = Baseline {
-            suites: [("rust".to_string(), Metrics::default())].into(),
-            mutants_at: at.map(|c| Snapshot { commit: c.into(), tree: None }),
-            ..Baseline::default()
-        };
+    fn measured() -> String {
+        let b = Baseline { suites: [("rust".to_string(), Metrics::default())].into(), ..Baseline::default() };
         serde_json::to_string(&b).unwrap()
     }
 
@@ -407,7 +420,7 @@ mod tests {
     /// slimfit's own setup is one such.
     #[test]
     fn a_sound_setup_has_no_findings() {
-        let r = repo(&[(ratchet::FILE, &with_mutants_at(Some("abc")))]);
+        let r = repo(&[(ratchet::FILE, &measured())]);
         assert_eq!(diagnose(r.path(), &host(&every_tool())), vec![]);
         let own = Path::new(env!("CARGO_MANIFEST_DIR"));
         let found = diagnose(own, &host(&every_tool()));
@@ -495,13 +508,27 @@ mod tests {
         assert!(f[2].what.starts_with("slow.sh:1") && f[2].fix.contains("`slimfit check --mutants`"), "{f:#?}");
     }
 
-    /// No mutants_at: `--mutants` would measure only what is uncommitted.
+    /// No branch to land on: no change's lines are held to a measurement.
+    /// A target set in slimfit.toml is the one looked for.
     #[test]
-    fn a_baseline_without_mutants_at_is_unscoped() {
-        let r = repo(&[(ratchet::FILE, &with_mutants_at(None))]);
+    fn a_repository_with_no_target_is_found() {
+        let r = repo(&[(ratchet::FILE, &measured())]);
+        for args in [&["init", "-q"][..], &["add", "-A"], &["commit", "-qm", "setup"]] {
+            git(r.path(), args);
+        }
         let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::MutantsUnscoped], "{f:#?}");
-        assert!(f[0].what.contains("no mutants_at") && f[0].fix.starts_with("`slimfit ratchet`"), "{f:#?}");
+        assert_eq!(kinds(&f), vec![Kind::NoTarget], "{f:#?}");
+        assert!(f[0].what.contains("no [check] target and there is no origin/HEAD"), "{f:#?}");
+        assert!(f[0].fix.starts_with("set `target` under [check]"), "{f:#?}");
+        git(r.path(), &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(r.path(), &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        assert_eq!(diagnose(r.path(), &host(&every_tool())), vec![]);
+        let toml = "[[suite]]\nname = \"rust\"\npreset = \"rust\"\n[check]\ntarget = \"HEAD\"\n";
+        std::fs::write(r.path().join(config::FILE), toml).unwrap();
+        assert_eq!(diagnose(r.path(), &host(&every_tool())), vec![]);
+        std::fs::write(r.path().join(config::FILE), toml.replace("HEAD", "nope")).unwrap();
+        let f = diagnose(r.path(), &host(&every_tool()));
+        assert!(f[0].what.starts_with("slimfit.toml's [check] target nope shares no commit"), "{f:#?}");
     }
 
     /// This host: its cores, PATH and cargo's bin directory searched; a

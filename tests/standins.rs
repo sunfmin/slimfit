@@ -182,6 +182,9 @@ impl Sample {
         git(&repo, &["init", "-q"]);
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-qm", "sample"]);
+        // The branch changes land on: what HEAD adds since is the change.
+        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&repo, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
         Sample { _tmp: tmp, repo, bin, state, links }
     }
 
@@ -359,8 +362,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
         // What the dry run said it would write, but for `test_seconds` (the
-        // host's load moves it) and the tree mutants_at names (the dry run's
-        // lacks the files it did not write).
+        // host's load moves it).
         let would = &dry["would_write"];
         for f in [".gitignore", "slimfit.toml"] {
             assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
@@ -368,7 +370,6 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
         let held = |text: &str| {
             let mut b: Value = serde_json::from_str(text).unwrap();
             b["suites"][lang.name]["test_seconds"] = Value::Null;
-            b["mutants_at"]["tree"] = Value::Null;
             b
         };
         assert_eq!(held(&base), held(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);
@@ -434,7 +435,7 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     let mut tools = lang.test_tools.to_vec();
     let args: &[&str] = if mutates {
         let source = s.repo.join(lang.source);
-        std::fs::write(&source, std::fs::read_to_string(&source).unwrap() + "// a change\n").unwrap();
+        std::fs::write(&source, std::fs::read_to_string(&source).unwrap() + "pub fn a_change() {}\n").unwrap();
         // A mutants tool that also runs the tests is missing for them first.
         if !tools.contains(&lang.mutants_tool) {
             tools.push(lang.mutants_tool);
@@ -476,8 +477,9 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
 
 /// The Rust sample, measured, in the states that make each command print
 /// its optional keys: violations, improvements, loosenings, the change's
-/// mutants and `mutants_at`. A changed line gives cargo-mutants the
-/// change's diff; `--all-mutants` is refused.
+/// mutants, their unmeasured lines and the record of the lines measured. A
+/// changed line gives cargo-mutants the change's diff; `--all-mutants` is
+/// refused.
 fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mut run = |cmd: &'static str, args: &[&str], code: i32| -> Value {
         let mut all = vec![cmd];
@@ -529,7 +531,11 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // mutants, and with a real nextest to hand on to (the stand-in, as
     // `cargo-nextest`), slimfit writes the plan and its shim.
     let lib = s.repo.join("src/lib.rs");
-    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "pub fn changed() -> i64 {\n    1\n}\n").unwrap();
+    // No mutants run measured them: the plain check fails.
+    let held = run("check", &[], 1);
+    let v = &held["verdict"]["violations"][0];
+    assert_eq!((&v["metric"], &held["landing"]["unmeasured"]), (&"unmeasured_mutants".into(), &3.into()), "{held:#}");
     // No nextest to hand on to: every mutant runs every test, and stderr says why.
     s.take();
     let (_, _, stderr) = s.slimfit(&["next", "--mutants"]);
@@ -589,7 +595,9 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
-    run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
+    let ratchet = run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
+    let record = ratchet["measured"].as_str().unwrap();
+    assert!(record.starts_with(".slimfit/mutants/") && s.repo.join(record).exists(), "{ratchet:#}");
     run("report", &["--points", "1"], 0);
     // A second `fn slow` its path cannot tell apart: no text to keep it by.
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "fn slow() {}\n").unwrap();
@@ -665,8 +673,8 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
         let reached: &[&str] = match *cmd {
             "init" => &["mutants_diff_flag", "mutants_file_flag"],
             "next" => &["survivors", "start", "counts", "remaining", "notes"],
-            "check" => &["fix", "improved", "mutated", "change", "unviable"],
-            "ratchet" => &["from", "reason", "mutants_at", "tree"],
+            "check" => &["fix", "improved", "mutated", "change", "unviable", "landing", "unmeasured"],
+            "ratchet" => &["from", "reason", "measured"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
             "keep" => &["kept", "test", "hash", "reason"],
             _ => &["history", "commit", "from"],

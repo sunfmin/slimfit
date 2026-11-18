@@ -16,7 +16,7 @@ cargo install --locked --git https://github.com/sunfmin/slimfit
 
 Each language is a preset: the tools its community uses, each run once to write a standard report. Every preset field can be overridden per suite in `slimfit.toml`.
 
-Mutants run only on a change: `--mutants` runs the mutants of the lines changed since the baseline's `mutants_at`, and nothing mutates the whole codebase (ADR 0006). A mutants tool that can be limited neither to a diff nor to files (`mutants_diff_flag`, `mutants_file_flag`) is refused by `--mutants`; today that is every preset's but Rust's.
+Mutants run only on a change: `--mutants` runs the mutants of the lines a branch adds to the branch it lands on (`[check] target`, by default `origin/HEAD`) that no ratcheted run measured, and nothing mutates the whole codebase (ADR 0006). A mutants tool that can be limited neither to a diff nor to files (`mutants_diff_flag`, `mutants_file_flag`) is refused by `--mutants`; today that is every preset's but Rust's. A ratcheted mutants run records the lines it measured in `.slimfit/mutants/`, and every `slimfit check` fails with `unmeasured_mutants` while the change adds a source line none recorded (ADR 0008).
 
 | Language | Tests and coverage | Mutants | Needs |
 |---|---|---|---|

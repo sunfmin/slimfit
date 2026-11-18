@@ -27,11 +27,15 @@ pub struct CheckConfig {
     /// Lines by which `uncovered_lines` may move either way and still count
     /// as unchanged: coverage that depends on timing flaps (docs/adr/0001).
     pub coverage_slack: u64,
+    /// The branch changes land on: a change's lines are those added since
+    /// HEAD's merge base with it (`landing::DEFAULT_TARGET` when unset).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl Default for CheckConfig {
     fn default() -> Self {
-        Self { time_tolerance: 0.2, time_slack: 1.0, coverage_slack: 1 }
+        Self { time_tolerance: 0.2, time_slack: 1.0, coverage_slack: 1, target: None }
     }
 }
 
