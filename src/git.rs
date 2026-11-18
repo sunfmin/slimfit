@@ -25,12 +25,8 @@ pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
     Ok(s.trim().into())
 }
 
-/// Tracked files plus untracked ones git does not ignore, relative to `repo`.
-pub fn files(repo: &Path) -> Result<Vec<String>> {
-    Ok(listing(repo)?.into_iter().map(|(_, f)| f).collect())
-}
-
-/// `files`, each with whether git tracks it.
+/// Tracked files plus untracked ones git does not ignore, relative to
+/// `repo`, each with whether git tracks it.
 fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
     let s = run(repo, &["ls-files", "-co", "-t", "--exclude-standard", "-z"])?;
     s.split('\0')
@@ -72,12 +68,13 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
     for f in &changed {
         f.hash(&mut h);
         let p = repo.join(f);
-        let meta = std::fs::symlink_metadata(&p).ok();
-        meta.as_ref().map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions())).hash(&mut h);
-        match meta {
-            Some(m) if m.is_symlink() => std::fs::read_link(&p).ok().hash(&mut h),
-            _ => std::fs::read(&p).ok().hash(&mut h),
-        }
+        // A symlink by its target, as git records it; the rest by contents and mode.
+        std::fs::read_link(&p).ok().hash(&mut h);
+        std::fs::read(&p).ok().hash(&mut h);
+        std::fs::symlink_metadata(&p)
+            .ok()
+            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+            .hash(&mut h);
     }
     let key = format!("{}+{:016x}", head.as_deref().unwrap_or("unborn"), h.finish());
     let snapshot = head.map(|commit| Snapshot { commit, dirty: changed.into_iter().collect() });
