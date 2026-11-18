@@ -17,8 +17,9 @@ pub struct Git<'a> {
 /// (`SLIMFIT_RELEASE`), as is; otherwise the development form
 /// `1.2.3+<commits>.g<commit>[.dirty]`, from the nearest version tag, or
 /// without one from `cargo_version` (Cargo.toml's) and the commit count; only
-/// outside a repository, `cargo_version` alone. Inside any clone the stamp
-/// depends only on the commit, not on which tags the clone fetched.
+/// outside a repository, `cargo_version` alone. A clone without tags still
+/// stamps the development form, though its count (all commits) differs from
+/// a tagged clone's (commits since the tag).
 pub fn stamp(release: Option<&str>, git: &Git, cargo_version: &str) -> String {
     if let Some(release) = release {
         return release.to_string();
