@@ -4,16 +4,19 @@
 # tip, then factorium tags what it left at HEAD and `brew upgrade`s the
 # formula.
 #
-#   release.sh cut <vX.Y.Z>   set the version and commit it, build for Apple
-#                             Silicon, check `slimfit --version`, package,
+#   release.sh cut <vX.Y.Z>   build for Apple Silicon with the tag's version
+#                             stamped (build.rs, SLIMFIT_RELEASE; Cargo.toml
+#                             is not edited and nothing is committed), check
+#                             `slimfit --version` equals the tag, package,
 #                             and publish: the archive to the tap's release
 #                             slimfit-v<X.Y.Z>, the formula to the tap's
 #                             Formula/slimfit.rb
 #   release.sh check-tag <vX.Y.Z>  exit 0 if cut would take the version, 2 if not
-#   release.sh dry            what the gate runs: package the binary the gate
-#                             built (target/release/slimfit) at Cargo.toml's
-#                             version, check it and the formula, publish
-#                             nothing, commit nothing
+#   release.sh dry            what the gate runs: check the binary the gate
+#                             built (target/release/slimfit) says the
+#                             development form X.Y.Z+<commits>.g<commit>[.dirty],
+#                             package it at that version, check the formula,
+#                             publish nothing
 #
 # The archive is downloaded from the tap (sunfmin/homebrew-tap), as every
 # formula there is. DIST names another directory than dist/.
@@ -30,10 +33,6 @@ DIST=${DIST:-dist}
 usage() {
     echo "usage: release.sh cut <vX.Y.Z> | dry | check-tag <vX.Y.Z>" >&2
     exit 2
-}
-
-cargo_version() {
-    cargo pkgid -p slimfit | sed 's/.*[#@]//'
 }
 
 # check_binary <path> <version>: the binary says the version being cut.
@@ -94,9 +93,17 @@ check-tag)
     ;;
 dry)
     [ $# -eq 1 ] || usage
-    version=$(cargo_version)
     built=target/release/slimfit
-    check_binary "$built" "$version"
+    version=$("$built" --version | sed 's/^slimfit //')
+    case "$version" in
+    *[!0-9a-z.+]* | *+*+*) dev=no ;;
+    [0-9]*.[0-9]*.[0-9]*+[0-9]*.g[0-9a-f]*) dev=yes ;;
+    *) dev=no ;;
+    esac
+    [ "$dev" = yes ] || {
+        echo "release: $built --version says '$version', not X.Y.Z+<commits>.g<commit>[.dirty]" >&2
+        exit 1
+    }
     package "$built" "$version"
     echo "release: dry ok (slimfit $version, $DIST/$archive)"
     exit 0
@@ -107,20 +114,8 @@ esac
 check_tag "$2"
 version=${2#v}
 
-# The version, in Cargo.toml and Cargo.lock, committed: the tag goes on it.
-sed -i.bak "s/^version = \".*\"\$/version = \"$version\"/" Cargo.toml
-rm Cargo.toml.bak
-cargo update --quiet --workspace
-said=$(cargo_version)
-[ "$said" = "$version" ] || {
-    echo "release: Cargo.toml says $said, not $version" >&2
-    exit 1
-}
-if ! git diff --quiet; then
-    git commit --quiet -am "slimfit $version"
-fi
-
-cargo build --release --locked -p slimfit --target "$TARGET"
+# The tag's version, stamped by build.rs: the tag goes on HEAD as it is.
+SLIMFIT_RELEASE=$version cargo build --release --locked -p slimfit --target "$TARGET"
 built=target/$TARGET/release/slimfit
 check_binary "$built" "$version"
 package "$built" "$version"
