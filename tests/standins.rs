@@ -20,8 +20,8 @@ struct Lang {
     name: &'static str,
     test_tools: &'static [&'static str],
     test_steps: &'static [&'static str],
-    /// Steps after the test run that read each test's own profile: their
-    /// report is optional (without it every mutant runs every test).
+    /// Steps after the test run that read each test's own profile, sorted:
+    /// their report is optional (without it every mutant runs every test).
     reach_steps: &'static [&'static str],
     mutants_tool: &'static str,
     mutants_step: &'static str,
@@ -32,7 +32,16 @@ const RUST: Lang = Lang {
     name: "rust",
     test_tools: &["cargo"],
     test_steps: &["cargo llvm-cov"],
-    reach_steps: &["llvm-profdata show"; 4],
+    reach_steps: &[
+        "llvm-cov export",
+        "llvm-cov export",
+        "llvm-cov export",
+        "llvm-cov export",
+        "llvm-profdata merge",
+        "llvm-profdata merge",
+        "llvm-profdata merge",
+        "llvm-profdata merge",
+    ],
     mutants_tool: "cargo",
     mutants_step: "cargo mutants",
     source: "src/lib.rs",
@@ -76,8 +85,8 @@ const SWIFT: Lang = Lang {
 
 /// The tools the stand-in binary answers to, and what slimfit and the
 /// presets' shell lines need from the host.
-const STANDINS: &[&str] = &["cargo", "llvm-profdata", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
-const HOST: &[&str] = &["sh", "git", "find", "head", "basename", "mv", "cat"];
+const STANDINS: &[&str] = &["cargo", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
+const HOST: &[&str] = &["sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf"];
 
 struct Sample {
     _tmp: tempfile::TempDir,
@@ -184,8 +193,8 @@ impl Sample {
             .env("PATH", &self.bin)
             // cargo's own bin directory, where doctor looks for its subcommands: empty.
             .env("CARGO_HOME", self.bin.with_file_name("cargo-home"))
-            // Where the Rust preset finds llvm-profdata, as cargo llvm-cov does.
-            .env("LLVM_PROFDATA", self.bin.join("llvm-profdata"))
+            // Where the Rust preset finds llvm-profdata and llvm-cov, as cargo llvm-cov does.
+            .env("LLVM_TOOLS", &self.bin)
             .env(state::ENV, &self.state)
             .output()
             .unwrap();
@@ -343,7 +352,10 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
         s.take();
     }
     let init = s.ok(&["init"]);
-    assert_eq!(s.steps(), [lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
+    // The test run's steps in order; its tests' profiles are read in parallel, in any order.
+    let mut steps = s.steps();
+    steps[lang.test_steps.len()..].sort();
+    assert_eq!(steps, [lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
         // What the dry run said it would write, but for `test_seconds` (the
@@ -483,6 +495,24 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     };
 
     run("next", &[], 0);
+    // Redundant tests are proposed from each test's lines: `slow` runs only
+    // what `adds` runs. Kept, with a reason, it is not proposed again.
+    let proposed = |next: &Value| -> Vec<String> {
+        let tasks = next["tasks"].as_array().unwrap().iter();
+        tasks.map(|t| t["evidence"]["test"].as_str().unwrap().to_string()).collect()
+    };
+    let before = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
+    assert!(before.contains(&"calc::tests::slow".to_string()), "{before:?}");
+    s.error(&["keep", "calc::tests::slow"], &["keep without --reason"]);
+    s.error(
+        &["keep", "calc::tests::gone", "--reason", "r"],
+        &["no suite's test run recorded a test calc::tests::gone"],
+    );
+    let kept = run("keep", &["calc::tests::slow", "--reason", "it checks the sleep"], 0);
+    assert_eq!(kept["kept"][0]["test"], "calc::tests::slow", "{kept:#}");
+    let after = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
+    assert_eq!(after, before.into_iter().filter(|t| t != "calc::tests::slow").collect::<Vec<_>>());
+    assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
     assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
     run("report", &["--points", "1"], 0);
@@ -552,8 +582,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
         })
         .collect();
     // In the order the tests ran, as the reach report lists them.
-    let adds = "(binary_id(=calc) & test(=tests::slow)) | (binary_id(=calc) & test(=tests::adds)) | \
-                (binary_id(=calc) & test(=tests::adds_again))";
+    let adds = "(binary_id(=calc) & test(=tests::adds_again)) | (binary_id(=calc) & test(=tests::adds)) | \
+                (binary_id(=calc) & test(=tests::slow))";
     let adult = "(binary_id(=calc) & test(=tests::adult))";
     assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
@@ -561,6 +591,9 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
     run("report", &["--points", "1"], 0);
+    // A second `fn slow` its path cannot tell apart: no text to keep it by.
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "fn slow() {}\n").unwrap();
+    s.error(&["keep", "calc::tests::slow", "--reason", "r"], &["calc::tests::slow's own function was not found"]);
 }
 
 /// slimfit run as `cargo-nextest` outside a mutants run (no plan, no real
@@ -635,6 +668,7 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
             "check" => &["fix", "improved", "mutated", "change", "unviable"],
             "ratchet" => &["from", "reason", "mutants_at", "tree"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
+            "keep" => &["kept", "test", "hash", "reason"],
             _ => &["history", "commit", "from"],
         };
         for k in reached {
@@ -644,7 +678,7 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
             missing.push(format!("{cmd}: {k}"));
         }
     }
-    assert_eq!(by_cmd.len(), 6, "{:?}", by_cmd.keys());
+    assert_eq!(by_cmd.len(), 7, "{:?}", by_cmd.keys());
     assert!(missing.is_empty(), "printed but not named on the command's page:\n{}", missing.join("\n"));
 }
 

@@ -98,14 +98,27 @@ review decides.
 3. **Accept**: plain `slimfit check`: no new uncovered line, failures 0,
    test time not up (and for a merge, down). No mutant runs.
 
-**Not built here.** No preset's test run records lines per test yet:
-`reach.lines` is always absent, `next` says so in `notes`, and no
-redundant-test task is given until it is. Recording it is slimfit#32's: ADR
-0007 records, for Rust, a coverage profile per test and which functions
-each ran (`reach`), the one per-test record that lines extend; recording it as is recording a **keep**
-verdict against the test's content hash so the test is not proposed again
-until it changes: the hash needs the test's own text located, which the
-per-test run gives. Until both exist, a kept test would be proposed again.
+**Built (slimfit#32), for Rust.** The Rust preset's test run already gives
+every test its own coverage profiles (ADR 0007). After the run each test's
+profiles are merged (`llvm-profdata merge`) and exported as LCOV
+(`llvm-cov export -format=lcov`, with the test's binary and the build's
+binaries as objects, so a binary the test starts counts), as many tests at
+once as there are cores; only the records that ran are kept. That one
+record gives the functions each test ran (`reach.functions`, ADR 0007) and
+its source lines, test code left out (`reach.lines`), in the same coverage
+run: no second test run. Other presets record nothing per test: `next`
+says so in `notes`, and their suites get no redundant-test task.
+
+**Keep** is recorded with `slimfit keep <test> --reason "<why>"`, which the
+task's steps name. `.slimfit/baseline.json`'s `kept` holds the suite, the
+test, the reason and an FNV-1a hash of the test's text, from its `fn` line
+to the brace rustfmt closes it with. The test is found by its function's
+name in the suite's Rust files (of several, the one whose path names its
+modules). The coverage report cannot say where, because cargo llvm-cov
+leaves integration tests out of it. A candidate whose kept hash matches its
+text now is not proposed; any edit inside it brings it back. `ratchet`
+drops a verdict whose test changed or is gone. A test that is not found
+cannot be kept: `keep` refuses, and the steps leave delete or merge.
 
 ## Consequences
 
@@ -140,8 +153,33 @@ about 1s, a caught one an incremental build (7s) and its test run (18s and
 200s here; the second mutant made a test run long before it failed). The
 whole workspace has about 1960 mutants (factorium#93).
 
-How many of factorium's tests the line-level rule proposes cannot be counted
-here: no preset records coverage per test yet. By function coverage the
-control session's experiment found 86 of 207; the line rule is narrower, so
-at most that many are subset candidates, plus the overlap pairs. Either way
-the review step decides.
+### Per-test lines (slimfit#32)
+
+factorium aecedfe: a clone with its build warm, 234 tests. Each run was
+made under factorium's `worker exclusive`, one after the other, on
+2026-11-19, with a 1-minute load of 6-14 on a shared 18-core host. Wall
+time of the Rust preset's test command (build, tests, coverage report and
+the per-test record):
+
+| test command | round 1 | round 2 |
+|---|---|---|
+| no per-test record (`cargo llvm-cov nextest`, no runner) | 20.9s | 20.9s |
+| ADR 0007 as first built: `llvm-profdata show` per profile, one at a time (functions only) | 24.9s | 25.0s |
+| this ADR: `llvm-profdata merge` + `llvm-cov export` per test, one per core (functions and lines) | 22.5s | 22.4s |
+
+So the per-test record costs about 1.5s over the plain run, less than the
+functions-only record it replaces. `slimfit next --fresh` measured 23.0s
+(`command_seconds`). The measurement grew to 7.7 MB (`reach.lines`), and
+`reach.txt` is 16 MB. The function of each of the 234 tests was found,
+for `keep`.
+
+`slimfit next --all --kind redundant-test` counts **180** candidates (179
+in an earlier run of the same tree: coverage that depends on timing). They
+come from the 230 tests that run a source line: 44 subset candidates (by
+function coverage, the control session found 86) and 136 by overlap alone.
+factorium's scenarios all run the daemon's tick and their world's setup,
+so most pairs share more than `MERGE_OVERLAP` of their lines. At 0.9 there
+would be 102 overlap candidates, at 0.95 there would be 68. Each is still
+decided by its assertions. Keeping one test with `slimfit keep` (0.04s,
+from the cached measurement) left the count at 179, and the test was
+proposed again once a line inside it changed.

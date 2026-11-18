@@ -4,7 +4,7 @@
 
 use crate::config::CheckConfig;
 use crate::fault::{Fault, Faults, fault};
-use crate::model::{Measurement, Metrics, Snapshot, SuiteMeasurement};
+use crate::model::{Measurement, Metrics, ReachTest, Snapshot, SuiteMeasurement};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,7 +23,30 @@ pub struct Baseline {
     /// slimfit runs no mutant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutants_at: Option<Snapshot>,
+    /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
+    /// each against its test's text: not proposed again until it changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<Kept>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Kept {
+    pub suite: String,
+    pub test: String,
+    /// The hash of the test's text when it was kept (`TestSource::hash`).
+    pub hash: String,
+    pub reason: String,
+}
+
+impl Kept {
+    /// Whether this verdict still holds for test `test` of `suite` as it is now.
+    pub fn holds(&self, suite: &str, test: &ReachTest) -> bool {
+        self.suite == suite && self.test == test.id() && test.source.as_ref().is_some_and(|s| s.hash == self.hash)
+    }
+}
+
+/// What a [`Kept`] prints, as the command pages name it.
+pub const KEPT_HELP: &str = "each with `suite`, `test`, `hash` (of the test's text when kept) and `reason`";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Loosening {
@@ -275,7 +298,18 @@ pub fn ratchet(
         return Err(Faults(faults).into());
     }
     let mutants_at = if m.with_mutants { m.snapshot.clone() } else { base.mutants_at.clone() };
-    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at };
+    // A keep verdict whose test changed, or is gone, holds no more.
+    let kept = base
+        .kept
+        .iter()
+        .filter(|k| {
+            let Some(s) = m.suites.iter().find(|s| s.suite == k.suite) else { return true };
+            let Some(reach) = &s.reach else { return true };
+            reach.tests.iter().any(|t| k.holds(&s.suite, t))
+        })
+        .cloned()
+        .collect();
+    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at, kept };
     for s in &m.suites {
         let mut metrics = s.metrics.clone();
         if loosen.contains(&Bound::SurvivedMutants)
@@ -372,7 +406,7 @@ mod t {
     }
 
     fn base(metrics: Metrics) -> Baseline {
-        Baseline { suites: [("s".to_string(), metrics)].into(), loosened: vec![], mutants_at: None }
+        Baseline { suites: [("s".to_string(), metrics)].into(), ..Baseline::default() }
     }
 
     fn m(uncovered: u64, secs: f64) -> Metrics {

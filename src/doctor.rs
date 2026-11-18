@@ -397,8 +397,8 @@ mod tests {
     fn with_mutants_at(at: Option<&str>) -> String {
         let b = Baseline {
             suites: [("rust".to_string(), Metrics::default())].into(),
-            loosened: vec![],
             mutants_at: at.map(|c| Snapshot { commit: c.into(), tree: None }),
+            ..Baseline::default()
         };
         serde_json::to_string(&b).unwrap()
     }

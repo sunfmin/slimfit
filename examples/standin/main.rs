@@ -1,6 +1,6 @@
 //! Stand-ins for the tools slimfit drives, for slimfit's own tests: one
 //! binary, linked under each tool's name (`cargo`, `cargo-nextest`,
-//! `llvm-profdata`, `go`, `gremlins`, `swift`, `xcrun`, `muter`, `npx`,
+//! `llvm-profdata`, `llvm-cov`, `go`, `gremlins`, `swift`, `xcrun`, `muter`, `npx`,
 //! `gradlew`) into a directory placed
 //! first on PATH. It reads the arguments as the real tool does, refuses
 //! (exit 64, no report) what the real tool would not take, and writes the
@@ -36,6 +36,11 @@ fn main() {
     let tool = Path::new(&args[0]).file_name().unwrap().to_string_lossy().into_owned();
     let args = &args[1..];
     let path = PathBuf::from(std::env::var(ENV).unwrap_or_else(|_| die(&tool, &format!("{ENV} is not set"))));
+    // Stand-ins run at once (the Rust preset reads each test's profile in
+    // parallel): each records its call under the state's lock.
+    let lock = std::fs::File::create(path.with_extension("lock")).unwrap();
+    // SAFETY: flock on a file this process holds open.
+    assert_eq!(unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX) }, 0);
     let mut state = State::load(&path);
     let dir = std::env::current_dir().unwrap();
     let sub = args.iter().find(|a| !a.starts_with('-')).cloned().unwrap_or_default();
@@ -46,11 +51,13 @@ fn main() {
     };
     state.calls.push(Call { step: step.clone(), args: args.to_vec(), dir: dir.clone() });
     state.save(&path);
+    drop(lock);
     let fault = state.faults.get(&step).copied().unwrap_or_default();
 
     let work = match tool.as_str() {
         "cargo" => cargo(&sub, args, &dir, &state.reports),
-        "llvm-profdata" => llvm_profdata(&sub, args, &state.reports),
+        "llvm-profdata" => llvm_profdata(&sub, args),
+        "llvm-cov" => llvm_cov(&sub, args, &state.reports),
         "cargo-nextest" => nextest(args),
         "go" => go(&sub, args),
         "gremlins" => gremlins(&sub, args),
@@ -280,7 +287,7 @@ fn runner(config: &str) -> Result<Vec<String>, Refusal> {
 /// nextest's run, as the runner sees it: each test of the real reach
 /// report, run through `runner` with the variables nextest sets, as a
 /// process that writes a profile where `LLVM_PROFILE_FILE` says (holding
-/// its test, which the `llvm-profdata` stand-in reads back).
+/// its test, which the `llvm-cov` stand-in reads back).
 fn run_tests(runner: &[String], reports: &Path, dir: &Path) {
     let target = dir.join("target/llvm-cov-target");
     std::fs::create_dir_all(&target).unwrap();
@@ -301,17 +308,33 @@ fn run_tests(runner: &[String], reports: &Path, dir: &Path) {
     }
 }
 
-/// `llvm-profdata show --all-functions --counts <profile>`: of a profile
-/// `run_tests` wrote, the real report's section for its test.
-fn llvm_profdata(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal> {
-    sub_is(sub, "show")?;
-    has(args, "--all-functions")?;
-    has(args, "--counts")?;
-    let profile = args.last().filter(|a| !a.starts_with('-')).ok_or("no profile")?;
+/// `llvm-profdata merge -sparse <profile>... -o <out>`: the profiles
+/// `run_tests` wrote each hold their test; the merged one holds it too.
+fn llvm_profdata(sub: &str, args: &[String]) -> Result<Work, Refusal> {
+    sub_is(sub, "merge")?;
+    has(args, "-sparse")?;
+    let out = need(args, "-o")?;
+    let profile = args.iter().skip_while(|a| *a != "-sparse").nth(1).ok_or("no profile")?;
+    std::fs::copy(profile, out).map_err(|e| format!("{profile}: {e}"))?;
+    Ok(Work::default())
+}
+
+/// `llvm-cov export -format=lcov -instr-profile=<profile> -object <binary>...`:
+/// of a merged profile, the real report's section for its test.
+fn llvm_cov(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal> {
+    sub_is(sub, "export")?;
+    has(args, "-format=lcov")?;
+    has(args, "-object")?;
+    let profile = args.iter().find_map(|a| a.strip_prefix("-instr-profile=")).ok_or("no -instr-profile")?;
     let test = std::fs::read_to_string(profile).map_err(|e| format!("{profile}: {e}"))?;
     let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
-    let section = reach.split("test ").find_map(|s| s.strip_prefix(&format!("{test}\n"))).ok_or("no such test")?;
-    print!("{section}");
+    let section: Vec<&str> = reach
+        .lines()
+        .skip_while(|l| l.strip_prefix("test ") != Some(test.as_str()))
+        .skip(1)
+        .take_while(|l| !l.starts_with("test "))
+        .collect();
+    print!("{}", section.iter().map(|l| format!("{}\n", l.replace("/REPO", "."))).collect::<String>());
     Ok(Work::default())
 }
 
