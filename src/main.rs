@@ -49,7 +49,9 @@ WHAT `slimfit check` HOLDS (against .slimfit/baseline.json)
   failures          0
   test_seconds      ≤ baseline × (1 + time_tolerance) + time_slack
                     (sum of the tests' own durations; build time excluded)
-  uncovered_lines   ≤ baseline: code may grow, untested code may not
+  uncovered_lines   ≤ baseline + coverage_slack: code may grow, untested code
+                    may not. A drop counts as a gain only past the slack, so
+                    a line whose coverage flaps by timing never fails the gate
   survived_mutants  ≤ baseline, checked with --mutants: deleting a test can
                     never lower what the suite catches
   Line counts are recorded and reported, not bounded.

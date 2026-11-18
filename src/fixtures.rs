@@ -4,11 +4,12 @@
 //! `is_adult` whose boundary mutant survives, a redundant copy of the `add`
 //! test, and a slow test.
 
-use crate::config::{Preset, preset};
+use crate::config::{CheckConfig, Preset, preset};
 use crate::formats::{self, CoverageFormat, MutantsFormat, TestsFormat};
 use crate::loc::Classifier;
 use crate::measure::{Resolver, reduce};
-use crate::model::{MutantStatus, SuiteMeasurement};
+use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
+use crate::ratchet::{Baseline, check, ratchet};
 use crate::tasks::{TaskKind, of_measurement};
 use std::path::{Path, PathBuf};
 
@@ -41,6 +42,16 @@ fn measure(
     coverage: (CoverageFormat, &[&str]),
     mutants: (MutantsFormat, &[&str]),
 ) -> SuiteMeasurement {
+    measure_with_coverage(lang, p, tests, (coverage.0, read(lang, coverage.1)), mutants)
+}
+
+fn measure_with_coverage(
+    lang: &str,
+    p: Preset,
+    tests: (TestsFormat, &[&str]),
+    coverage: (CoverageFormat, Vec<String>),
+    mutants: (MutantsFormat, &[&str]),
+) -> SuiteMeasurement {
     let dir = sample(lang);
     let mut files = Vec::new();
     files_under(&dir, &dir, &mut files);
@@ -49,7 +60,7 @@ fn measure(
     let totals = Classifier::new(&suite).unwrap().count(&files, |f| std::fs::read_to_string(dir.join(f)).ok());
     let resolver = Resolver::new(Path::new("/REPO"), &totals);
     let t = formats::read_tests(tests.0, &read(lang, tests.1)).unwrap();
-    let c = formats::read_coverage(coverage.0, &read(lang, coverage.1)).unwrap();
+    let c = formats::read_coverage(coverage.0, &coverage.1).unwrap();
     let mut m = formats::read_mutants(mutants.0, &read(lang, mutants.1)).unwrap();
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
@@ -92,6 +103,41 @@ fn rust_sample() {
     // the inline test module is test code, not uncovered prod code
     assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
     assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
+}
+
+/// Coverage that depends on timing reaches a line in one run and misses it
+/// in the next, with no code changed. Neither run may fail `check` against
+/// a baseline taken from the other, nor be offered to `ratchet` as a gain.
+#[test]
+fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
+    let run = |lcov: String| Measurement {
+        tree: "t".into(),
+        with_mutants: false,
+        suites: vec![measure_with_coverage(
+            "rust",
+            Preset::Rust,
+            (TestsFormat::Junit, &["junit.xml"]),
+            (CoverageFormat::Lcov, vec![lcov]),
+            (MutantsFormat::CargoMutants, &[]),
+        )],
+    };
+    let real = read("rust", &["lcov.info"]).remove(0);
+    let reached = run(real.clone());
+    let missed = run(real.replacen("DA:12,1", "DA:12,0", 1));
+    let uncovered = |m: &Measurement| m.suites[0].metrics.uncovered_lines;
+    assert_eq!(uncovered(&missed), uncovered(&reached) + 1);
+
+    let cfg = CheckConfig::default();
+    for (first, second) in [(&reached, &missed), (&missed, &reached)] {
+        let mut base = Baseline::default();
+        base = ratchet(&base, first, &cfg, &[], None).unwrap();
+        for m in [second, first, second] {
+            let v = check(&base, m, &cfg);
+            assert!(v.ok && v.improved.is_empty(), "{v:?}");
+            base = ratchet(&base, m, &cfg, &[], None).unwrap();
+            assert_eq!(base.suites["rust"].uncovered_lines, uncovered(first));
+        }
+    }
 }
 
 #[test]
