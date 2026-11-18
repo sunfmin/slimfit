@@ -234,9 +234,8 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
     assert_eq!(code, 0, "{}: {next:#}\n{stderr}", lang.name);
     assert!(stderr.contains(&format!("mutants command exited exit status: {exit}")), "{}: {stderr}", lang.name);
     s.fault(lang.mutants_step, None);
-    let mut want: Vec<&str> = lang.test_steps.to_vec();
-    want.push(lang.mutants_step);
-    assert_eq!(s.steps(), want, "{}", lang.name);
+    // The tree's tests were measured by `init`: only the mutants run.
+    assert_eq!(s.steps(), [lang.mutants_step], "{}", lang.name);
     let tasks = next["tasks"].as_array().unwrap();
     let of = |k: &'static str| tasks.iter().filter(move |t| t["kind"] == k);
     assert!(of("uncovered").any(|t| t["files"][0] == lang.source), "{}: {next:#}", lang.name);

@@ -37,23 +37,27 @@ pub struct Options {
 
 /// The measurement of the tree as it is now: from the cache when it was
 /// taken of this exact tree (with as many mutants as are wanted, from the
-/// same `mutants_at`). `base` is the baseline whose `mutants_at` the
+/// same `mutants_at`). A cached measurement of the tree that lacks those
+/// mutants keeps its test run: only the mutation tool runs. `base` is the baseline whose `mutants_at` the
 /// change is taken from.
 pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Result<Measurement> {
     let wt = git::worktree(repo)?;
     let tree = wt.key.clone();
     let cache = repo.join(OUT).join("measurement.json");
     let with_mutants = opts.mutants != Mutants::None;
-    if !opts.fresh
-        && let Ok(text) = std::fs::read_to_string(&cache)
-        && let Ok(m) = serde_json::from_str::<Measurement>(&text)
-        && m.tree == tree
-        && (!with_mutants || (m.with_mutants && m.since == base.mutants_at))
-        && (opts.mutants != Mutants::All || m.suites.iter().all(|s| s.mutated.as_ref().is_some_and(|x| x.all)))
-        && m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name))
-    {
-        return Ok(m);
+    // The cached measurement of this tree, when not asked to measure afresh.
+    let tested = std::fs::read_to_string(&cache)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Measurement>(&text).ok())
+        .filter(|m| !opts.fresh && m.tree == tree)
+        .filter(|m| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name)));
+    if let Some(m) = tested.as_ref().filter(|m| {
+        (!with_mutants || (m.with_mutants && m.since == base.mutants_at))
+            && (opts.mutants != Mutants::All || m.suites.iter().all(|s| s.mutated.as_ref().is_some_and(|x| x.all)))
+    }) {
+        return Ok(m.clone());
     }
+    let mut tested = tested.map(|m| m.suites.into_iter()).into_iter().flatten();
     let change = if with_mutants { Some(Change::since(repo, &wt, base.mutants_at.as_ref())?) } else { None };
     let mut suites = Vec::new();
     for s in &cfg.suites {
@@ -69,7 +73,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
             }
         );
         let mutants = change.as_ref().map(|c| (c, opts.mutants == Mutants::All));
-        let r = measure_suite(repo, &wt.files, &suite, mutants);
+        let r = measure_suite(repo, &wt.files, &suite, mutants, tested.next());
         suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
     }
     // Every suite is measured, so one that fails does not hide another's faults.
@@ -204,15 +208,22 @@ fn measure_suite(
     files: &[String],
     suite: &Suite,
     mutants: Option<(&Change, bool)>,
+    tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
     let out = repo.join(OUT).join(&suite.name);
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::create_dir_all(&out)?;
-
     let classifier = Classifier::new(suite)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
+    // The tests of this tree already ran: only the mutants are new.
+    if let (Some(mut s), Some((change, all))) = (tested, mutants) {
+        std::fs::create_dir_all(&out)?;
+        let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change, all)?;
+        (s.mutants, s.mutation_tests, s.mutated) = (m.run.mutants, m.run.tests, Some(m.mutated));
+        return Ok(s);
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out)?;
 
     // Reports left by an earlier run would be read as this run's.
     for old in report_paths(&root, &out, &suite.tests_report)?.into_iter().chain(report_paths(
