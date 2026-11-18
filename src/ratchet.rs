@@ -39,9 +39,17 @@ pub struct Loosening {
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
 pub enum Bound {
+    /// Failing tests; never loosened.
+    #[value(verbatim_doc_comment)]
     Failures,
+    /// The sum of the tests' own durations.
+    #[value(verbatim_doc_comment)]
     TestSeconds,
+    /// Lines no test runs.
+    #[value(verbatim_doc_comment)]
     UncoveredLines,
+    /// Mutants no test kills.
+    #[value(verbatim_doc_comment)]
     SurvivedMutants,
 }
 

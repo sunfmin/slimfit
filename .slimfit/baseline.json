@@ -1,13 +1,13 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 3273,
-      "test_lines": 1094,
-      "tests": 46,
+      "prod_lines": 3100,
+      "test_lines": 1543,
+      "tests": 45,
       "failures": 0,
-      "test_seconds": 1.899,
-      "covered_lines": 1695,
-      "uncovered_lines": 188,
+      "test_seconds": 7.5,
+      "covered_lines": 1570,
+      "uncovered_lines": 176,
       "mutants": {
         "killed": 466,
         "survived": 138,
@@ -106,6 +106,13 @@
       "from": 1.508,
       "to": 1.899,
       "reason": "slimfit#16: 1.508 was under what the gate measures on a quiet host: 2.7-3.0, the CPU-hog test's `yes` processes slowing the tests beside it by more than the load probe corrects. With the hog test run alone, the gate's own measure is 1.870-1.907 quiet (5 runs, median 1.900). Corrects a mis-measured baseline; time_slack unchanged."
+    },
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 1.899,
+      "to": 7.5,
+      "reason": "slimfit#22: the stand-in tests run the real binary through every preset's tools, faults included (5 tests, ~0.4s each alone, ~1s each in parallel on a loaded host); they replace the real-toolchain Rust e2e the slow gate ran (33s, 268s with mutants)"
     }
   ],
   "mutants_at": {
