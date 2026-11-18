@@ -1,17 +1,17 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 2781,
-      "test_lines": 772,
-      "tests": 32,
+      "prod_lines": 2839,
+      "test_lines": 867,
+      "tests": 36,
       "failures": 0,
       "test_seconds": 1.508,
-      "covered_lines": 1257,
-      "uncovered_lines": 341,
+      "covered_lines": 1273,
+      "uncovered_lines": 332,
       "mutants": {
-        "killed": 417,
-        "survived": 147,
-        "unviable": 44
+        "killed": 426,
+        "survived": 142,
+        "unviable": 45
       },
       "mutant_files": {
         "src/config.rs": {
@@ -55,8 +55,8 @@
           "unviable": 1
         },
         "src/main.rs": {
-          "killed": 4,
-          "survived": 21,
+          "killed": 6,
+          "survived": 19,
           "unviable": 1
         },
         "src/measure.rs": {
@@ -65,14 +65,14 @@
           "unviable": 13
         },
         "src/model.rs": {
-          "killed": 15,
-          "survived": 3,
+          "killed": 18,
+          "survived": 0,
           "unviable": 0
         },
         "src/ratchet.rs": {
-          "killed": 59,
+          "killed": 63,
           "survived": 11,
-          "unviable": 5
+          "unviable": 6
         },
         "src/report.rs": {
           "killed": 0,
@@ -97,6 +97,6 @@
     }
   ],
   "mutants_at": {
-    "commit": "775196f0d6da08ffc1a3eb353162b9eb30e882a8"
+    "commit": "e5cf2d260ae3e2ea560159b63d36c9cefbc18f01"
   }
 }
