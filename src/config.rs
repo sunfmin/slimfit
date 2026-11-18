@@ -2,6 +2,7 @@
 //! A suite names a preset; any field the preset sets can be overridden.
 
 use crate::formats::{CoverageFormat, MutantsFormat, TestsFormat};
+use crate::tools::*;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -186,16 +187,17 @@ pub fn preset(p: Preset) -> Suite {
     match p {
         Preset::Rust => Suite {
             inline_tests: true,
-            test_command: "printf '[profile.default.junit]\\npath = \"junit.xml\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
-                cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
-                .into(),
-            tests_report: report(TestsFormat::Junit, "target/nextest/default/junit.xml"),
+            test_command: format!(
+                "printf '[profile.default.junit]\\npath = \"{NEXTEST_JUNIT}\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
+                 cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
+            ),
+            tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
             // nextest without fail-fast runs every test on every mutant, so each
             // mutant's log names all its killers (docs/adr/0004).
             mutants_command: "cargo mutants --workspace --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
                 --output \"$SLIMFIT_OUT\""
                 .into(),
-            mutants_report: report(MutantsFormat::CargoMutants, "$SLIMFIT_OUT/mutants.out/outcomes.json"),
+            mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
             mutants_file_flag: "--file".into(),
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
@@ -210,11 +212,12 @@ pub fn preset(p: Preset) -> Suite {
         Preset::Swift => Suite {
             // XCTest writes xunit only with --parallel; one worker keeps per-test times.
             // .build/debug is a symlink, so find needs the trailing slash.
-            test_command: "swift test --parallel --num-workers 1 --enable-code-coverage --xunit-output \"$SLIMFIT_OUT/xunit.xml\"; rc=$?; \
-                bin=$(find .build/debug/ -maxdepth 1 -name '*.xctest' | head -1); \
-                xcrun llvm-cov export -format=lcov -instr-profile=.build/debug/codecov/default.profdata \
-                \"$bin/Contents/MacOS/$(basename \"$bin\" .xctest)\" > \"$SLIMFIT_OUT/lcov.info\"; exit $rc"
-                .into(),
+            test_command: format!(
+                "swift test --parallel --num-workers 1 --enable-code-coverage --xunit-output \"$SLIMFIT_OUT/xunit.xml\"; rc=$?; \
+                 bin=$(find {SWIFT_DEBUG}/ -maxdepth 1 -name '*.xctest' | head -1); \
+                 xcrun llvm-cov export -format=lcov -instr-profile={SWIFT_PROFDATA} \
+                 \"$bin/Contents/MacOS/$(basename \"$bin\" .xctest)\" > \"$SLIMFIT_OUT/lcov.info\"; exit $rc"
+            ),
             tests_report: report(TestsFormat::Junit, "$SLIMFIT_OUT/xunit*.xml"),
             mutants_command: "[ -f muter.conf.yml ] || muter init; muter run --skip-update-check --format json --output \"$SLIMFIT_OUT/muter.json\"".into(),
             mutants_report: report(MutantsFormat::Muter, "$SLIMFIT_OUT/muter.json"),
@@ -222,10 +225,10 @@ pub fn preset(p: Preset) -> Suite {
         },
         Preset::Kotlin => Suite {
             test_command: "./gradlew --quiet test koverXmlReport --continue".into(),
-            tests_report: report(TestsFormat::Junit, "**/build/test-results/test/*.xml"),
-            coverage_report: report(CoverageFormat::Jacoco, "**/build/reports/kover/report.xml"),
+            tests_report: report(TestsFormat::Junit, &format!("**/{GRADLE_TEST_RESULTS}/*.xml")),
+            coverage_report: report(CoverageFormat::Jacoco, &format!("**/{KOVER_XML}")),
             mutants_command: "./gradlew --quiet pitest".into(),
-            mutants_report: report(MutantsFormat::Pitest, "**/build/reports/pitest/mutations.xml"),
+            mutants_report: report(MutantsFormat::Pitest, &format!("**/{PITEST_XML}")),
             ..base(&["**/src/main/**/*.kt", "**/src/main/**/*.java"], &["**/src/test/**", "**/src/androidTest/**"])
         },
         Preset::Typescript => Suite {
@@ -235,7 +238,7 @@ pub fn preset(p: Preset) -> Suite {
             tests_report: report(TestsFormat::Junit, "$SLIMFIT_OUT/junit.xml"),
             coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/coverage/lcov.info"),
             mutants_command: "npx stryker run --reporters json --disableBail".into(),
-            mutants_report: report(MutantsFormat::Stryker, "reports/mutation/mutation.json"),
+            mutants_report: report(MutantsFormat::Stryker, STRYKER_JSON),
             ..base(
                 &["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mts"],
                 &["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "test/**", "tests/**", "**/*.config.*", "**/*.d.ts"],

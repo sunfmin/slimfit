@@ -26,9 +26,9 @@ Each language is a preset: the tools its community uses, each run once to write 
 
 ## Develop
 
-- `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself).
-- `./slow.sh`: the fast gate and the Rust sample end to end. `E2E_LANGS="go swift" ./slow.sh` runs those languages instead; `E2E_LANGS=all ./slow.sh` runs every language whose toolchain is present; `E2E_MUTANTS=1` adds the samples' mutants e2e.
+- `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself). Its tests run every preset end to end against stand-ins for the tools (`tests/standins.rs`, `examples/standin/`), so they need no toolchain but Rust.
+- `./slow.sh`: the fast gate. `E2E_LANGS="rust go" ./slow.sh` also runs those languages' real toolchains end to end; `E2E_LANGS=all ./slow.sh` every language whose toolchain is present; `E2E_MUTANTS=1` adds the samples' mutants e2e.
 - No gate and no commit runs mutation testing on slimfit itself (mutants are never in a gate). slimfit's own mutants run as idle work: `factorium.toml` `[idle]` runs `slimfit check --all-mutants` once a day while the host is idle. `slimfit next --mutants` is for working surviving-mutant and redundant-test tasks.
-- `./e2e.sh [rust|go|typescript|kotlin|swift]...`: end to end on its own; no arguments means every language.
+- `./e2e.sh [rust|go|typescript|kotlin|swift]...`: the real toolchains end to end on their own; no arguments means every language.
 
 The design decisions are in `docs/adr/`.
