@@ -145,6 +145,9 @@ pub struct SuiteMeasurement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Vec<String>>,
     pub command_seconds: f64,
+    /// How much the host's load slowed the test command: the tests'
+    /// durations are divided by it (ADR 0003).
+    pub load_slowdown: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -152,6 +155,10 @@ pub struct Measurement {
     /// Identifies the working tree measured: HEAD plus a hash of local changes.
     pub tree: String,
     pub with_mutants: bool,
+    /// A piece (`ratchet --pending-seconds`): it filled in pending mutant
+    /// counts, so a test_seconds overrun does not refuse its ratchet.
+    #[serde(default)]
+    pub piece: bool,
     /// The commit measured and the files that differed from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<Snapshot>,

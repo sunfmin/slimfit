@@ -1,17 +1,17 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 2720,
-      "test_lines": 710,
-      "tests": 30,
+      "prod_lines": 2781,
+      "test_lines": 772,
+      "tests": 32,
       "failures": 0,
-      "test_seconds": 0.512,
-      "covered_lines": 1234,
+      "test_seconds": 1.508,
+      "covered_lines": 1257,
       "uncovered_lines": 341,
       "mutants": {
-        "killed": 394,
-        "survived": 158,
-        "unviable": 41
+        "killed": 417,
+        "survived": 147,
+        "unviable": 44
       },
       "mutant_files": {
         "src/config.rs": {
@@ -44,24 +44,29 @@
           "survived": 11,
           "unviable": 1
         },
+        "src/load.rs": {
+          "killed": 5,
+          "survived": 1,
+          "unviable": 3
+        },
         "src/loc.rs": {
           "killed": 70,
           "survived": 9,
           "unviable": 1
         },
         "src/main.rs": {
-          "killed": 0,
-          "survived": 25,
+          "killed": 4,
+          "survived": 21,
           "unviable": 1
         },
         "src/measure.rs": {
-          "killed": 64,
-          "survived": 27,
+          "killed": 76,
+          "survived": 21,
           "unviable": 13
         },
         "src/model.rs": {
-          "killed": 14,
-          "survived": 4,
+          "killed": 15,
+          "survived": 3,
           "unviable": 0
         },
         "src/ratchet.rs": {
@@ -75,24 +80,23 @@
           "unviable": 1
         },
         "src/tasks.rs": {
-          "killed": 30,
-          "survived": 15,
+          "killed": 31,
+          "survived": 14,
           "unviable": 9
         }
       }
     }
   },
-  "loosened": [],
+  "loosened": [
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 0.512,
+      "to": 1.508,
+      "reason": "slimfit#13: test_seconds is now each test's duration divided by the host's load slowdown (ADR 0003); re-baselined once under the new measure, which adds the load test"
+    }
+  ],
   "mutants_at": {
-    "commit": "9c511297dc10bf57b1c29595f22602ff428d2327",
-    "dirty": [
-      "README.md",
-      "docs/adr/0001-mutate-only-changed-files.md",
-      "docs/adr/0002-mutants-baseline-in-pieces.md",
-      "src/main.rs",
-      "src/measure.rs",
-      "src/model.rs",
-      "src/ratchet.rs"
-    ]
+    "commit": "775196f0d6da08ffc1a3eb353162b9eb30e882a8"
   }
 }

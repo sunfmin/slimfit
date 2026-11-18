@@ -3,6 +3,7 @@ mod config;
 mod fixtures;
 mod formats;
 mod git;
+mod load;
 mod loc;
 mod measure;
 mod model;
@@ -45,9 +46,12 @@ WHAT EACH COMMAND COSTS
   wc -l`; the time of one run is `test_seconds` plus the build).
 
 MEASUREMENTS DEPEND ON HOST LOAD
-  On a busy host the same tests run slower. Do not set or ratchet
-  test_seconds then. Busy: the 1-minute load average (`uptime`) is above the
-  core count (`sysctl -n hw.ncpu` on macOS, `nproc` on Linux).
+  On a busy host everything runs slower. test_seconds is divided by the
+  slowdown slimfit measured (`load_slowdown` in the output; ADR 0003), but
+  a gate's or a mutants run's wall time is not. Busy: the 1-minute load
+  average (`uptime`) is above the core count (`sysctl -n hw.ncpu` on macOS,
+  `nproc` on Linux), or `load_slowdown` is well above 1. Then don't set a
+  baseline's test_seconds from that run; re-measure when the host is quiet.
 
 BEFORE ADOPTING ON A REPO
   Time `slimfit init` (one instrumented test run) and count the mutants (as
@@ -85,7 +89,10 @@ TASK KINDS (`slimfit next` gives them in this order: cheapest and safest first)
 WHAT `slimfit check` HOLDS (against .slimfit/baseline.json)
   failures          0
   test_seconds      ≤ baseline × (1 + time_tolerance) + time_slack
-                    (sum of the tests' own durations; build time excluded)
+                    (sum of the tests' own durations; build time excluded;
+                    each divided by how much the host's load slowed a
+                    CPU-bound thread meanwhile, so a busy host does not fail
+                    it: the measurement's load_slowdown)
   uncovered_lines   ≤ baseline + coverage_slack: code may grow, untested code
                     may not. A drop counts as a gain only past the slack, so
                     a line whose coverage flaps by timing never fails the gate
@@ -123,6 +130,10 @@ A LARGE WORKSPACE: BUILD THE MUTANTS BASELINE IN PIECES
                     source files pending. Until then `check --mutants` holds
                     only the files that have a count; a new file is mutated
                     as a changed one, not left pending.
+                    A piece is refused only for failing tests, new uncovered
+                    lines or more surviving mutants; test_seconds over its
+                    bound (a loaded host) is listed in `not_recorded` and
+                    the baseline keeps its old test_seconds.
 
 SET UP
   slimfit init                detect suites (Rust, Go, Swift, Kotlin, TypeScript),
@@ -360,11 +371,12 @@ fn run() -> Result<()> {
                 scope(mutants, all_mutants)
             };
             let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh })?;
-            let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            let (new, not_recorded) = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             ratchet::save(&repo, &new)?;
             print(json!({
                 "baseline": new.suites,
                 "loosened": new.loosened,
+                "not_recorded": not_recorded,
                 "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
                          (while a suite lists mutants_pending, a --pending-seconds piece again)",
             }));
