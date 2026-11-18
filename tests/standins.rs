@@ -591,6 +591,9 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
     run("report", &["--points", "1"], 0);
+    // A second `fn slow` its path cannot tell apart: no text to keep it by.
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "fn slow() {}\n").unwrap();
+    s.error(&["keep", "calc::tests::slow", "--reason", "r"], &["calc::tests::slow's own function was not found"]);
 }
 
 /// slimfit run as `cargo-nextest` outside a mutants run (no plan, no real
