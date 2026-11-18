@@ -29,6 +29,10 @@ pub struct Function {
     pub name: String,
     pub line: u32,
     pub hits: u64,
+    /// The name as the report gives it (a Rust symbol, mangled), when it
+    /// differs from `name`: what a test's profile names the function by.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub symbol: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -117,11 +121,11 @@ pub struct SuiteMeasurement {
     pub uncovered: Vec<Span>,
     /// Empty when mutants were not run.
     pub mutants: Vec<Mutant>,
-    /// The source lines each test runs, by test id and file, when the test
-    /// run records coverage per test: what redundant-test candidates are
-    /// found from (ADR 0006). `None` when it does not.
+    /// What each test ran, when the test run records coverage per test (the
+    /// Rust preset): the one per-test record, which each mutant's tests are
+    /// chosen from (ADR 0007) and redundant tests are proposed from (ADR 0006).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_lines: Option<BTreeMap<String, BTreeMap<String, Vec<u32>>>>,
+    pub reach: Option<Reach>,
     /// What the mutation run covered; `None` without mutants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Mutated>,
@@ -129,6 +133,39 @@ pub struct SuiteMeasurement {
     /// How much the host's load slowed the test command: the tests'
     /// durations are divided by it (ADR 0003).
     pub load_slowdown: f64,
+}
+
+/// Which tests ran which functions, from a test run that gives every test a
+/// coverage profile of its own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Reach {
+    /// Each test, as nextest names it.
+    pub tests: Vec<ReachTest>,
+    /// Per source file, per function's first line (as the coverage report
+    /// names it), the tests that ran it, by index into `tests`. Every
+    /// function the coverage report names is here, those no test ran with
+    /// none. A test whose profile could not be read counts as running every
+    /// function.
+    pub functions: BTreeMap<String, BTreeMap<u32, Vec<u32>>>,
+    /// The source lines each test ran, by file, in the order of `tests`:
+    /// what redundant-test candidates are found from (ADR 0006). `None`
+    /// until the test run records lines (slimfit#32).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<BTreeMap<String, Vec<u32>>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReachTest {
+    /// The test binary's id: the JUnit report's classname.
+    pub binary: String,
+    pub name: String,
+}
+
+impl ReachTest {
+    /// The id the tests report gives it.
+    pub fn id(&self) -> String {
+        format!("{}::{}", self.binary, self.name)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

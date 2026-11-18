@@ -20,6 +20,9 @@ struct Lang {
     name: &'static str,
     test_tools: &'static [&'static str],
     test_steps: &'static [&'static str],
+    /// Steps after the test run that read each test's own profile: their
+    /// report is optional (without it every mutant runs every test).
+    reach_steps: &'static [&'static str],
     mutants_tool: &'static str,
     mutants_step: &'static str,
     source: &'static str,
@@ -29,6 +32,7 @@ const RUST: Lang = Lang {
     name: "rust",
     test_tools: &["cargo"],
     test_steps: &["cargo llvm-cov"],
+    reach_steps: &["llvm-profdata show"; 4],
     mutants_tool: "cargo",
     mutants_step: "cargo mutants",
     source: "src/lib.rs",
@@ -37,6 +41,7 @@ const GO: Lang = Lang {
     name: "go",
     test_tools: &["go"],
     test_steps: &["go test"],
+    reach_steps: &[],
     mutants_tool: "gremlins",
     mutants_step: "gremlins unleash",
     source: "calc.go",
@@ -45,6 +50,7 @@ const TYPESCRIPT: Lang = Lang {
     name: "typescript",
     test_tools: &["npx"],
     test_steps: &["npx vitest"],
+    reach_steps: &[],
     mutants_tool: "npx",
     mutants_step: "npx stryker",
     source: "src/calc.ts",
@@ -53,6 +59,7 @@ const KOTLIN: Lang = Lang {
     name: "kotlin",
     test_tools: &["gradlew"],
     test_steps: &["gradlew test"],
+    reach_steps: &[],
     mutants_tool: "gradlew",
     mutants_step: "gradlew pitest",
     source: "src/main/kotlin/com/example/Calc.kt",
@@ -61,6 +68,7 @@ const SWIFT: Lang = Lang {
     name: "swift",
     test_tools: &["swift", "xcrun"],
     test_steps: &["swift test", "xcrun llvm-cov"],
+    reach_steps: &[],
     mutants_tool: "muter",
     mutants_step: "muter run",
     source: "Sources/Calc/Calc.swift",
@@ -68,8 +76,8 @@ const SWIFT: Lang = Lang {
 
 /// The tools the stand-in binary answers to, and what slimfit and the
 /// presets' shell lines need from the host.
-const STANDINS: &[&str] = &["cargo", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
-const HOST: &[&str] = &["sh", "git", "find", "head", "basename", "mv"];
+const STANDINS: &[&str] = &["cargo", "llvm-profdata", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
+const HOST: &[&str] = &["sh", "git", "find", "head", "basename", "mv", "cat"];
 
 struct Sample {
     _tmp: tempfile::TempDir,
@@ -176,6 +184,8 @@ impl Sample {
             .env("PATH", &self.bin)
             // cargo's own bin directory, where doctor looks for its subcommands: empty.
             .env("CARGO_HOME", self.bin.with_file_name("cargo-home"))
+            // Where the Rust preset finds llvm-profdata, as cargo llvm-cov does.
+            .env("LLVM_PROFDATA", self.bin.join("llvm-profdata"))
             .env(state::ENV, &self.state)
             .output()
             .unwrap();
@@ -333,7 +343,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
         s.take();
     }
     let init = s.ok(&["init"]);
-    assert_eq!(s.steps(), lang.test_steps, "{}", lang.name);
+    assert_eq!(s.steps(), [lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
         // What the dry run said it would write, but for `test_seconds` (the
@@ -484,21 +494,113 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     run("check", &[], 1);
     run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
     // A changed line whose mutants survive: cargo-mutants is given the
-    // change's diff; the survivors are accepted with a reason.
+    // change's diff; the survivors are accepted with a reason. Each mutant
+    // runs the tests that ran its function: cargo-mutants lists the
+    // mutants, and with a real nextest to hand on to (the stand-in, as
+    // `cargo-nextest`), slimfit writes the plan and its shim.
     let lib = s.repo.join("src/lib.rs");
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "// changed\n").unwrap();
+    // No nextest to hand on to: every mutant runs every test, and stderr says why.
     s.take();
-    let check = run("check", &["--mutants"], 1);
+    let (_, _, stderr) = s.slimfit(&["next", "--mutants"]);
+    assert!(
+        stderr.contains("no cargo-nextest on PATH or in cargo's bin directory: every mutant runs every test"),
+        "{stderr}"
+    );
+    assert!(!s.take().iter().any(|c| c.args.contains(&"--list".to_string())), "listed with no nextest");
+    std::os::unix::fs::symlink(standin(), s.bin.join("cargo-nextest")).unwrap();
+    let check = run("check", &["--mutants", "--fresh"], 1);
+    let plan: Value = serde_json::from_str(&s.read(".slimfit/out/rust/shim/plan.json")).unwrap();
+    let tests = |f: &Value| -> Vec<String> {
+        let names =
+            f["tests"].as_array().unwrap().iter().map(|i| plan["tests"][i.as_u64().unwrap() as usize]["name"].clone());
+        names.map(|n| n.as_str().unwrap().to_string()).collect()
+    };
+    let functions = plan["functions"].as_array().unwrap();
+    let mut add = tests(&functions[0]);
+    add.sort();
+    assert_eq!(
+        (add, tests(&functions[1]), tests(&functions[2])),
+        (
+            vec!["tests::adds".to_string(), "tests::adds_again".into(), "tests::slow".into()],
+            vec![],
+            vec!["tests::adult".to_string()]
+        ),
+        "{plan:#}"
+    );
+    assert!(s.repo.join(".slimfit/out/rust/shim/cargo-nextest").exists());
     let next = run("next", &["--all", "--mutants"], 0);
     assert!(next["tasks"].as_array().unwrap().iter().any(|t| t["kind"] == "surviving-mutant"), "{next:#}");
     assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
     assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
     let calls = s.take();
-    let mutants = calls.iter().find(|c| c.step == "cargo mutants").unwrap();
+    let listed = calls.iter().filter(|c| c.step == "cargo mutants" && c.args.contains(&"--list".to_string())).count();
+    assert_eq!(listed, 1, "{calls:?}");
+    // cargo-mutants' build of each of the 17 listed mutants reaches the
+    // real nextest through the shim as it came; its test run, narrowed:
+    // `add`'s 5 with its 3 tests, `is_adult`'s 3 with its one, each under its
+    // timeout; `unused`'s 9 run none.
+    let runs = calls.iter().filter(|c| c.step == "cargo nextest").count() / 2;
+    let builds = calls.iter().filter(|c| c.step == "cargo-nextest nextest" && c.args.contains(&"--no-run".into()));
+    assert!(builds.clone().count() == 17 && builds.clone().all(|c| c.args.len() == 5), "{calls:#?}");
+    let filters: Vec<&str> = calls
+        .iter()
+        .filter(|c| c.step == "cargo-nextest nextest" && !c.args.contains(&"--no-run".into()))
+        .map(|c| {
+            assert!(c.args.iter().any(|a| a.starts_with("slimfit:") && a.ends_with(".toml")), "{c:?}");
+            c.args.iter().skip_while(|a| *a != "-E").nth(1).map(String::as_str).unwrap_or("")
+        })
+        .collect();
+    // In the order the tests ran, as the reach report lists them.
+    let adds = "(binary_id(=calc) & test(=tests::slow)) | (binary_id(=calc) & test(=tests::adds)) | \
+                (binary_id(=calc) & test(=tests::adds_again))";
+    let adult = "(binary_id(=calc) & test(=tests::adult))";
+    assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
+    let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
     run("report", &["--points", "1"], 0);
+}
+
+/// slimfit run as `cargo-nextest` outside a mutants run (no plan, no real
+/// nextest named): it says so and fails, rather than pass a mutant untested.
+#[test]
+fn the_shim_without_its_plan_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let shim = tmp.path().join("cargo-nextest");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_slimfit"), &shim).unwrap();
+    let out = Command::new(&shim)
+        .args(["nextest", "run"])
+        .env_remove("SLIMFIT_SELECT")
+        .env_remove("SLIMFIT_NEXTEST")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(101), "{stderr}");
+    assert!(stderr.contains("SLIMFIT_SELECT is not set: every test runs"), "{stderr}");
+    assert!(stderr.contains("SLIMFIT_NEXTEST is not set: the real cargo-nextest is unknown"), "{stderr}");
+    // A plan, but no file differs (cargo-mutants' unmutated baseline): every
+    // test runs, each under its timeout, and nextest's exit is the shim's.
+    let plan = tmp.path().join("plan.json");
+    let test = r#"{"binary": "calc", "name": "t", "timeout": 6}"#;
+    std::fs::write(&plan, format!(r#"{{"root": "/", "tests": [{test}], "functions": []}}"#)).unwrap();
+    let out = Command::new(&shim)
+        .args(["nextest", "run"])
+        .env("SLIMFIT_SELECT", &plan)
+        .env("SLIMFIT_NEXTEST", on_path("false"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("no file differs from the suite's own: every test runs"), "{stderr}");
+    let configs: Vec<String> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("nextest-"))
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect();
+    assert!(configs.len() == 1 && configs[0].contains("period = \"6s\""), "{configs:?}");
 }
 
 /// Every key a command prints is named on its own page (`slimfit <command>

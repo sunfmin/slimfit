@@ -5,7 +5,7 @@
 //! test, and a slow test.
 
 use crate::config::{CheckConfig, Preset, preset};
-use crate::formats::{self, CoverageFormat, MutantsFormat, TestsFormat};
+use crate::formats::{self, CoverageFormat, MutantsFormat, ReachFormat, TestsFormat};
 use crate::loc::Classifier;
 use crate::measure::{Resolver, Timing, reduce};
 use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
@@ -65,12 +65,16 @@ fn measure_with_coverage(
     for x in &mut m {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
+    // The Rust sample's test run also records which functions each test ran.
+    let reach = (p == Preset::Rust)
+        .then(|| formats::read_reach(ReachFormat::LlvmProfdata, &read(lang, &["reach.txt"])).unwrap());
     reduce(
         &suite,
         &totals,
         &resolver,
         t,
         c,
+        reach,
         Some(m.into()),
         Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 },
     )
@@ -111,6 +115,17 @@ fn rust_sample() {
     // the inline test module is test code, not uncovered prod code
     assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
     assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
+    // Which tests ran each function: `add` the three that call it, `unused`
+    // none, `is_adult` one; the tests' own functions are not listed.
+    let reach = s.reach.as_ref().expect("the Rust sample records reach");
+    let ran = |line: u32| -> Vec<String> {
+        reach.functions["src/lib.rs"][&line].iter().map(|i| reach.tests[*i as usize].id()).collect::<Vec<_>>()
+    };
+    assert_eq!(reach.functions["src/lib.rs"].keys().copied().collect::<Vec<_>>(), [1, 5, 11]);
+    let mut add = ran(1);
+    add.sort();
+    assert_eq!(add, ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"]);
+    assert_eq!((ran(5), ran(11)), (vec![], vec!["calc::tests::adult".to_string()]));
 }
 
 /// Coverage that depends on timing reaches a line in one run and misses it

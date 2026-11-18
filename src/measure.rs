@@ -2,7 +2,7 @@
 //! reports, and reduce them to `Measurement`. The result is cached under
 //! `.slimfit/out/` and reused while the tree is unchanged.
 
-use crate::config::{Config, Report, Suite};
+use crate::config::{Config, MutantTests, Report, Suite};
 use crate::fault::{self, Faults, fault};
 use crate::formats;
 use crate::git;
@@ -295,7 +295,7 @@ fn measure_suite(
     let mutants = match (tested, mutants) {
         (Some(mut s), Some(change)) => {
             std::fs::create_dir_all(&out)?;
-            let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?)?;
+            let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, &s)?;
             (s.mutants, s.mutated) = (m.mutants, Some(m.mutated));
             return Ok(s);
         }
@@ -315,29 +315,48 @@ fn measure_suite(
     let started = Instant::now();
     let since_epoch =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
+    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test", &[]));
     let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
     let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
     let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
+    let reach = read_reach(&root, &out, suite)?;
 
-    let mutation = match mutants {
-        None => None,
-        Some(change) => Some(mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?)?),
-    };
-    Ok(reduce(
-        suite,
-        &totals,
-        &resolver,
-        tests,
-        coverage,
-        mutation,
-        Timing { command_seconds, slowdown, started: since_epoch },
-    ))
+    let timing = Timing { command_seconds, slowdown, started: since_epoch };
+    let mut s = reduce(suite, &totals, &resolver, tests, coverage, reach, None, timing);
+    if let Some(change) = mutants {
+        let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, &s)?;
+        (s.mutants, s.mutated) = (m.mutants, Some(m.mutated));
+    }
+    Ok(s)
+}
+
+/// Which functions each test ran, when the suite's test run records it. A
+/// run that wrote none (a test command of its own, a runner of the repo's
+/// own) records nothing, and every mutant then runs every test.
+fn read_reach(root: &Path, out: &Path, suite: &Suite) -> Result<Option<Vec<formats::TestReach>>> {
+    if suite.reach_report.path.is_empty() {
+        return Ok(None);
+    }
+    let paths: Vec<PathBuf> = report_paths(root, out, &suite.reach_report)?;
+    if paths.is_empty() {
+        eprintln!(
+            "slimfit: {}: the test run wrote no reach_report at {}: no test is known to run any function",
+            suite.name,
+            report_pattern(root, out, &suite.reach_report)
+        );
+        return Ok(None);
+    }
+    let texts = paths.iter().map(std::fs::read_to_string).collect::<std::io::Result<Vec<_>>>()?;
+    formats::read_reach(suite.reach_report.format, &texts)
+        .map(Some)
+        .map_err(|e| unreadable("reach_report", suite.reach_report.format, e))
 }
 
 /// Runs the suite's mutants of `change`, and counts those in the change's
-/// lines.
+/// lines. `tested` is this tree's test run: which tests each mutant runs is
+/// chosen from it.
+#[allow(clippy::too_many_arguments)]
 fn mutate_change(
     repo: &Path,
     root: &Path,
@@ -346,6 +365,7 @@ fn mutate_change(
     totals: &Totals,
     resolver: &Resolver,
     change: &Change,
+    tested: &SuiteMeasurement,
 ) -> Result<Mutation> {
     let sources: Vec<String> =
         change.files.iter().filter(|f| matches!(totals.files.get(*f), Some((Kind::Source, _)))).cloned().collect();
@@ -368,26 +388,90 @@ fn mutate_change(
         eprintln!("slimfit: {}: mutating the lines changed in {} file(s)", suite.name, files.len());
         let command =
             format!("{} {} {}", suite.mutants_command, suite.mutants_diff_flag, quoted(&diff.to_string_lossy()));
-        (mutate(root, out, suite, resolver, &command)?, true)
+        let env = match suite.mutants_tests {
+            MutantTests::Reached => selecting(root, out, suite, &prefix, tested, &command)?,
+            MutantTests::All => Vec::new(),
+        };
+        (mutate(root, out, suite, resolver, &command, &env)?, true)
     } else {
         // `current` refuses `--mutants` for a tool with neither flag.
         eprintln!("slimfit: {}: mutating the {} file(s) the change touches", suite.name, files.len());
-        (mutate(root, out, suite, resolver, &limited(suite, &files))?, false)
+        (mutate(root, out, suite, resolver, &limited(suite, &files), &[])?, false)
     };
     let in_change: Vec<Mutant> =
         run.iter().filter(|m| by_tool || lines.get(&m.file).is_some_and(|l| l.contains(&m.line))).cloned().collect();
     Ok(Mutation { mutated: Mutated { files, change: MutantCounts::of(&in_change) }, mutants: run })
 }
 
+/// The environment in which cargo-mutants' `command` runs each mutant's
+/// tests only (ADR 0007): the plan, from the mutants it lists and the tests
+/// that ran each function, and the shim first on PATH. Empty, and every
+/// test runs, when the test run recorded no reach, the real nextest is not
+/// found, or the mutants cannot be listed; stderr says which.
+fn selecting(
+    root: &Path,
+    out: &Path,
+    suite: &Suite,
+    prefix: &str,
+    tested: &SuiteMeasurement,
+    command: &str,
+) -> Result<Vec<(String, std::ffi::OsString)>> {
+    let every = |why: String| {
+        eprintln!("slimfit: {}: {why}: every mutant runs every test", suite.name);
+        Ok(Vec::new())
+    };
+    let Some(reach) = &tested.reach else { return every("the test run recorded no test's functions".into()) };
+    let shims = out.join("shim");
+    let Some(real) = crate::select::real_nextest(&shims) else {
+        return every(format!("no {} on PATH or in cargo's bin directory", crate::select::SHIM));
+    };
+    let list = out.join("mutants.list.json");
+    let listing = format!("{command} --list --json > {}", quoted(&list.to_string_lossy()));
+    let (log, ok) = shell(root, out, &listing, "mutants-list", &[])?;
+    let listed = std::fs::read_to_string(&list).unwrap_or_default();
+    let plan = match crate::select::plan(root, &listed, |f| format!("{prefix}{f}"), reach, &tested.tests) {
+        Ok(p) if ok => p,
+        _ => return every(format!("cargo-mutants listed no mutants (log {})", log.display())),
+    };
+    let unknown = plan.functions.iter().filter(|f| f.tests.is_none()).count();
+    eprintln!(
+        "slimfit: {}: each mutant runs only the tests that ran its function ({} function(s), {unknown} of them \
+         run by tests unknown)",
+        suite.name,
+        plan.functions.len()
+    );
+    // One directory per run: the plan, the shim, and the configuration
+    // it writes for each mutant.
+    let _ = std::fs::remove_dir_all(&shims);
+    std::fs::create_dir_all(&shims)?;
+    let plan_path = shims.join("plan.json");
+    std::fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)?;
+    std::os::unix::fs::symlink(std::env::current_exe()?, shims.join(crate::select::SHIM))?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(shims).chain(std::env::split_paths(&path)))?;
+    Ok(vec![
+        ("PATH".into(), path),
+        (crate::select::PLAN_ENV.into(), plan_path.into()),
+        (crate::select::NEXTEST_ENV.into(), real.into()),
+    ])
+}
+
 /// One run of the mutation tool, its paths resolved to the suite's files.
 /// A run limited to a change may have no mutant to test, and a tool may
 /// then write no report: a clean exit then reads as none.
-fn mutate(root: &Path, out: &Path, suite: &Suite, resolver: &Resolver, command: &str) -> Result<Vec<Mutant>> {
+fn mutate(
+    root: &Path,
+    out: &Path,
+    suite: &Suite,
+    resolver: &Resolver,
+    command: &str,
+    env: &[(String, std::ffi::OsString)],
+) -> Result<Vec<Mutant>> {
     // A report left by an earlier run would be read as this run's.
     for old in report_paths(root, out, &suite.mutants_report)? {
         std::fs::remove_file(old)?;
     }
-    let (log, ok) = shell(root, out, command, "mutants")?;
+    let (log, ok) = shell(root, out, command, "mutants", env)?;
     let reports = match read_reports(root, out, "mutants_report", &suite.mutants_report, &log) {
         Err(_) if ok => vec![],
         r => r?,
@@ -414,10 +498,16 @@ impl From<Vec<Mutant>> for Mutation {
     }
 }
 
-/// Runs `command` with `sh -c` in the suite root. A failing exit status is
-/// not an error: failing tests still write reports. The log is kept; the
-/// flag says whether the command exited 0.
-fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf, bool)> {
+/// Runs `command` with `sh -c` in the suite root, with `env` added. A
+/// failing exit status is not an error: failing tests still write reports.
+/// The log is kept; the flag says whether the command exited 0.
+fn shell(
+    root: &Path,
+    out: &Path,
+    command: &str,
+    label: &str,
+    env: &[(String, std::ffi::OsString)],
+) -> Result<(PathBuf, bool)> {
     if command.trim().is_empty() {
         return Err(fault(
             format!("no {label} command configured"),
@@ -431,6 +521,7 @@ fn shell(root: &Path, out: &Path, command: &str, label: &str) -> Result<(PathBuf
         .arg(command)
         .current_dir(root)
         .env(crate::tools::OUT_ENV, out)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdout(file.try_clone()?)
         .stderr(file)
         .status()
@@ -566,12 +657,14 @@ pub(crate) struct Timing {
     pub started: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reduce(
     suite: &Suite,
     totals: &Totals,
     resolver: &Resolver,
     mut tests: Vec<TestCase>,
     coverage: Coverage,
+    reach: Option<Vec<formats::TestReach>>,
     mutation: Option<Mutation>,
     timing: Timing,
 ) -> SuiteMeasurement {
@@ -604,6 +697,7 @@ pub(crate) fn reduce(
             functions.entry(file.clone()).or_default().push(Function { file, ..f });
         }
     }
+    let reach = reach.map(|r| reached(r, &functions, totals));
     let covered = lines.values().flat_map(|l| l.values()).filter(|h| **h > 0).count() as u64;
     let uncovered_total = lines.values().flat_map(|l| l.values()).filter(|h| **h == 0).count() as u64;
     let mut uncovered = Vec::new();
@@ -631,11 +725,43 @@ pub(crate) fn reduce(
         tests,
         uncovered,
         mutants,
-        test_lines: None,
+        reach,
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
         load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
     }
+}
+
+/// Which tests ran each source function, from what each test ran by symbol:
+/// every function the coverage report names in a source file, outside
+/// tests, keyed by its first line.
+fn reached(tests: Vec<formats::TestReach>, functions: &BTreeMap<String, Vec<Function>>, totals: &Totals) -> Reach {
+    let mut reach = Reach::default();
+    let mut at: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
+    for (file, fs) in functions {
+        let Some((Kind::Source, fl)) = totals.files.get(file) else { continue };
+        for f in fs.iter().filter(|f| !fl.is_test_line(f.line)) {
+            reach.functions.entry(file.clone()).or_default().entry(f.line).or_default();
+            at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
+        }
+    }
+    let every: Vec<(String, u32)> =
+        reach.functions.iter().flat_map(|(f, ls)| ls.keys().map(|l| (f.clone(), *l))).collect();
+    for (i, t) in tests.into_iter().enumerate() {
+        let i = i as u32;
+        let mut ran = |file: &str, line: u32| {
+            let tests = reach.functions.get_mut(file).and_then(|f| f.get_mut(&line)).expect("listed above");
+            if tests.last() != Some(&i) {
+                tests.push(i);
+            }
+        };
+        match &t.functions {
+            Some(names) => names.iter().filter_map(|n| at.get(n.as_str())).for_each(|(f, l)| ran(f, *l)),
+            None => every.iter().for_each(|(f, l)| ran(f, *l)),
+        }
+        reach.tests.push(ReachTest { binary: t.binary, name: t.name });
+    }
+    reach
 }
 
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
@@ -730,6 +856,8 @@ pub(crate) mod t {
     #[test]
     fn mutants_run_on_the_lines_changed_since_the_tree_last_measured() {
         let (dir, mut cfg) = sample_repo();
+        // Every test on every mutant: which tests run is not this test's.
+        cfg.suites[0].overrides.mutants_tests = Some(MutantTests::All);
         let repo = dir.path();
         let base = Baseline { mutants_at: snapshot(repo).unwrap(), ..Default::default() };
         let text = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
@@ -850,6 +978,7 @@ pub(crate) mod t {
             tests,
             Coverage::default(),
             None,
+            None,
             timing,
         );
         assert_eq!(
@@ -857,6 +986,58 @@ pub(crate) mod t {
             [2_430_016.0, 1_215_008.0, 2_000_000.0]
         );
         assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (5.645, 1.235, 9.877));
+    }
+
+    /// Every function of a source file's coverage is keyed by its first
+    /// line, with the tests that ran it by symbol; a test whose profile was
+    /// unreadable ran them all; test code is left out.
+    #[test]
+    fn reach_keys_each_source_function_by_its_first_line() {
+        let mut totals = Totals::default();
+        let classifier = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
+        let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
+        totals.files = classifier.count(&["src/a.rs".to_string()], |_| Some(text.into())).files;
+        let f = |name: &str, line| Function {
+            file: "/r/src/a.rs".into(),
+            name: name.into(),
+            line,
+            hits: 0,
+            symbol: format!("_R{name}"),
+        };
+        // Two symbols of one line: a generic function's instantiations.
+        let functions = vec![f("a", 1), f("a2", 1), f("b", 2), f("t", 5)];
+        let coverage = Coverage { lines: Default::default(), functions };
+        let t = |name: &str, ran: Option<&[&str]>| formats::TestReach {
+            binary: "calc".into(),
+            name: name.into(),
+            functions: ran.map(|r| r.iter().map(|s| s.to_string()).collect()),
+        };
+        let reach = vec![t("x", Some(&["_Ra", "_Ra2", "_Rt"])), t("y", None), t("z", Some(&["_Rgone"]))];
+        let timing = Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 };
+        let suite = crate::config::preset(crate::config::Preset::Rust);
+        let resolver = Resolver::new(Path::new("/r"), &totals);
+        let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);
+        let reach = m.reach.unwrap();
+        assert_eq!(reach.functions["src/a.rs"], [(1, vec![0, 1]), (2, vec![1])].into());
+        assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::x", "calc::y", "calc::z"]);
+    }
+
+    /// No reach_report configured, or none written: nothing is recorded,
+    /// and every mutant runs every test. One that is not the format
+    /// configured is refused, with its fix.
+    #[test]
+    fn a_reach_report_is_read_when_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut suite = crate::config::preset(crate::config::Preset::Rust);
+        let read = |s: &Suite| read_reach(dir.path(), dir.path(), s);
+        assert!(read(&suite).unwrap().is_none());
+        std::fs::write(dir.path().join(crate::tools::REACH), "test calc\tx\n").unwrap();
+        assert_eq!(read(&suite).unwrap().unwrap().len(), 1);
+        std::fs::write(dir.path().join(crate::tools::REACH), "garbled\n").unwrap();
+        let f = crate::fault::of(read(&suite).unwrap_err());
+        assert!(f[0].fault.starts_with("its reach_report is not llvm-profdata"), "{f:?}");
+        suite.reach_report.path = String::new();
+        assert!(read(&suite).unwrap().is_none());
     }
 
     #[test]
@@ -875,7 +1056,7 @@ pub(crate) mod t {
     #[test]
     fn spans_join_zero_runs_and_name_functions() {
         let hits: BTreeMap<u32, u64> = [(1, 1), (3, 0), (4, 0), (6, 0), (7, 2), (9, 0)].into();
-        let f = vec![Function { file: "a".into(), name: "g".into(), line: 2, hits: 0 }];
+        let f = vec![Function { file: "a".into(), name: "g".into(), line: 2, hits: 0, symbol: String::new() }];
         let s = spans("a", &hits, &f);
         assert_eq!(s.iter().map(|s| (s.start, s.end, s.lines)).collect::<Vec<_>>(), vec![(3, 6, 3), (9, 9, 1)]);
         assert_eq!(s[0].function.as_deref(), Some("g"));

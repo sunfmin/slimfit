@@ -69,7 +69,7 @@ positives, arXiv 2412.03693). Together they fit: coverage proposes, the
 review decides.
 
 1. **Candidate** (slimfit, deterministic, from per-test coverage of source
-   lines, `test_lines` in the measurement):
+   lines, `reach.lines` in the measurement; `test_lines` before ADR 0007):
    - a test whose covered lines are a subset of one other test's; of two
      tests with the same lines, the slower is proposed (on equal time, the
      later by name);
@@ -98,11 +98,11 @@ review decides.
 3. **Accept**: plain `slimfit check`: no new uncovered line, failures 0,
    test time not up (and for a merge, down). No mutant runs.
 
-**Not built here.** No preset's test run records coverage per test yet:
-`test_lines` is always absent, `next` says so in `notes`, and no
-redundant-test task is given until it is. Recording it (per-test coverage
-from the test run; slimfit#29 records which tests reach which function, and
-this decision needs lines) is that work's, as is recording a **keep**
+**Not built here.** No preset's test run records lines per test yet:
+`reach.lines` is always absent, `next` says so in `notes`, and no
+redundant-test task is given until it is. Recording it is slimfit#32's: ADR
+0007 records, for Rust, a coverage profile per test and which functions
+each ran (`reach`), the one per-test record that lines extend; recording it as is recording a **keep**
 verdict against the test's content hash so the test is not proposed again
 until it changes: the hash needs the test's own text located, which the
 per-test run gives. Until both exist, a kept test would be proposed again.

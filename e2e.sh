@@ -8,7 +8,9 @@
 # With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool is
 # limited to a change; nothing mutates a whole sample), after the injection:
 #   check --mutants           → cargo-mutants runs only the injected lines'
-#                               mutants, and their survivors fail the check
+#                               mutants, each with only the tests that ran
+#                               its function (none, for the untested one),
+#                               and their survivors fail the check
 #   next --all --mutants      → a `surviving-mutant` task in src/lib.rs, from
 #                               the same measurement
 # A language whose toolchain for this run is incomplete (cargo-mutants too
@@ -88,6 +90,8 @@ for lang in $langs; do
       "$bin" check --mutants >change.json 2>change.log && { echo "check --mutants passed the untested function" >&2; exit 1; }
       json 'd["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <change.json \
         | grep -qx "\['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
+      grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
+        || { echo "the untested function's mutants ran tests" >&2; tail -20 change.log; exit 1; }
       "$bin" next --all --mutants 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
         | grep -q "src/lib.rs" || { echo "no surviving-mutant task in src/lib.rs" >&2; exit 1; }
     fi

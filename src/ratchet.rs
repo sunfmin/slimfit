@@ -331,7 +331,7 @@ mod t {
             tests: vec![],
             uncovered: vec![],
             mutants: vec![],
-            test_lines: None,
+            reach: None,
             mutated: survived.map(|n| Mutated { files: vec!["src/a.rs".into()], change: change(n) }),
             command_seconds: 0.0,
             load_slowdown: 1.0,

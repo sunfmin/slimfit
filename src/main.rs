@@ -11,6 +11,7 @@ mod measure;
 mod model;
 mod ratchet;
 mod report;
+mod select;
 mod tasks;
 mod tools;
 // build.rs runs it to stamp the version; compiled here too, for its tests and mutants.
@@ -115,7 +116,7 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none) and `mutants_file_flag` (the flag that limits it to one file; empty when it has none).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_file_flag` (the flag that limits it to one file; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
@@ -383,6 +384,9 @@ fn help() -> Help {
         .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
         .constant("LANGUAGES", languages("and"))
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
+        .constant("REACHED", languages_where(|s| s.mutants_tests == config::MutantTests::Reached))
+        .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
+        .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
@@ -423,7 +427,13 @@ fn languages_where(property: impl Fn(&config::Suite) -> bool) -> String {
 }
 
 fn main() {
-    let (answer, code) = match run(std::env::args_os()) {
+    // Run as `cargo-nextest` (first on PATH during a mutants run): the shim
+    // that runs only a mutant's tests (ADR 0007).
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.first().and_then(|a| std::path::Path::new(a).file_name()).is_some_and(|n| n == select::SHIM) {
+        select::shim(args);
+    }
+    let (answer, code) = match run(args) {
         Ok(done) => done,
         Err(e) => (json!({ "error": fault::of(e) }), EXIT_ERROR),
     };
@@ -550,7 +560,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                         .to_string(),
                 );
             }
-            for s in m.suites.iter().filter(|s| s.test_lines.is_none()) {
+            for s in m.suites.iter().filter(|s| s.reach.as_ref().is_none_or(|r| r.lines.is_none())) {
                 notes.push(format!(
                     "{}: its test run records no coverage per test, so no redundant test can be proposed",
                     s.suite
