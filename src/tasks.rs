@@ -364,6 +364,7 @@ mod t {
             uncovered: vec![],
             mutants: vec![],
             test_lines: Some(per_test),
+            reach: None,
             mutated: None,
             command_seconds: 0.0,
             load_slowdown: 1.0,

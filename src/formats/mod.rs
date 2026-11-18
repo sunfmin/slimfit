@@ -4,11 +4,13 @@
 
 mod coverage;
 mod mutants;
+mod reach;
 mod tests;
 mod xml;
 
 pub use coverage::read as read_coverage;
 pub use mutants::read as read_mutants;
+pub use reach::{TestReach, read as read_reach};
 pub use tests::read as read_tests;
 
 use serde::{Deserialize, Serialize};
@@ -46,4 +48,13 @@ pub enum MutantsFormat {
     Gremlins,
     /// muter `--format json`.
     Muter,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReachFormat {
+    /// `test <binary>\t<name>` lines, each followed by `llvm-profdata show
+    /// --all-functions --counts` of the profiles that test wrote: the Rust
+    /// preset's test command writes it (ADR 0007).
+    LlvmProfdata,
 }

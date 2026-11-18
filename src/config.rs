@@ -2,7 +2,7 @@
 //! A suite names a preset; any field the preset sets can be overridden.
 
 use crate::fault::{Fault, Faults, fault};
-use crate::formats::{CoverageFormat, MutantsFormat, TestsFormat};
+use crate::formats::{CoverageFormat, MutantsFormat, ReachFormat, TestsFormat};
 use crate::tools::*;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -93,6 +93,8 @@ pub struct Overrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_report: Option<Report<CoverageFormat>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reach_report: Option<Report<ReachFormat>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_report: Option<Report<MutantsFormat>>,
@@ -100,6 +102,20 @@ pub struct Overrides {
     pub mutants_diff_flag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_file_flag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutants_tests: Option<MutantTests>,
+}
+
+/// Which tests a mutant runs.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MutantTests {
+    /// Every test, as the mutation tool runs them.
+    All,
+    /// Only the tests the test run saw run the mutant's function, each under
+    /// a timeout from its own duration (ADR 0007). cargo-mutants under
+    /// nextest only, with a `reach_report`; otherwise every test runs.
+    Reached,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,6 +141,9 @@ pub struct Suite {
     pub test_command: String,
     pub tests_report: Report<TestsFormat>,
     pub coverage_report: Report<CoverageFormat>,
+    /// Which tests ran each function, one profile per test; an empty path:
+    /// the test run does not record it.
+    pub reach_report: Report<ReachFormat>,
     pub mutants_command: String,
     pub mutants_report: Report<MutantsFormat>,
     /// The flag that limits `mutants_command` to the lines a unified diff
@@ -136,6 +155,7 @@ pub struct Suite {
     /// suite root). Neither: every file is mutated, and the change's mutants
     /// are told apart by line.
     pub mutants_file_flag: String,
+    pub mutants_tests: MutantTests,
 }
 
 impl SuiteConfig {
@@ -162,6 +182,9 @@ impl SuiteConfig {
         if let Some(v) = o.coverage_report {
             s.coverage_report = v
         }
+        if let Some(v) = o.reach_report {
+            s.reach_report = v
+        }
         if let Some(v) = o.mutants_command {
             s.mutants_command = v
         }
@@ -174,9 +197,16 @@ impl SuiteConfig {
         if let Some(v) = o.mutants_file_flag {
             s.mutants_file_flag = v
         }
+        if let Some(v) = o.mutants_tests {
+            s.mutants_tests = v
+        }
         s
     }
 }
+
+/// The Rust preset's test command: a profile per test beside the merged
+/// coverage, and which functions each test ran (ADR 0007).
+const RUST_TEST: &str = include_str!("presets/rust-test.sh");
 
 fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -208,26 +238,28 @@ pub fn preset(p: Preset) -> Suite {
         test_command: String::new(),
         tests_report: report(TestsFormat::Junit, ""),
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
+        reach_report: report(ReachFormat::LlvmProfdata, ""),
         mutants_command: String::new(),
         mutants_report: report(MutantsFormat::Stryker, ""),
         mutants_diff_flag: String::new(),
         mutants_file_flag: String::new(),
+        mutants_tests: MutantTests::All,
     };
     match p {
         Preset::Rust => Suite {
             inline_tests: true,
-            test_command: format!(
-                "printf '[profile.default.junit]\\npath = \"{NEXTEST_JUNIT}\"\\n' > \"$SLIMFIT_OUT/nextest.toml\" && \
-                 cargo llvm-cov nextest --workspace --tool-config-file \"slimfit:$SLIMFIT_OUT/nextest.toml\" --lcov --output-path \"$SLIMFIT_OUT/lcov.info\""
-            ),
+            test_command: RUST_TEST.replace("{NEXTEST_JUNIT}", NEXTEST_JUNIT).replace("{REACH}", REACH),
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
+            reach_report: report(ReachFormat::LlvmProfdata, &format!("$SLIMFIT_OUT/{REACH}")),
             // nextest stops a mutant's tests at its first failure: only whether a
-            // mutant is caught is read (ADR 0006).
+            // mutant is caught is read (ADR 0006). No baseline: the test run
+            // already showed the tree green (ADR 0007).
             mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest \
-                --output \"$SLIMFIT_OUT\""
+                --baseline skip --output \"$SLIMFIT_OUT\""
                 .into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
             mutants_diff_flag: "--in-diff".into(),
+            mutants_tests: MutantTests::Reached,
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
         Preset::Go => Suite {

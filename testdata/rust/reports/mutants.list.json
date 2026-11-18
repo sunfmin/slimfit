@@ -1,0 +1,546 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i64 with 0\n@@ -1,10 +1,10 @@\n pub fn add(a: i64, b: i64) -> i64 {\n-    a + b\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i64 with 0",
+    "package": "calc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i64 with 1\n@@ -1,10 +1,10 @@\n pub fn add(a: i64, b: i64) -> i64 {\n-    a + b\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i64 with 1",
+    "package": "calc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace add -> i64 with -1\n@@ -1,10 +1,10 @@\n pub fn add(a: i64, b: i64) -> i64 {\n-    a + b\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:2:5: replace add -> i64 with -1",
+    "package": "calc",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 2
+      },
+      "start": {
+        "column": 5,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i64, b: i64) -> i64 {\n-    a + b\n+    a - /* ~ changed by cargo-mutants ~ */ b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:7: replace + with - in add",
+    "package": "calc",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 2
+      },
+      "start": {
+        "column": 7,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in add\n@@ -1,10 +1,10 @@\n pub fn add(a: i64, b: i64) -> i64 {\n-    a + b\n+    a * /* ~ changed by cargo-mutants ~ */ b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "add",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 3
+        },
+        "start": {
+          "column": 1,
+          "line": 1
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:2:7: replace + with * in add",
+    "package": "calc",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 2
+      },
+      "start": {
+        "column": 7,
+        "line": 2
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 0\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace unused -> i64 with 0",
+    "package": "calc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 8
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace unused -> i64 with 1",
+    "package": "calc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 8
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with -1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:6:5: replace unused -> i64 with -1",
+    "package": "calc",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 16,
+        "line": 8
+      },
+      "start": {
+        "column": 5,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with + in unused\n@@ -1,14 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n+    let doubled = x + /* ~ changed by cargo-mutants ~ */ 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:21: replace * with + in unused",
+    "package": "calc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 6
+      },
+      "start": {
+        "column": 21,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with / in unused\n@@ -1,14 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n+    let doubled = x / /* ~ changed by cargo-mutants ~ */ 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:6:21: replace * with / in unused",
+    "package": "calc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 6
+      },
+      "start": {
+        "column": 21,
+        "line": 6
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled - /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:7:27: replace + with - in unused",
+    "package": "calc",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 7
+      },
+      "start": {
+        "column": 27,
+        "line": 7
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled * /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:7:27: replace + with * in unused",
+    "package": "calc",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 7
+      },
+      "start": {
+        "column": 27,
+        "line": 7
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace / with % in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted % /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:8:13: replace / with % in unused",
+    "package": "calc",
+    "replacement": "%",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 8
+      },
+      "start": {
+        "column": 13,
+        "line": 8
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace / with * in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted * /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "unused",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 9
+        },
+        "start": {
+          "column": 1,
+          "line": 5
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:8:13: replace / with * in unused",
+    "package": "calc",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 8
+      },
+      "start": {
+        "column": 13,
+        "line": 8
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with true\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    true /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_adult",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 13
+        },
+        "start": {
+          "column": 1,
+          "line": 11
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:12:5: replace is_adult -> bool with true",
+    "package": "calc",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 12
+      },
+      "start": {
+        "column": 5,
+        "line": 12
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with false\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    false /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_adult",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 13
+        },
+        "start": {
+          "column": 1,
+          "line": 11
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:12:5: replace is_adult -> bool with false",
+    "package": "calc",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 12
+      },
+      "start": {
+        "column": 5,
+        "line": 12
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace >= with < in is_adult\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    age < /* ~ changed by cargo-mutants ~ */ 18\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "is_adult",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 13
+        },
+        "start": {
+          "column": 1,
+          "line": 11
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:12:9: replace >= with < in is_adult",
+    "package": "calc",
+    "replacement": "<",
+    "span": {
+      "end": {
+        "column": 11,
+        "line": 12
+      },
+      "start": {
+        "column": 9,
+        "line": 12
+      }
+    }
+  }
+]

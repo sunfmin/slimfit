@@ -29,9 +29,11 @@ fn lcov(text: &str, c: &mut Coverage) -> Result<()> {
                  fn_lines: &mut Vec<(String, u32)>,
                  fn_hits: &mut std::collections::HashMap<String, u64>,
                  c: &mut Coverage| {
-        for (name, line) in fn_lines.drain(..) {
+        for (symbol, line) in fn_lines.drain(..) {
+            let name = demangle(&symbol);
             let hits = fn_hits.get(&name).copied().unwrap_or(0);
-            c.functions.push(Function { file: file.to_string(), name, line, hits });
+            let symbol = if symbol == name { String::new() } else { symbol };
+            c.functions.push(Function { file: file.to_string(), name, line, hits, symbol });
         }
         fn_hits.clear();
     };
@@ -52,7 +54,7 @@ fn lcov(text: &str, c: &mut Coverage) -> Result<()> {
                 _ => rest,
             };
             if let Ok(n) = start.parse() {
-                fn_lines.push((demangle(rest), n));
+                fn_lines.push((rest.to_string(), n));
             }
         } else if let Some(r) = line.strip_prefix("FNDA:") {
             if let Some((h, name)) = r.split_once(',') {
@@ -176,7 +178,7 @@ fn jacoco(text: &str, c: &mut Coverage) -> Result<()> {
                     let covered: u64 = attrs.get("covered").and_then(|v| v.parse().ok()).unwrap_or(0);
                     let file = join(&package, &class_source);
                     if line > 0 {
-                        c.functions.push(Function { file, name, line, hits: covered });
+                        c.functions.push(Function { file, name, line, hits: covered, symbol: String::new() });
                     }
                 }
             }
@@ -211,8 +213,14 @@ mod t {
         assert_eq!(
             c.functions,
             vec![
-                Function { file: "/r/src/a.rs".into(), name: "f<a, b>".into(), line: 3, hits: 2 },
-                Function { file: "/r/src/a.rs".into(), name: "g".into(), line: 9, hits: 0 },
+                Function {
+                    file: "/r/src/a.rs".into(),
+                    name: "f<a, b>".into(),
+                    line: 3,
+                    hits: 2,
+                    symbol: String::new()
+                },
+                Function { file: "/r/src/a.rs".into(), name: "g".into(), line: 9, hits: 0, symbol: String::new() },
             ]
         );
     }
@@ -252,6 +260,9 @@ mod t {
         </package></report>"#;
         let c = read(CoverageFormat::Jacoco, &[x.into()]).unwrap();
         assert_eq!(c.lines["com/x/A.kt"][&5], 2);
-        assert_eq!(c.functions, vec![Function { file: "com/x/A.kt".into(), name: "f".into(), line: 4, hits: 0 }]);
+        assert_eq!(
+            c.functions,
+            vec![Function { file: "com/x/A.kt".into(), name: "f".into(), line: 4, hits: 0, symbol: String::new() }]
+        );
     }
 }

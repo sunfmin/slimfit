@@ -1,6 +1,6 @@
 //! Stand-ins for the tools slimfit drives, for slimfit's own tests: one
-//! binary, linked under each tool's name (`cargo`, `go`, `gremlins`,
-//! `swift`, `xcrun`, `muter`, `npx`, `gradlew`) into a directory placed
+//! binary, linked under each tool's name (`cargo`, `llvm-profdata`, `go`,
+//! `gremlins`, `swift`, `xcrun`, `muter`, `npx`, `gradlew`) into a directory placed
 //! first on PATH. It reads the arguments as the real tool does, refuses
 //! (exit 64, no report) what the real tool would not take, and writes the
 //! real reports of `testdata/<language>/reports` where the real tool
@@ -49,6 +49,7 @@ fn main() {
 
     let work = match tool.as_str() {
         "cargo" => cargo(&sub, args, &dir, &state.reports),
+        "llvm-profdata" => llvm_profdata(&sub, args, &state.reports),
         "go" => go(&sub, args),
         "gremlins" => gremlins(&sub, args),
         "swift" => swift(&sub, args, &dir),
@@ -147,11 +148,18 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
                 .and_then(|j| j.get("path"))
                 .and_then(|p| p.as_str())
                 .ok_or("the nextest config sets no profile.default.junit.path")?;
+            let mut prepare: Vec<Box<dyn FnOnce()>> = Vec::new();
+            if let Some(config) = value(args, "--config") {
+                let runner = runner(&config)?;
+                let (reports, dir) = (reports.to_path_buf(), dir.to_path_buf());
+                prepare.push(Box::new(move || run_tests(&runner, &reports, &dir)));
+            }
             Ok(Work {
                 copies: vec![
                     ("junit.xml".into(), dir.join(NEXTEST_DIR).join(junit)),
                     ("lcov.info".into(), lcov.into()),
                 ],
+                prepare,
                 ..Work::default()
             })
         }
@@ -159,6 +167,10 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
             let out = PathBuf::from(need(args, "--output")?);
             if let Some(diff) = value(args, "--in-diff") {
                 std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
+            }
+            if args.iter().any(|a| a == "--list") {
+                has(args, "--json")?;
+                return Ok(Work { stdout: Some("mutants.list.json".into()), ..Work::default() });
             }
             let outcomes = out.join(CARGO_MUTANTS_OUTCOMES);
             // cargo-mutants exits 2 when a mutant was missed.
@@ -172,6 +184,57 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
         }
         _ => Err(format!("no subcommand {sub:?}")),
     }
+}
+
+/// The runner `--config` sets for every target (`target.'cfg(all())'.runner
+/// = [...]`), as nextest takes it from cargo's configuration.
+fn runner(config: &str) -> Result<Vec<String>, Refusal> {
+    let table: toml::Table = config.parse().map_err(|e| format!("--config {config}: {e}"))?;
+    let runner = table
+        .get("target")
+        .and_then(|t| t.get("cfg(all())"))
+        .and_then(|t| t.get("runner"))
+        .and_then(|r| r.as_array())
+        .ok_or(format!("--config {config}: no target.'cfg(all())'.runner"))?;
+    Ok(runner.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+}
+
+/// nextest's run, as the runner sees it: each test of the real reach
+/// report, run through `runner` with the variables nextest sets, as a
+/// process that writes a profile where `LLVM_PROFILE_FILE` says (holding
+/// its test, which the `llvm-profdata` stand-in reads back).
+fn run_tests(runner: &[String], reports: &Path, dir: &Path) {
+    let target = dir.join("target/llvm-cov-target");
+    std::fs::create_dir_all(&target).unwrap();
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    for test in reach.lines().filter_map(|l| l.strip_prefix("test ")) {
+        let (binary, name) = test.split_once('\t').unwrap();
+        let ok = std::process::Command::new(&runner[0])
+            .args(&runner[1..])
+            .args(["sh", "-c", "printf %s \"$T\" > \"${LLVM_PROFILE_FILE%-%p-%m.profraw}-$$-1.profraw\""])
+            .env("NEXTEST_BINARY_ID", binary)
+            .env("NEXTEST_TEST_NAME", name)
+            .env("LLVM_PROFILE_FILE", target.join("calc-%p-%m.profraw"))
+            .env("T", test)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "the runner failed on {test}");
+    }
+}
+
+/// `llvm-profdata show --all-functions --counts <profile>`: of a profile
+/// `run_tests` wrote, the real report's section for its test.
+fn llvm_profdata(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal> {
+    sub_is(sub, "show")?;
+    has(args, "--all-functions")?;
+    has(args, "--counts")?;
+    let profile = args.last().filter(|a| !a.starts_with('-')).ok_or("no profile")?;
+    let test = std::fs::read_to_string(profile).map_err(|e| format!("{profile}: {e}"))?;
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    let section = reach.split("test ").find_map(|s| s.strip_prefix(&format!("{test}\n"))).ok_or("no such test")?;
+    print!("{section}");
+    Ok(Work::default())
 }
 
 /// `go test -json -coverprofile=<file>`: the JSON on stdout.

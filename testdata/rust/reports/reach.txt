@@ -1,0 +1,156 @@
+test calc	tests::slow
+Counters:
+  _RNvNtCsdQ98wxMlzei_4calc5testss_10adds_again:
+    Hash: 0xcebed6d6e9980b0a
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4adds:
+    Hash: 0x52cfe9cc8507d7f6
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4slow:
+    Hash: 0x6fb3e46fa1235dce
+    Counters: 2
+    Function count: 1
+    Block counts: [1]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_5adult:
+    Hash: 0x8b7d2bf9579f15d7
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvCsdQ98wxMlzei_4calc3add:
+    Hash: 0xdf3467322c3a26df
+    Counters: 1
+    Function count: 1
+    Block counts: []
+  _RNvCsdQ98wxMlzei_4calc8is_adult:
+    Hash: 0xc3efbd7641014f4d
+    Counters: 1
+    Function count: 0
+    Block counts: []
+Instrumentation level: Front-end
+Functions shown: 6
+Total functions: 6
+Maximum function count: 1
+Maximum internal block count: 1
+Total number of blocks: 10
+Total count: 3
+test calc	tests::adds
+Counters:
+  _RNvNtCsdQ98wxMlzei_4calc5testss_10adds_again:
+    Hash: 0xcebed6d6e9980b0a
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4adds:
+    Hash: 0x52cfe9cc8507d7f6
+    Counters: 2
+    Function count: 1
+    Block counts: [1]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4slow:
+    Hash: 0x6fb3e46fa1235dce
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_5adult:
+    Hash: 0x8b7d2bf9579f15d7
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvCsdQ98wxMlzei_4calc3add:
+    Hash: 0xdf3467322c3a26df
+    Counters: 1
+    Function count: 1
+    Block counts: []
+  _RNvCsdQ98wxMlzei_4calc8is_adult:
+    Hash: 0xc3efbd7641014f4d
+    Counters: 1
+    Function count: 0
+    Block counts: []
+Instrumentation level: Front-end
+Functions shown: 6
+Total functions: 6
+Maximum function count: 1
+Maximum internal block count: 1
+Total number of blocks: 10
+Total count: 3
+test calc	tests::adult
+Counters:
+  _RNvNtCsdQ98wxMlzei_4calc5testss_10adds_again:
+    Hash: 0xcebed6d6e9980b0a
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4adds:
+    Hash: 0x52cfe9cc8507d7f6
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4slow:
+    Hash: 0x6fb3e46fa1235dce
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_5adult:
+    Hash: 0x8b7d2bf9579f15d7
+    Counters: 2
+    Function count: 1
+    Block counts: [1]
+  _RNvCsdQ98wxMlzei_4calc3add:
+    Hash: 0xdf3467322c3a26df
+    Counters: 1
+    Function count: 0
+    Block counts: []
+  _RNvCsdQ98wxMlzei_4calc8is_adult:
+    Hash: 0xc3efbd7641014f4d
+    Counters: 1
+    Function count: 1
+    Block counts: []
+Instrumentation level: Front-end
+Functions shown: 6
+Total functions: 6
+Maximum function count: 1
+Maximum internal block count: 1
+Total number of blocks: 10
+Total count: 3
+test calc	tests::adds_again
+Counters:
+  _RNvNtCsdQ98wxMlzei_4calc5testss_10adds_again:
+    Hash: 0xcebed6d6e9980b0a
+    Counters: 2
+    Function count: 1
+    Block counts: [1]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4adds:
+    Hash: 0x52cfe9cc8507d7f6
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_4slow:
+    Hash: 0x6fb3e46fa1235dce
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvNtCsdQ98wxMlzei_4calc5testss_5adult:
+    Hash: 0x8b7d2bf9579f15d7
+    Counters: 2
+    Function count: 0
+    Block counts: [0]
+  _RNvCsdQ98wxMlzei_4calc3add:
+    Hash: 0xdf3467322c3a26df
+    Counters: 1
+    Function count: 1
+    Block counts: []
+  _RNvCsdQ98wxMlzei_4calc8is_adult:
+    Hash: 0xc3efbd7641014f4d
+    Counters: 1
+    Function count: 0
+    Block counts: []
+Instrumentation level: Front-end
+Functions shown: 6
+Total functions: 6
+Maximum function count: 1
+Maximum internal block count: 1
+Total number of blocks: 10
+Total count: 3
