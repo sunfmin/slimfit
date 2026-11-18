@@ -50,3 +50,9 @@ In a repo gated by factorium:
 fast = "slimfit check"
 slow = "slimfit check --mutants"
 ```
+
+## Develop
+
+- `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself).
+- `./slow.sh`: the fast gate, slimfit's own mutants, and the Rust sample end to end. `E2E_LANGS="go swift" ./slow.sh` runs those languages instead; `E2E_LANGS=all ./slow.sh` runs every language whose toolchain is present.
+- `./e2e.sh [rust|go|typescript|kotlin|swift]...`: end to end on its own; no arguments means every language.
