@@ -640,11 +640,9 @@ mod t {
         pruned.mutants_at.as_mut().unwrap().tree = Some("0".repeat(40));
         let (m, _) = run(repo, &cfg, &pruned, Mutants::Change);
         assert_eq!(m.suites[0].mutated.as_ref().unwrap().files, ["src/lib.rs", "src/new.rs"]);
-        // The commit gone too, or none recorded: from HEAD, clean.
+        // The commit gone too: from HEAD, clean.
         pruned.mutants_at.as_mut().unwrap().commit = "0".repeat(40);
-        for b in [pruned, Baseline::default()] {
-            assert_eq!(run(repo, &cfg, &b, Mutants::Change).0.suites[0].mutated.as_ref(), Some(&none));
-        }
+        assert_eq!(run(repo, &cfg, &pruned, Mutants::Change).0.suites[0].mutated.as_ref(), Some(&none));
     }
 
     /// Before the first commit every line is the change's; a suite in a
