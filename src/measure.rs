@@ -563,6 +563,7 @@ mod t {
         assert_eq!(args.as_deref(), Some("\n"));
         let s = &full.suites[0];
         assert_eq!(s.mutated, None);
+        assert_eq!(s.metrics.tests, 4);
         let lib = s.metrics.mutant_files["src/lib.rs"];
         assert_eq!(s.metrics.mutants, Some(lib));
         assert!(lib.survived > 0 && lib.killed > 0);

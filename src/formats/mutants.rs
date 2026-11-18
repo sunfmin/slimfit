@@ -27,16 +27,14 @@ pub fn read(format: MutantsFormat, reports: &[(PathBuf, String)]) -> Result<Muta
             MutantsFormat::Muter => muter(t, &mut run)?,
         }
     }
-    if format == MutantsFormat::CargoMutants {
-        // One killed mutant whose killers are unknown makes every test that
-        // seems to kill nothing look redundant: then claim nothing.
-        if run.mutants.iter().any(|m| m.status == MutantStatus::Killed && m.killed_by.is_none()) {
-            run.mutants.iter_mut().for_each(|m| m.killed_by = None);
-            run.tests = None;
-        } else if let Some(t) = run.tests.as_mut() {
-            t.sort();
-            t.dedup();
-        }
+    // One killed mutant whose killers are unknown makes every test that
+    // seems to kill nothing look redundant: then claim nothing.
+    if run.mutants.iter().any(|m| m.status == MutantStatus::Killed && m.killed_by.is_none()) {
+        run.mutants.iter_mut().for_each(|m| m.killed_by = None);
+        run.tests = None;
+    } else if let Some(t) = run.tests.as_mut() {
+        t.sort();
+        t.dedup();
     }
     Ok(run)
 }
@@ -352,7 +350,7 @@ mod t {
     #[test]
     fn a_timed_out_mutant_is_killed_by_the_tests_still_running_and_cargo_test_records_none() {
         let dir = tempfile::tempdir().unwrap();
-        let log = "  START [ ] (1/2) c t::quick\n  START [ ] (2/2) c t::hangs\n   PASS [ 0.01s] (1/2) c t::quick\n   SLOW [> 60s] (2/2) c t::hangs\n";
+        let log = "  START [ ] (1/2) c t::quick\n  START [ ] (2/2) c t::hangs\nTRY 1 FAIL [ 0.01s] (1/2) c t::quick\n   PASS [ 0.01s] (1/2) c t::quick\n   SLOW [> 60s] (2/2) c t::hangs\n";
         std::fs::write(dir.path().join("hang.log"), log).unwrap();
         let outcome = |summary: &str, tool: &str| {
             format!(
