@@ -1,0 +1,73 @@
+
+*** src/lib.rs:6:5: replace unused -> i64 with 1
+
+*** mutation diff:
+--- src/lib.rs
++++ replace unused -> i64 with 1
+@@ -1,16 +1,14 @@
+ pub fn add(a: i64, b: i64) -> i64 {
+     a + b
+ }
+ 
+ pub fn unused(x: i64) -> i64 {
+-    let doubled = x * 2;
+-    let shifted = doubled + 7;
+-    shifted / 3
++    1 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn is_adult(age: u32) -> bool {
+     age >= 18
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+
+
+*** cargo nextest run --no-run --verbose --package=calc@0.1.0
+   Compiling calc v0.1.0 (/REPO)
+warning: unused variable: `x`
+ --> src/lib.rs:5:15
+  |
+5 | pub fn unused(x: i64) -> i64 {
+  |               ^ help: if this is intentional, prefix it with an underscore: `_x`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `calc` (lib) generated 1 warning (run `cargo fix --lib -p calc` to apply 1 suggestion)
+warning: `calc` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+
+*** result: Success
+
+*** cargo nextest run --verbose --package=calc@0.1.0 --no-fail-fast
+warning: unused variable: `x`
+ --> src/lib.rs:5:15
+  |
+5 | pub fn unused(x: i64) -> i64 {
+  |               ^ help: if this is intentional, prefix it with an underscore: `_x`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `calc` (lib) generated 1 warning (run `cargo fix --lib -p calc` to apply 1 suggestion)
+warning: `calc` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+────────────
+ Nextest run ID 16541b9e-d24f-4927-b66f-7d53b02a4f61 with nextest profile: default
+    Starting 4 tests across 1 binary
+       START [         ] (1/4) calc tests::slow
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::slow --nocapture
+       START [         ] (1/4) calc tests::adds_again
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds_again --nocapture
+       START [         ] (1/4) calc tests::adds
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds --nocapture
+       START [         ] (1/4) calc tests::adult
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adult --nocapture
+        PASS [   0.017s] (1/4) calc tests::adult
+        PASS [   0.017s] (2/4) calc tests::adds
+        PASS [   0.020s] (3/4) calc tests::adds_again
+        PASS [   0.618s] (4/4) calc tests::slow
+────────────
+     Summary [   0.621s] 4 tests run: 4 passed, 0 skipped
+
+*** result: Success

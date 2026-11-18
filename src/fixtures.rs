@@ -61,7 +61,9 @@ fn measure_with_coverage(
     let resolver = Resolver::new(Path::new("/REPO"), &totals);
     let t = formats::read_tests(tests.0, &read(lang, tests.1)).unwrap();
     let c = formats::read_coverage(coverage.0, &coverage.1).unwrap();
-    let mut m = formats::read_mutants(mutants.0, &read(lang, mutants.1)).unwrap();
+    let reports: Vec<_> = mutants.1.iter().map(|n| sample(lang).join("reports").join(n)).collect();
+    let reports: Vec<_> = reports.into_iter().map(|p| (p.clone(), std::fs::read_to_string(p).unwrap())).collect();
+    let mut m = formats::read_mutants(mutants.0, &reports).unwrap();
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
@@ -103,6 +105,23 @@ fn rust_sample() {
     // the inline test module is test code, not uncovered prod code
     assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
     assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
+    // cargo-mutants under nextest with --no-fail-fast: each mutant's log names
+    // every killer, in JUnit's ids. One of the three `add` tests stays.
+    let redundant: Vec<String> = of_measurement(&s)
+        .into_iter()
+        .filter(|t| t.kind == TaskKind::RedundantTest)
+        .map(|t| t.evidence["test"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(redundant.len(), 2, "{redundant:?}");
+    assert!(redundant.contains(&"calc::tests::slow".to_string()), "{redundant:?}");
+    assert!(s.tests.iter().any(|t| t.id == "calc::tests::slow"));
+    // Without the logs the killers are unknown, and no test is called redundant.
+    let bare = formats::read_mutants(
+        MutantsFormat::CargoMutants,
+        &[("outcomes.json".into(), read("rust", &["outcomes.json"]).remove(0))],
+    )
+    .unwrap();
+    assert!(bare.tests.is_none() && bare.mutants.iter().all(|m| m.killed_by.is_none()));
 }
 
 /// Coverage that depends on timing reaches a line in one run and misses it
