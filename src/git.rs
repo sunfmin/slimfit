@@ -21,6 +21,11 @@ pub fn run(repo: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// `path`'s text at `commit`; `None` when the commit has no such file.
+pub fn text_at(repo: &Path, commit: &str, path: &str) -> Option<String> {
+    run(repo, &["show", &format!("{commit}:{path}")]).ok()
+}
+
 pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
     let fix = "run slimfit inside the repository, or pass `--repo <its path>`; a project with no repository yet \
                needs `git init` and a first commit";

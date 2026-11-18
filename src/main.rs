@@ -102,7 +102,7 @@ enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run; with `--mutants`, every mutant too), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`.
+    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run; with `--mutants`, every mutant too), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -110,6 +110,7 @@ enum Cmd {
     /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `mutants_command`, `mutants_report` and `mutants_file_flag` (the flag that limits the mutation tool to one file; empty when it has none).
     /// - `baseline`: per suite, {const:HELD}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
+    /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
     ///
     /// ## What it may refuse
     ///
@@ -126,6 +127,9 @@ enum Cmd {
         /// Also run mutation testing of every file, for the first mutants baseline: hours on a large workspace (see [the piecewise baseline](help:piecewise-baseline)).
         #[arg(long, verbatim_doc_comment)]
         mutants: bool,
+        /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
+        #[arg(long, verbatim_doc_comment)]
+        dry_run: bool,
     },
     /// The next task to do, with its evidence and accept command.
     ///
@@ -237,7 +241,7 @@ enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. With `--mutants`, `--all-mutants` or a piece it also records the commit the mutants were measured at, so the next `--mutants` mutates only what changed after it.
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. With `--mutants`, `--all-mutants` or a piece it also records the commit the mutants were measured at, so the next `--mutants` mutates only what changed after it. With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -246,6 +250,7 @@ enum Cmd {
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
     /// - `not_recorded`: in a piece, a `test_seconds` over its bound, left at its old value (see [host load](help:host-load)): {const:VIOLATION}.
     /// - `next`: commit, then `slimfit next` (or, when nothing changed, just `slimfit next`).
+    /// - `would_write`: with `--dry-run` only, `.slimfit/baseline.json`'s whole new text, when it would change.
     ///
     /// ## What it may refuse
     ///
@@ -285,6 +290,9 @@ enum Cmd {
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
+        /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
+        #[arg(long, verbatim_doc_comment)]
+        dry_run: bool,
     },
     /// Current metrics against the baseline, and line counts over git history.
     ///
@@ -355,6 +363,11 @@ struct MutantsScope;
 #[topic(name = "piecewise-baseline")]
 struct PiecewiseBaseline;
 
+#[doc = include_str!("help/dry-run.md")]
+#[derive(Topic)]
+#[topic(name = "dry-run")]
+struct DryRun;
+
 #[doc = include_str!("help/factorium.md")]
 #[derive(Topic)]
 #[topic(name = "factorium")]
@@ -368,6 +381,7 @@ fn help() -> Help {
         .topic::<HostLoad>()
         .topic::<MutantsScope>()
         .topic::<PiecewiseBaseline>()
+        .topic::<DryRun>()
         .topic::<Factorium>()
         .table::<ratchet::Bound>("bound")
         .constant("EXIT_OK", EXIT_OK)
@@ -453,9 +467,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
     let start = cli.repo.clone().unwrap_or(std::env::current_dir()?);
     let repo = git::toplevel(&start)?;
     match cli.command {
-        Cmd::Init { mutants } => {
+        Cmd::Init { mutants, dry_run } => {
+            let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let created = !repo.join(config::FILE).exists();
-            if created {
+            let cfg = if created {
                 let suites = config::detect(&git::worktree(&repo)?.files);
                 if suites.is_empty() {
                     return Err(fault::fault(
@@ -467,26 +482,34 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                         ),
                     ));
                 }
-                let cfg = config::Config { suites, check: Default::default() };
-                std::fs::write(repo.join(config::FILE), toml::to_string_pretty(&cfg)?)?;
-            }
-            ensure_gitignore(&repo)?;
-            let (cfg, old) = loaded(&repo)?;
-            let m =
-                measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(false, mutants), fresh: true })?;
+                let text = toml::to_string_pretty(&config::Config { suites, check: Default::default() })?;
+                writes.put(config::FILE, &text)?;
+                config::parse(&repo, &text)
+            } else {
+                config::load(&repo)
+            };
+            writes
+                .put(".gitignore", &gitignore(&std::fs::read_to_string(repo.join(".gitignore")).unwrap_or_default()))?;
+            let (cfg, old) = both(cfg, ratchet::load(&repo))?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &old,
+                &measure::Options { mutants: scope(false, mutants), fresh: true, dry_run },
+            )?;
             let base = ratchet::Baseline {
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
                 loosened: old.loosened,
-                mutants_at: if mutants { m.snapshot.clone() } else { None },
+                mutants_at: if mutants { m.snapshot.clone().map(|s| writes.dirty(s)) } else { None },
             };
-            ratchet::save(&repo, &base)?;
+            writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
-                json!({
+                writes.answer(json!({
                     "config": if created { "written" } else { "kept" },
                     "suites": cfg.suites.iter().map(|s| s.resolve()).collect::<Vec<_>>(),
                     "baseline": base.suites,
                     "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
-                }),
+                })),
                 EXIT_OK,
             ))
         }
@@ -496,7 +519,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &repo,
                 &cfg,
                 &base,
-                &measure::Options { mutants: scope(mutants, all_mutants), fresh },
+                &measure::Options { mutants: scope(mutants, all_mutants), fresh, dry_run: false },
             )?;
             let mut list = tasks::all(&repo, &cfg, &m)?;
             if let Some(k) = kind {
@@ -550,7 +573,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &repo,
                 &cfg,
                 &base,
-                &measure::Options { mutants: scope(mutants, all_mutants), fresh },
+                &measure::Options { mutants: scope(mutants, all_mutants), fresh, dry_run: false },
             )?;
             let v = ratchet::check(&base, &m, &cfg.check);
             let next = if !v.ok {
@@ -563,7 +586,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let code = if v.ok { EXIT_OK } else { EXIT_VIOLATION };
             Ok((json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }), code))
         }
-        Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh } => {
+        Cmd::Ratchet { loosen, reason, mutants, all_mutants, pending_seconds, pending_files, fresh, dry_run } => {
             let (cfg, old) = loaded(&repo)?;
             let scope = if pending_seconds.is_some() || pending_files.is_some() {
                 measure::Mutants::Fill(measure::Budget {
@@ -573,12 +596,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             } else {
                 scope(mutants, all_mutants)
             };
-            let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh })?;
+            let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh, dry_run })?;
             let (new, not_recorded) = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             // Nothing to ratchet is an answer, not a failure.
             let changed = new != old;
+            let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             if changed {
-                ratchet::save(&repo, &new)?;
+                writes.put(ratchet::FILE, &ratchet::render(&new)?)?;
             }
             let next = if changed {
                 "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
@@ -587,13 +611,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 "nothing to ratchet: the baseline already holds this measurement; `slimfit next`"
             };
             Ok((
-                json!({
+                writes.answer(json!({
                     "changed": changed,
                     "baseline": new.suites,
                     "loosened": new.loosened,
                     "not_recorded": not_recorded,
                     "next": next,
-                }),
+                })),
                 EXIT_OK,
             ))
         }
@@ -606,7 +630,12 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         Cmd::Help { .. } => unreachable!("`parse` answers it"),
         Cmd::Report { commits, points, fresh } => {
             let (cfg, base) = loaded(&repo)?;
-            let m = measure::current(&repo, &cfg, &base, &measure::Options { mutants: measure::Mutants::None, fresh })?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &base,
+                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false },
+            )?;
             let history = report::history(&repo, &cfg, commits, points)?;
             Ok((
                 json!({
@@ -624,7 +653,12 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
 
 /// slimfit.toml and the baseline, or the faults of both.
 fn loaded(repo: &std::path::Path) -> Result<(config::Config, ratchet::Baseline)> {
-    match (config::load(repo), ratchet::load(repo)) {
+    both(config::load(repo), ratchet::load(repo))
+}
+
+/// Both, or the faults of both.
+fn both(c: Result<config::Config>, b: Result<ratchet::Baseline>) -> Result<(config::Config, ratchet::Baseline)> {
+    match (c, b) {
         (Ok(c), Ok(b)) => Ok((c, b)),
         (c, b) => Err(fault::Faults(c.err().into_iter().chain(b.err()).flat_map(fault::of).collect()).into()),
     }
@@ -687,14 +721,62 @@ fn mutated_of(m: &model::Measurement) -> serde_json::Value {
         .into()
 }
 
-fn ensure_gitignore(repo: &std::path::Path) -> Result<()> {
-    let path = repo.join(".gitignore");
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    if !text.lines().any(|l| l.trim() == measure::OUT || l.trim() == format!("/{}/", measure::OUT)) {
-        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-        std::fs::write(&path, format!("{text}{sep}{}\n", measure::OUT))?;
+/// The files a command writes, by path in the repo: written at once, or in
+/// a dry run only collected, those that would change, for its answer.
+struct Writes<'a> {
+    repo: &'a std::path::Path,
+    dry_run: bool,
+    would: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Writes<'_> {
+    fn put(&mut self, path: &str, text: &str) -> Result<()> {
+        let file = self.repo.join(path);
+        if std::fs::read_to_string(&file).is_ok_and(|old| old == text) {
+            return Ok(());
+        }
+        if self.dry_run {
+            self.would.insert(path.into(), text.into());
+        } else {
+            std::fs::create_dir_all(file.parent().expect("a path in the repo"))?;
+            std::fs::write(file, text)?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    /// `s` as the tree will be once written: a dry run measured it without
+    /// the files it would write, so those are dirty when they differ from
+    /// the commit, and clean when they would equal it again.
+    fn dirty(&self, mut s: model::Snapshot) -> model::Snapshot {
+        for (path, text) in &self.would {
+            s.dirty.retain(|d| d != path);
+            if git::text_at(self.repo, &s.commit, path).as_deref() != text.as_str() {
+                s.dirty.push(path.clone());
+            }
+        }
+        s.dirty.sort();
+        s
+    }
+
+    /// The command's answer; in a dry run with `would_write`, and `next`
+    /// says to run it for real.
+    fn answer(self, mut v: serde_json::Value) -> serde_json::Value {
+        if self.dry_run {
+            v["would_write"] = self.would.into();
+            v["next"] = "if `would_write` is what you want, run the same command without --dry-run".into();
+        }
+        v
+    }
+}
+
+/// `.gitignore`'s text with the output directory ignored: added once, on a
+/// line of its own; an existing `/.../` entry counts.
+fn gitignore(text: &str) -> String {
+    if text.lines().any(|l| l.trim() == measure::OUT || l.trim() == format!("/{}/", measure::OUT)) {
+        return text.into();
+    }
+    let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+    format!("{text}{sep}{}\n", measure::OUT)
 }
 
 #[cfg(test)]
@@ -821,27 +903,17 @@ mod tests {
 
 #[cfg(test)]
 mod gitignore_tests {
-    use super::{ensure_gitignore, measure::OUT};
+    use super::{gitignore, measure::OUT};
 
     /// The output directory is ignored once: added after any text (on its own
     /// line), never twice, and an existing `/.../` entry counts.
     #[test]
-    fn ensure_gitignore_adds_the_output_dir_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(".gitignore");
-        let after = |text: Option<&str>| {
-            match text {
-                Some(t) => std::fs::write(&file, t).unwrap(),
-                None => _ = std::fs::remove_file(&file),
-            }
-            ensure_gitignore(dir.path()).unwrap();
-            std::fs::read_to_string(&file).unwrap()
-        };
-        assert_eq!(after(None), format!("{OUT}\n"));
-        assert_eq!(after(Some("target")), format!("target\n{OUT}\n"));
-        assert_eq!(after(Some("target\n")), format!("target\n{OUT}\n"));
+    fn gitignore_adds_the_output_dir_once() {
+        assert_eq!(gitignore(""), format!("{OUT}\n"));
+        assert_eq!(gitignore("target"), format!("target\n{OUT}\n"));
+        assert_eq!(gitignore("target\n"), format!("target\n{OUT}\n"));
         for kept in [format!("a\n {OUT} \nb"), format!("/{OUT}/\nb\n"), format!("b\n/{OUT}/")] {
-            assert_eq!(after(Some(&kept)), kept);
+            assert_eq!(gitignore(&kept), kept);
         }
     }
 }

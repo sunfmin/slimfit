@@ -348,15 +348,16 @@ mod tests {
     /// A repository with a Rust suite, a baseline and `files` as written.
     fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        let empty = ratchet::render(&Baseline::default()).unwrap();
         let mut all = vec![(config::FILE, "[[suite]]\nname = \"rust\"\npreset = \"rust\"\n")];
+        if !files.iter().any(|(f, _)| *f == ratchet::FILE) {
+            all.push((ratchet::FILE, &empty));
+        }
         all.extend_from_slice(files);
         for (f, text) in all {
             let p = dir.path().join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, text).unwrap();
-        }
-        if !files.iter().any(|(f, _)| *f == ratchet::FILE) {
-            ratchet::save(dir.path(), &Baseline::default()).unwrap();
         }
         dir
     }

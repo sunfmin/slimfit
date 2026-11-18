@@ -321,7 +321,13 @@ pub fn load(repo: &Path) -> Result<Config> {
             "`slimfit init` writes it (or restore it from git: `git checkout -- slimfit.toml`)",
         )
     })?;
-    let cfg: Config = toml::from_str(&text).map_err(|e| {
+    parse(repo, &text)
+}
+
+/// `slimfit.toml`'s text, or every fault found in it; a suite's root is
+/// looked for in `repo`.
+pub fn parse(repo: &Path, text: &str) -> Result<Config> {
+    let cfg: Config = toml::from_str(text).map_err(|e| {
         fault(
             format!("{FILE} is not valid: {}", e.to_string().trim()),
             format!(
