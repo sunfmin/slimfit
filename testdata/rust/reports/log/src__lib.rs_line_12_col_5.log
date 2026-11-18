@@ -1,0 +1,74 @@
+
+*** src/lib.rs:12:5: replace is_adult -> bool with true
+
+*** mutation diff:
+--- src/lib.rs
++++ replace is_adult -> bool with true
+@@ -4,17 +4,17 @@
+ 
+ pub fn unused(x: i64) -> i64 {
+     let doubled = x * 2;
+     let shifted = doubled + 7;
+     shifted / 3
+ }
+ 
+ pub fn is_adult(age: u32) -> bool {
+-    age >= 18
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+ 
+     #[test]
+     fn adds() {
+
+
+*** cargo nextest run --no-run --verbose --package=calc@0.1.0
+   Compiling calc v0.1.0 (/REPO)
+warning: unused variable: `age`
+  --> src/lib.rs:11:17
+   |
+11 | pub fn is_adult(age: u32) -> bool {
+   |                 ^^^ help: if this is intentional, prefix it with an underscore: `_age`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `calc` (lib) generated 1 warning (run `cargo fix --lib -p calc` to apply 1 suggestion)
+warning: `calc` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+
+*** result: Success
+
+*** cargo nextest run --verbose --package=calc@0.1.0 --no-fail-fast
+warning: unused variable: `age`
+  --> src/lib.rs:11:17
+   |
+11 | pub fn is_adult(age: u32) -> bool {
+   |                 ^^^ help: if this is intentional, prefix it with an underscore: `_age`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `calc` (lib) generated 1 warning (run `cargo fix --lib -p calc` to apply 1 suggestion)
+warning: `calc` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+────────────
+ Nextest run ID 777078ab-5cf8-4a12-addd-a1323edd2f9d with nextest profile: default
+    Starting 4 tests across 1 binary
+       START [         ] (1/4) calc tests::slow
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::slow --nocapture
+       START [         ] (1/4) calc tests::adds
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds --nocapture
+       START [         ] (1/4) calc tests::adds_again
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adds_again --nocapture
+       START [         ] (1/4) calc tests::adult
+             command: /REPO/target/debug/build/calc/33c185eecca3889e/out/calc-33c185eecca3889e --exact tests::adult --nocapture
+        PASS [   0.017s] (1/4) calc tests::adds_again
+        PASS [   0.022s] (2/4) calc tests::adult
+        PASS [   0.029s] (3/4) calc tests::adds
+        PASS [   0.620s] (4/4) calc tests::slow
+────────────
+     Summary [   0.627s] 4 tests run: 4 passed, 0 skipped
+
+*** result: Success

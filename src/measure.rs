@@ -273,11 +273,11 @@ fn mutate(
         std::fs::remove_file(old)?;
     }
     let (log, ok) = shell(root, out, command, "mutants")?;
-    let texts = match read_report(root, out, &suite.mutants_report, &log) {
+    let reports = match read_reports(root, out, &suite.mutants_report, &log) {
         Err(_) if may_find_none && ok => vec![],
         r => r?,
     };
-    let mut run = formats::read_mutants(suite.mutants_report.format, &texts)?;
+    let mut run = formats::read_mutants(suite.mutants_report.format, &reports)?;
     for m in &mut run.mutants {
         m.file = resolver.resolve(&m.file).unwrap_or_else(|| m.file.clone());
     }
@@ -328,6 +328,11 @@ fn report_paths<F>(root: &Path, out: &Path, report: &Report<F>) -> Result<Vec<Pa
 }
 
 fn read_report<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Result<Vec<String>> {
+    Ok(read_reports(root, out, report, log)?.into_iter().map(|(_, text)| text).collect())
+}
+
+/// The report's files, each with its path.
+fn read_reports<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Result<Vec<(PathBuf, String)>> {
     let pattern = report_pattern(root, out, report);
     let paths = expand(&pattern)?;
     if paths.is_empty() {
@@ -335,7 +340,13 @@ fn read_report<F>(root: &Path, out: &Path, report: &Report<F>, log: &Path) -> Re
         let tail: Vec<&str> = tail.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
         bail!("no report at {pattern}; the command's log ends:\n{}", tail.join("\n"));
     }
-    paths.iter().map(|p| std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))).collect()
+    paths
+        .into_iter()
+        .map(|p| {
+            let text = std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
+            Ok((p, text))
+        })
+        .collect()
 }
 
 /// Paths matching an absolute glob, walking only below its literal prefix.
@@ -547,7 +558,7 @@ mod t {
             preset = "rust"
             test_command = "cp {r}/junit.xml {r}/lcov.info \"$SLIMFIT_OUT\""
             tests_report = {{ format = "junit", path = "$SLIMFIT_OUT/junit.xml" }}
-            mutants_command = "f() {{ echo \"$@\" > \"$SLIMFIT_OUT/args\"; mkdir -p \"$SLIMFIT_OUT/mutants.out\"; cp {r}/outcomes.json \"$SLIMFIT_OUT/mutants.out\"; }}; f"
+            mutants_command = "f() {{ echo \"$@\" > \"$SLIMFIT_OUT/args\"; mkdir -p \"$SLIMFIT_OUT/mutants.out\"; cp {r}/outcomes.json \"$SLIMFIT_OUT/mutants.out\"; ln -sfn {r}/log \"$SLIMFIT_OUT/mutants.out/log\"; }}; f"
             "#
         ))
         .unwrap();
@@ -568,6 +579,7 @@ mod t {
         assert_eq!(args.as_deref(), Some("\n"));
         let s = &full.suites[0];
         assert_eq!(s.mutated, None);
+        assert_eq!(s.metrics.tests, 4);
         let lib = s.metrics.mutant_files["src/lib.rs"];
         assert_eq!(s.metrics.mutants, Some(lib));
         assert!(lib.survived > 0 && lib.killed > 0);
@@ -593,6 +605,10 @@ mod t {
         assert_eq!(s.mutated, Some(vec!["src/lib.rs".to_string()]));
         assert_eq!(s.metrics.mutant_files, [("src/kept.rs".to_string(), kept), ("src/lib.rs".to_string(), lib)].into());
         assert_eq!(s.metrics.mutants, total);
+        // Its killers are read from the run's own logs.
+        let killed: Vec<_> = s.mutants.iter().filter(|m| m.status == MutantStatus::Killed).collect();
+        assert!(!killed.is_empty() && killed.iter().all(|m| m.killed_by.as_ref().is_some_and(|k| !k.is_empty())));
+        assert!(s.mutation_tests.as_ref().is_some_and(|t| t.len() == 4));
         // The merged counts describe this tree: ratcheting records it.
         let next = crate::ratchet::ratchet(&base, &m, &Default::default(), &[], None).unwrap().0;
         assert_eq!(next.mutants_at.unwrap().dirty, vec!["src/lib.rs".to_string()]);
