@@ -20,11 +20,13 @@ pub fn slowdown_during<T>(f: impl FnOnce() -> T) -> (T, f64) {
     let probe = {
         let running = running.clone();
         std::thread::spawn(move || {
-            let (wall, cpu) = (Instant::now(), thread_cpu());
+            let wall = Instant::now();
             while running.load(Ordering::Relaxed) {
                 std::hint::spin_loop();
             }
-            let cpu = (thread_cpu() - cpu).as_secs_f64();
+            // The probe's thread has done nothing else, so its CPU time is
+            // the spin's. A probe stopped before it ran has seen no slowdown.
+            let cpu = thread_cpu().as_secs_f64();
             if cpu > 0.0 { (wall.elapsed().as_secs_f64() / cpu).max(1.0) } else { 1.0 }
         })
     };
@@ -46,17 +48,18 @@ mod tests {
     use super::*;
 
     /// A stand-in test: a fixed amount of CPU work, timed by the wall clock
-    /// as a test runner times a test, then normalised by the slowdown.
-    fn normalised_seconds() -> f64 {
-        let (wall, slowdown) = slowdown_during(|| {
-            let t = Instant::now();
+    /// as a test runner times a test, then normalised by the slowdown. Also
+    /// the work's own CPU time: what it would take on an idle core.
+    fn normalised_and_cpu_seconds() -> (f64, f64) {
+        let ((wall, cpu), slowdown) = slowdown_during(|| {
+            let (t, c) = (Instant::now(), thread_cpu());
             let mut x = 0u64;
-            for i in 0..100_000_000u64 {
+            for i in 0..60_000_000u64 {
                 x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(i));
             }
-            t.elapsed().as_secs_f64()
+            (t.elapsed().as_secs_f64(), (thread_cpu() - c).as_secs_f64())
         });
-        wall / slowdown
+        (wall / slowdown, cpu)
     }
 
     /// The hog is other processes, as a busy host's load is: threads of
@@ -64,19 +67,20 @@ mod tests {
     /// contend for their cache lines, which no host load does.
     #[test]
     fn a_cpu_hog_leaves_the_normalised_time_within_tolerance() {
-        let unloaded = normalised_seconds();
+        let tolerance = crate::config::CheckConfig::default().time_tolerance;
+        let near = |a: f64, b: f64| (a - b).abs() <= b * tolerance;
+        let (unloaded, unloaded_cpu) = normalised_and_cpu_seconds();
         let mut hogs: Vec<_> = (0..2 * std::thread::available_parallelism().map_or(4, |n| n.get()))
             .map(|_| std::process::Command::new("yes").stdout(std::process::Stdio::null()).spawn().unwrap())
             .collect();
-        let loaded = normalised_seconds();
+        let (loaded, loaded_cpu) = normalised_and_cpu_seconds();
         for h in &mut hogs {
             h.kill().unwrap();
             h.wait().unwrap();
         }
-        let tolerance = crate::config::CheckConfig::default().time_tolerance;
         assert!(
-            (loaded - unloaded).abs() <= unloaded * tolerance,
-            "unloaded {unloaded:.3}s, under a CPU hog {loaded:.3}s"
+            near(loaded, unloaded) && near(unloaded, unloaded_cpu) && near(loaded, loaded_cpu),
+            "normalised (CPU) seconds: unloaded {unloaded:.3} ({unloaded_cpu:.3}), under a CPU hog {loaded:.3} ({loaded_cpu:.3})"
         );
     }
 }
