@@ -91,7 +91,7 @@ fn rust_sample() {
     assert_the_five_situations(&s, "src/lib.rs", 12);
     // the inline test module is test code, not uncovered prod code
     assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
-    assert_eq!(s.uncovered[0].function.as_deref(), Some("calc::unused"));
+    assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
 }
 
 #[test]

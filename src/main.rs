@@ -87,7 +87,7 @@ enum Cmd {
     },
     /// The next task to do, with its evidence and accept command.
     Next {
-        /// Every task, not just the first.
+        /// List every task, not just the first (at most 5 of each kind per suite, 3 deepen); `counts` counts them all.
         #[arg(long)]
         all: bool,
         /// Only tasks of this kind.
@@ -188,6 +188,7 @@ fn run() -> Result<()> {
             for t in &list {
                 *counts.entry(serde_json::to_value(t.kind)?.as_str().unwrap_or("").to_string()).or_insert(0) += 1;
             }
+            let list = tasks::cap(list);
             let mut notes = Vec::new();
             if !m.with_mutants {
                 notes.push(
