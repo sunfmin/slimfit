@@ -72,6 +72,8 @@ pub struct Overrides {
     pub mutants_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_report: Option<Report<MutantsFormat>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutants_file_flag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -99,6 +101,11 @@ pub struct Suite {
     pub coverage_report: Report<CoverageFormat>,
     pub mutants_command: String,
     pub mutants_report: Report<MutantsFormat>,
+    /// The flag that limits `mutants_command` to one file, given once per
+    /// file (paths relative to the suite root), for `--mutants` to mutate
+    /// only the files changed since the baseline. Empty: the tool has none,
+    /// and every file is mutated.
+    pub mutants_file_flag: String,
 }
 
 impl SuiteConfig {
@@ -130,6 +137,9 @@ impl SuiteConfig {
         }
         if let Some(v) = o.mutants_report {
             s.mutants_report = v
+        }
+        if let Some(v) = o.mutants_file_flag {
+            s.mutants_file_flag = v
         }
         s
     }
@@ -167,6 +177,7 @@ pub fn preset(p: Preset) -> Suite {
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
         mutants_command: String::new(),
         mutants_report: report(MutantsFormat::Stryker, ""),
+        mutants_file_flag: String::new(),
     };
     match p {
         Preset::Rust => Suite {
@@ -177,6 +188,7 @@ pub fn preset(p: Preset) -> Suite {
             tests_report: report(TestsFormat::Junit, "target/nextest/default/junit.xml"),
             mutants_command: "cargo mutants --workspace --no-shuffle --output \"$SLIMFIT_OUT\"".into(),
             mutants_report: report(MutantsFormat::CargoMutants, "$SLIMFIT_OUT/mutants.out/outcomes.json"),
+            mutants_file_flag: "--file".into(),
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
         Preset::Go => Suite {

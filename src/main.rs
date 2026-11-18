@@ -26,7 +26,8 @@ number: change the code until `slimfit check` passes.
 THE LOOP
   1. slimfit next             one task: kind, evidence, files, steps, accept command
   2. do exactly that task, nothing else
-  3. run the task's accept command (`slimfit check`, or `slimfit check --mutants`)
+  3. run the task's accept command (`slimfit check`, `check --mutants` or
+     `check --all-mutants`)
   4. slimfit ratchet          lock the gain into .slimfit/baseline.json
   5. commit code and baseline together (one task = one commit); back to 1
 
@@ -50,17 +51,32 @@ WHAT `slimfit check` HOLDS (against .slimfit/baseline.json)
   test_seconds      ≤ baseline × (1 + time_tolerance) + time_slack
                     (sum of the tests' own durations; build time excluded)
   uncovered_lines   ≤ baseline: code may grow, untested code may not
-  survived_mutants  ≤ baseline, checked with --mutants: deleting a test can
-                    never lower what the suite catches
+  survived_mutants  ≤ baseline, checked with --mutants or --all-mutants:
+                    deleting a test can never lower what the suite catches
   Line counts are recorded and reported, not bounded.
 
   To raise a bound, run `slimfit ratchet --loosen <bound> --reason \"<why>\"`.
   The reason is kept in the baseline, and every report shows it.
 
+WHAT IS MUTATED
+  --all-mutants     every file. Use it for the first baseline (`init --mutants`
+                    does), after changing tests outside source files, and to
+                    accept a redundant-test task.
+  --mutants         only the source files changed since the commit the
+                    baseline's mutants were measured at; every other file keeps
+                    its count from the baseline. Falls back to every file when
+                    the baseline has no such commit or no per-file counts, or
+                    the suite's tool cannot be limited to files (only Rust's
+                    cargo-mutants can, through `mutants_file_flag`).
+                    A test changed outside source files is not seen in the
+                    unchanged files' counts: --all-mutants is.
+  The output's `mutated` says, per suite, \"all\" or the files mutated.
+
 SET UP
   slimfit init                detect suites (Rust, Go, Swift, Kotlin, TypeScript),
                               write slimfit.toml, measure, write the baseline
   In factorium.toml:          fast = \"slimfit check\", slow = \"slimfit check --mutants\"
+                              (ratchet once with --all-mutants first)
 
 OUTPUT
   Every command prints JSON on stdout with a `next` field: the command to run
@@ -81,7 +97,7 @@ struct Cli {
 enum Cmd {
     /// Detect suites, write slimfit.toml (if missing), measure, write the baseline.
     Init {
-        /// Also run mutation testing for the first baseline (slow).
+        /// Also run mutation testing, of every file, for the first baseline (slow).
         #[arg(long)]
         mutants: bool,
     },
@@ -93,18 +109,27 @@ enum Cmd {
         /// Only tasks of this kind.
         #[arg(long, value_enum)]
         kind: Option<tasks::TaskKind>,
-        /// Measure mutants too: needed for redundant-test and surviving-mutant tasks.
+        /// Measure mutants too (of the files changed since the baseline): needed
+        /// for surviving-mutant tasks.
         #[arg(long)]
         mutants: bool,
+        /// Mutate every file: needed for redundant-test tasks.
+        #[arg(long)]
+        all_mutants: bool,
         /// Re-measure even if the tree is unchanged.
         #[arg(long)]
         fresh: bool,
     },
     /// Fail if any bound is worse than the baseline. Exit 1 on violation.
     Check {
-        /// Also check survived_mutants (runs mutation testing).
+        /// Also check survived_mutants: mutates the files changed since the
+        /// baseline's mutants were measured, and keeps the baseline's counts
+        /// for the rest.
         #[arg(long)]
         mutants: bool,
+        /// Also check survived_mutants, mutating every file.
+        #[arg(long)]
+        all_mutants: bool,
         #[arg(long)]
         fresh: bool,
     },
@@ -117,6 +142,8 @@ enum Cmd {
         reason: Option<String>,
         #[arg(long)]
         mutants: bool,
+        #[arg(long)]
+        all_mutants: bool,
         #[arg(long)]
         fresh: bool,
     },
@@ -164,10 +191,13 @@ fn run() -> Result<()> {
             }
             ensure_gitignore(&repo)?;
             let cfg = config::load(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants, fresh: true })?;
+            let old = ratchet::load(&repo)?;
+            let m =
+                measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(false, mutants), fresh: true })?;
             let base = ratchet::Baseline {
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
-                loosened: ratchet::load(&repo)?.loosened,
+                loosened: old.loosened,
+                mutants_at: if mutants { m.snapshot.clone() } else { None },
             };
             ratchet::save(&repo, &base)?;
             print(json!({
@@ -177,9 +207,15 @@ fn run() -> Result<()> {
                 "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
             }));
         }
-        Cmd::Next { all, kind, mutants, fresh } => {
+        Cmd::Next { all, kind, mutants, all_mutants, fresh } => {
             let cfg = config::load(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants, fresh })?;
+            let base = ratchet::load(&repo)?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &base,
+                &measure::Options { mutants: scope(mutants, all_mutants), fresh },
+            )?;
             let mut list = tasks::all(&repo, &cfg, &m)?;
             if let Some(k) = kind {
                 list.retain(|t| t.kind == k);
@@ -200,6 +236,13 @@ fn run() -> Result<()> {
             }) {
                 notes.push(format!("{}: the mutation tool does not record which test kills which mutant, so redundant tests cannot be found", s.suite));
             }
+            for s in m.suites.iter().filter(|s| s.mutated.is_some()) {
+                notes.push(format!(
+                    "{}: only the files changed since the baseline were mutated: surviving-mutant tasks name only those; \
+                     redundant-test and the other files' survivors need `slimfit next --all-mutants`",
+                    s.suite
+                ));
+            }
             let next = if list.is_empty() {
                 if m.with_mutants {
                     "nothing left to do: the codebase is at its fittest by these measures"
@@ -215,10 +258,15 @@ fn run() -> Result<()> {
                 print(json!({ "task": list.first(), "remaining": counts, "notes": notes, "next": next }));
             }
         }
-        Cmd::Check { mutants, fresh } => {
+        Cmd::Check { mutants, all_mutants, fresh } => {
             let cfg = config::load(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants, fresh })?;
             let base = ratchet::load(&repo)?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &base,
+                &measure::Options { mutants: scope(mutants, all_mutants), fresh },
+            )?;
             let v = ratchet::check(&base, &m, &cfg.check);
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
@@ -228,15 +276,16 @@ fn run() -> Result<()> {
                 "slimfit next"
             };
             let ok = v.ok;
-            print(json!({ "verdict": v, "metrics": metrics_of(&m), "next": next }));
+            print(json!({ "verdict": v, "metrics": metrics_of(&m), "mutated": mutated_of(&m), "next": next }));
             if !ok {
                 std::process::exit(1);
             }
         }
-        Cmd::Ratchet { loosen, reason, mutants, fresh } => {
+        Cmd::Ratchet { loosen, reason, mutants, all_mutants, fresh } => {
             let cfg = config::load(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants, fresh })?;
             let old = ratchet::load(&repo)?;
+            let m =
+                measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(mutants, all_mutants), fresh })?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             ratchet::save(&repo, &new)?;
             print(
@@ -245,8 +294,8 @@ fn run() -> Result<()> {
         }
         Cmd::Report { commits, points, fresh } => {
             let cfg = config::load(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants: false, fresh })?;
             let base = ratchet::load(&repo)?;
+            let m = measure::current(&repo, &cfg, &base, &measure::Options { mutants: measure::Mutants::None, fresh })?;
             let history = report::history(&repo, &cfg, commits, points)?;
             print(json!({
                 "current": metrics_of(&m),
@@ -260,8 +309,33 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+fn scope(mutants: bool, all_mutants: bool) -> measure::Mutants {
+    match (mutants, all_mutants) {
+        (_, true) => measure::Mutants::All,
+        (true, false) => measure::Mutants::Changed,
+        (false, false) => measure::Mutants::None,
+    }
+}
+
+/// The metrics, without the per-file mutant counts behind `mutants`.
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {
-    m.suites.iter().map(|s| (s.suite.clone(), json!(s.metrics))).collect::<serde_json::Map<_, _>>().into()
+    m.suites
+        .iter()
+        .map(|s| (s.suite.clone(), json!(model::Metrics { mutant_files: Default::default(), ..s.metrics.clone() })))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
+/// Per suite, what was mutated: "all", or the changed files.
+fn mutated_of(m: &model::Measurement) -> serde_json::Value {
+    if !m.with_mutants {
+        return serde_json::Value::Null;
+    }
+    m.suites
+        .iter()
+        .map(|s| (s.suite.clone(), s.mutated.as_ref().map_or(json!("all"), |f| json!(f))))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
 fn ensure_gitignore(repo: &std::path::Path) -> Result<()> {

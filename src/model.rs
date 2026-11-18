@@ -64,6 +64,10 @@ pub struct Metrics {
     pub uncovered_lines: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutants: Option<MutantCounts>,
+    /// `mutants` file by file (they add up to it): what a run that mutates
+    /// only the changed files keeps for the files it does not mutate.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mutant_files: BTreeMap<String, MutantCounts>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
@@ -84,6 +88,28 @@ impl MutantCounts {
             }
         }
         c
+    }
+
+    pub fn by_file(mutants: &[Mutant]) -> BTreeMap<String, Self> {
+        let mut out: BTreeMap<String, Self> = BTreeMap::new();
+        for m in mutants {
+            out.entry(m.file.clone()).or_default().add(&Self::of(std::slice::from_ref(m)));
+        }
+        out
+    }
+
+    pub fn sum<'a>(counts: impl IntoIterator<Item = &'a Self>) -> Self {
+        let mut c = Self::default();
+        for x in counts {
+            c.add(x);
+        }
+        c
+    }
+
+    fn add(&mut self, o: &Self) {
+        self.killed += o.killed;
+        self.survived += o.survived;
+        self.unviable += o.unviable;
     }
 }
 
@@ -109,6 +135,10 @@ pub struct SuiteMeasurement {
     /// Every test the mutation tool knew of, when it records killers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutation_tests: Option<Vec<String>>,
+    /// The files mutated when only those changed since the baseline were;
+    /// `None` when every file was (or none, without mutants).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutated: Option<Vec<String>>,
     pub command_seconds: f64,
 }
 
@@ -117,5 +147,17 @@ pub struct Measurement {
     /// Identifies the working tree measured: HEAD plus a hash of local changes.
     pub tree: String,
     pub with_mutants: bool,
+    /// The commit measured and the files that differed from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<Snapshot>,
     pub suites: Vec<SuiteMeasurement>,
+}
+
+/// A working tree named by git: a commit, and the files (repository
+/// relative) whose contents differed from it, untracked ones included.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Snapshot {
+    pub commit: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirty: Vec<String>,
 }

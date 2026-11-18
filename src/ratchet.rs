@@ -3,7 +3,7 @@
 //! better measurement. Bounds only tighten unless loosened with a reason.
 
 use crate::config::CheckConfig;
-use crate::model::{Measurement, Metrics, SuiteMeasurement};
+use crate::model::{Measurement, Metrics, Snapshot, SuiteMeasurement};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -17,6 +17,10 @@ pub struct Baseline {
     /// Every time a bound was raised, and why.
     #[serde(default)]
     pub loosened: Vec<Loosening>,
+    /// The tree the suites' mutant counts were measured at: `--mutants`
+    /// mutates only the files changed since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutants_at: Option<Snapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -190,7 +194,8 @@ pub fn ratchet(
     if !loosen.is_empty() && reason.is_none_or(|r| r.trim().is_empty()) {
         bail!("--loosen needs --reason: it is recorded in the baseline for whoever reads it next");
     }
-    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone() };
+    let mutants_at = if m.with_mutants { m.snapshot.clone() } else { base.mutants_at.clone() };
+    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at };
     for s in &m.suites {
         let mut metrics = s.metrics.clone();
         if let Some(old) = base.suites.get(&s.suite) {
@@ -212,6 +217,7 @@ pub fn ratchet(
             }
             if metrics.mutants.is_none() {
                 metrics.mutants = old.mutants;
+                metrics.mutant_files = old.mutant_files.clone();
             }
         }
         next.suites.insert(s.suite.clone(), metrics);
@@ -232,16 +238,17 @@ mod t {
             uncovered: vec![],
             mutants: vec![],
             mutation_tests: None,
+            mutated: None,
             command_seconds: 0.0,
         }
     }
 
     fn measurement(metrics: Metrics, with_mutants: bool) -> Measurement {
-        Measurement { tree: "t".into(), with_mutants, suites: vec![suite("s", metrics)] }
+        Measurement { tree: "t".into(), with_mutants, snapshot: None, suites: vec![suite("s", metrics)] }
     }
 
     fn base(metrics: Metrics) -> Baseline {
-        Baseline { suites: [("s".to_string(), metrics)].into(), loosened: vec![] }
+        Baseline { suites: [("s".to_string(), metrics)].into(), loosened: vec![], mutants_at: None }
     }
 
     fn m(uncovered: u64, secs: f64, survived: Option<u64>) -> Metrics {

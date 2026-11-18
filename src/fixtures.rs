@@ -54,7 +54,7 @@ fn measure(
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    reduce(&suite, &totals, &resolver, t, c, Some(m), 0.0)
+    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), 0.0)
 }
 
 /// What every sample must show, whatever the language.

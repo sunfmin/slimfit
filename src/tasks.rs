@@ -96,7 +96,12 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
 
 /// Tests whose killed mutants are all killed by a cheaper cover of the
 /// rest: a time-weighted greedy set cover over the kill matrix.
+/// Not when only the changed files were mutated: a test that kills only
+/// mutants of the others would look as if it killed none.
 fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
+    if s.mutated.is_some() {
+        return vec![];
+    }
     let killed: Vec<(usize, &Vec<String>)> = s
         .mutants
         .iter()
@@ -153,9 +158,9 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
             evidence: json!({ "test": t, "seconds": secs, "mutants_killed": ks.len(),
                               "also_killed_by": ks.iter().flat_map(|i| s.mutants[*i].killed_by.iter().flatten()).filter(|k| *k != t).collect::<BTreeSet<_>>() }),
             steps: "Read the test. If it checks behaviour no other test pins down (a user-visible outcome the mutants here don't reach), keep it and strengthen the code it covers instead. \
-                    Otherwise delete it. The mutation bound proves nothing was lost."
+                    Otherwise delete it. The mutation bound proves nothing was lost: the accept command mutates every file, since a deleted test can let mutants of unchanged files survive."
                 .into(),
-            accept: "slimfit check --mutants".into(),
+            accept: "slimfit check --all-mutants".into(),
         })
         .collect()
 }
@@ -276,6 +281,7 @@ mod t {
                 mutant(MutantStatus::Survived, &[]),
             ],
             mutation_tests: Some(vec!["slow".into(), "fast".into(), "idle".into()]),
+            mutated: None,
             command_seconds: 0.0,
         };
         let tasks = redundant(&s);
