@@ -23,6 +23,10 @@ fn main() {
     }
     let release = std::env::var("SLIMFIT_RELEASE").ok();
     let describe = git(&["describe", "--tags", "--long", "--dirty", "--match", "v[0-9]*"]);
-    let fallback = std::env::var("CARGO_PKG_VERSION").unwrap();
-    println!("cargo:rustc-env=SLIMFIT_VERSION={}", version::stamp(release.as_deref(), describe.as_deref(), &fallback));
+    // Without a version tag (a clone made with --no-tags): the commit count and hash.
+    let commits = git(&["rev-list", "--count", "HEAD"]);
+    let commit = git(&["describe", "--always", "--dirty", "--match", "v[0-9]*"]);
+    let found = version::Git { describe: describe.as_deref(), commits: commits.as_deref(), commit: commit.as_deref() };
+    let cargo_version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    println!("cargo:rustc-env=SLIMFIT_VERSION={}", version::stamp(release.as_deref(), &found, &cargo_version));
 }

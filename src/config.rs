@@ -223,7 +223,7 @@ pub fn preset(p: Preset) -> Suite {
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
             // nextest without fail-fast runs every test on every mutant, so each
             // mutant's log names all its killers (docs/adr/0004).
-            mutants_command: "cargo mutants --workspace --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
+            mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --cargo-test-arg=--no-fail-fast \
                 --output \"$SLIMFIT_OUT\""
                 .into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),

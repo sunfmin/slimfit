@@ -1,6 +1,6 @@
 On a busy host everything runs slower, and slimfit corrects only `test_seconds` for it.
 
-`test_seconds` is the sum of the tests' own durations, each divided by how much the host's load slowed a CPU-bound thread meanwhile: the slowdown slimfit measured, `load_slowdown` per suite in `.slimfit/out/measurement.json`. So a busy host does not fail `slimfit check` on its own. A gate's or a mutants run's wall time is not corrected.
+`test_seconds` is the sum of the tests' own durations, each divided by how much the host's load slowed a CPU-bound thread meanwhile: the slowdown slimfit measured, `load_slowdown` per suite in `.slimfit/out/measurement.json`. A test whose report says it started before the test command ran (JUnit `timestamp`, `go test -json` `Time`), as in a report the command did not write, is left as reported. So a busy host does not fail `slimfit check` on its own. A gate's or a mutants run's wall time is not corrected.
 
 ## When the host is busy
 

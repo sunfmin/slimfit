@@ -363,7 +363,7 @@ mod t {
             tests: ["slow", "fast", "idle"]
                 .iter()
                 .zip([3.0, 0.1, 0.1])
-                .map(|(n, secs)| TestCase { id: format!("x::{n}"), seconds: secs, passed: true })
+                .map(|(n, secs)| TestCase { id: format!("x::{n}"), seconds: secs, passed: true, start: None })
                 .collect(),
             uncovered: vec![],
             mutants: vec![

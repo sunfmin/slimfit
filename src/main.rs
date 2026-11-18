@@ -251,7 +251,7 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
-    /// - A plain `ratchet` of a tree last measured without mutants keeps `mutants_at`: the change stays to be measured by the next `--mutants`.
+    /// - A plain `ratchet` of a tree last measured without mutants keeps `mutants_at`: the change stays to be measured by the next `--mutants`. A baseline with no `mutants_at` gets one at the tree now, as `slimfit init` gives it: changes before it are not measured.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
@@ -405,7 +405,7 @@ fn main() {
 /// here, as clap does).
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
     // `--help`, `-h` and `help` too: clap prints the manual's answer, on stdout.
-    let cli = match parse(&help(), args) {
+    let cli = match command_line(args) {
         Ok(cli) => cli,
         Err(e) if !e.use_stderr() || e.kind() == clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
             e.exit()
@@ -545,7 +545,11 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         Cmd::Ratchet { loosen, reason, mutants, fresh } => {
             let (cfg, old) = loaded(&repo)?;
             let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope(mutants, false), fresh })?;
-            let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            let mut new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            // A baseline with no mutants_at starts it here, as `init` does.
+            if new.mutants_at.is_none() {
+                new.mutants_at = measure::snapshot(&repo)?;
+            }
             // Nothing to ratchet is an answer, not a failure.
             let changed = new != old;
             if changed {
@@ -604,6 +608,17 @@ fn loaded(repo: &std::path::Path) -> Result<(config::Config, ratchet::Baseline)>
 /// `help [<topic>]` answer comes back as the error clap prints on stdout,
 /// exiting 0; a topic that does not exist, as one it prints on stderr,
 /// exiting 2, as for any other bad argument.
+/// The command line, parsed without the manual when it needs none: rendering
+/// the manual's pages took most of a short run (121M of 135M instructions for
+/// `next`, slimfit#27). Help, and a line clap refuses, go through the manual.
+fn command_line(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Cli, clap::Error> {
+    let args: Vec<_> = args.into_iter().collect();
+    match Cli::try_parse_from(&args) {
+        Ok(cli) if !matches!(cli.command, Cmd::Help { .. }) => Ok(cli),
+        _ => parse(&help(), args),
+    }
+}
+
 fn parse(help: &Help, args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Cli, clap::Error> {
     let cli = Cli::from_arg_matches(&help.clap().expect("checked by the_manual_is_whole").try_get_matches_from(args)?)?;
     let Cmd::Help { topic } = &cli.command else { return Ok(cli) };
@@ -836,6 +851,8 @@ mod answer_tests {
         std::fs::write(dir.path().join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let (first, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((first["changed"].as_bool(), code), (Some(true), 0));
+        // A baseline with no mutants_at gets one: where changes start.
+        assert!(first["mutants_at"]["tree"].is_string(), "{first}");
         let (again, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((again["changed"].as_bool(), code), (Some(false), 0));
         assert!(again["next"].as_str().unwrap().starts_with("nothing to ratchet"));

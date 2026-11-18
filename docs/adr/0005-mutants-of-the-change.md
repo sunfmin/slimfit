@@ -32,14 +32,18 @@ another way.
 - **Where the tree is gone** (another clone, or `git gc` pruned it: it is
   unreachable), the change is taken from `mutants_at`'s commit, which
   includes the last change measured again. Where the commit is gone too,
-  or no `mutants_at` is recorded, it is taken from HEAD. Each is said on
-  stderr.
+  or no `mutants_at` is recorded, it is taken from the merge base with the
+  branch's upstream; without an upstream `--mutants` refuses, saying why
+  (factorium#93: a baseline with no `mutants_at` made a plain `--mutants`
+  run 1960 mutants for hours). Each is said on stderr. A `ratchet` of a
+  baseline with no `mutants_at` records one, as `init` does.
 - **As narrow as the tool allows.** A suite's `mutants_diff_flag` is given
   the change's diff (Rust: cargo-mutants `--in-diff`); every mutant the
   tool then reports is the change's. Without one, `mutants_file_flag`
-  limits the run to the files the change touches; without either, every
-  mutant runs (every preset but Rust today). Then a mutant is the change's
-  when its line is one the diff adds.
+  limits the run to the files the change touches, and a mutant is the
+  change's when its line is one the diff adds. Without either (every preset
+  but Rust today), `--mutants` refuses before anything runs: no path of
+  `--mutants` runs every mutant; only `next --all-mutants` does.
 - **Tasks come from the runs that happened.** `next --mutants` gives
   surviving-mutant tasks for the mutants that ran, and redundant-test
   tasks among them: a test that killed none of them is not named, since

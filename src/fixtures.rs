@@ -71,7 +71,15 @@ fn measure_with_coverage(
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), Timing { command_seconds: 0.0, slowdown: 1.0 })
+    reduce(
+        &suite,
+        &totals,
+        &resolver,
+        t,
+        c,
+        Some(m.into()),
+        Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 },
+    )
 }
 
 /// What every sample must show, whatever the language.
@@ -243,4 +251,23 @@ fn swift_sample() {
     );
     assert_eq!(killed.mutants[0].status, MutantStatus::Killed);
     assert_eq!(killed.mutants[0].file, "Sources/Calc/Calc.swift");
+}
+
+/// A workspace of two packages: `double` in `core` has no test of its own;
+/// only `app`'s test reaches it. Under the preset's mutants command every
+/// mutant runs the whole workspace's tests, so `app`'s test catches each of
+/// `double`'s mutants, and names itself their killer.
+#[test]
+fn a_mutant_in_one_package_is_caught_by_another_packages_test() {
+    let suite = preset(Preset::Rust);
+    assert!(suite.mutants_command.contains("--test-workspace=true"), "{}", suite.mutants_command);
+    let outcomes = sample("rust-workspace").join("reports/outcomes.json");
+    let text = std::fs::read_to_string(&outcomes).unwrap();
+    let m = formats::read_mutants(MutantsFormat::CargoMutants, &[(outcomes, text)]).unwrap();
+    let double: Vec<_> = m.mutants.iter().filter(|x| x.file == "core/src/lib.rs" && x.line == 4).collect();
+    assert_eq!(double.len(), 5, "{:?}", m.mutants);
+    for x in double {
+        assert_eq!(x.status, MutantStatus::Killed, "{x:?}");
+        assert_eq!(x.killed_by.as_deref(), Some(&["app::double::doubles".to_string()][..]), "{x:?}");
+    }
 }

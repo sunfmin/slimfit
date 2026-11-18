@@ -21,7 +21,7 @@ pub enum Kind {
     TestsRunTwice,
     /// A gate runs mutation testing (`--mutants`, `--all-mutants` or a mutation tool): it holds up every landing for hours. Fix: move it to idle work (in factorium, `[idle] steps`).
     MutantsInGate,
-    /// The baseline records no `mutants_at`: `--mutants` takes the change from HEAD, so committed changes go unmeasured (see [mutants scope](help:mutants-scope)). Fix: one `slimfit ratchet --mutants` on an idle host, then commit the baseline.
+    /// The baseline records no `mutants_at`: `--mutants` takes the change from the merge base with the branch's upstream, and refuses without one (see [mutants scope](help:mutants-scope)). Fix: one `slimfit ratchet` (it records the tree now as `mutants_at`), then commit the baseline.
     MutantsUnscoped,
     /// The host's 1-minute load is above its core count: what is measured now runs slow and its wall times are skewed (see [host load](help:host-load)). Fix: measure when the host is quiet, or at `nice -n 19`.
     HostBusy,
@@ -275,9 +275,10 @@ fn baseline(b: &Baseline) -> Vec<Finding> {
     vec![finding(
         Kind::MutantsUnscoped,
         None,
-        "the baseline records no mutants_at: `--mutants` takes the change from HEAD, so committed changes go unmeasured"
+        "the baseline records no mutants_at: `--mutants` takes the change from the merge base with the branch's \
+         upstream, and refuses without one"
             .into(),
-        "on an idle host, `nice -n 19 slimfit ratchet --mutants`, then commit .slimfit/baseline.json".into(),
+        "`slimfit ratchet` (it records the tree now as mutants_at), then commit .slimfit/baseline.json".into(),
     )]
 }
 
@@ -438,7 +439,7 @@ mod tests {
         let r = repo(&[(ratchet::FILE, &with_mutants_at(None))]);
         let f = diagnose(r.path(), &host(&every_tool()));
         assert_eq!(kinds(&f), vec![Kind::MutantsUnscoped], "{f:#?}");
-        assert!(f[0].what.contains("no mutants_at") && f[0].fix.contains("ratchet --mutants"), "{f:#?}");
+        assert!(f[0].what.contains("no mutants_at") && f[0].fix.starts_with("`slimfit ratchet`"), "{f:#?}");
     }
 
     /// This host: its cores, PATH and cargo's bin directory searched; a

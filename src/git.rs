@@ -136,6 +136,12 @@ pub fn head(repo: &Path) -> Result<Head> {
     Ok(Head { commit, index, scratch })
 }
 
+/// Where the current branch forks from its upstream: `None` without an
+/// upstream, or before the first commit.
+pub fn merge_base_with_upstream(repo: &Path) -> Option<String> {
+    run(repo, &["merge-base", "HEAD", "@{upstream}"]).ok().map(|s| s.trim().to_string())
+}
+
 /// The tree with no files: what a repository with no commit is compared to.
 pub fn empty_tree(repo: &Path) -> Result<String> {
     Ok(run(repo, &["hash-object", "-t", "tree", "/dev/null"])?.trim().to_string())
