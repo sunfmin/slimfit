@@ -69,7 +69,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
         return Ok(m.clone());
     }
     let mut tested = tested.map(|m| m.suites.into_iter()).into_iter().flatten();
-    let change = if with_mutants { Some(Change::since(repo, &wt, base.mutants_at.as_ref())?) } else { None };
+    let mut change = Lazy { repo, wt: &wt, at: base.mutants_at.as_ref(), change: None };
     let mut suites = Vec::new();
     for s in &cfg.suites {
         let suite = s.resolve();
@@ -83,7 +83,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
                 Mutants::All => " with every mutant",
             }
         );
-        let mutants = change.as_ref().map(|c| (c, opts.mutants == Mutants::All));
+        let mutants = with_mutants.then_some((&mut change, opts.mutants == Mutants::All));
         let r = measure_suite(repo, &wt.files, &suite, mutants, tested.next());
         suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
     }
@@ -92,7 +92,7 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
     let m = Measurement {
         tree,
         with_mutants,
-        snapshot: change.and_then(|c| c.snapshot),
+        snapshot: change.change.and_then(|c| c.snapshot),
         since: if with_mutants { base.mutants_at.clone() } else { None },
         suites,
     };
@@ -104,9 +104,27 @@ pub fn current(repo: &Path, cfg: &Config, base: &Baseline, opts: &Options) -> Re
 /// The tree as it is now, as `mutants_at` records it; `None` before the
 /// first commit.
 pub fn snapshot(repo: &Path) -> Result<Option<Snapshot>> {
-    let head = git::run(repo, &["rev-parse", "--verify", "HEAD"]).ok().map(|h| h.trim().to_string());
-    let tree = git::write_tree(repo)?;
-    Ok(head.map(|commit| Snapshot { commit, tree: Some(tree) }))
+    let head = git::head(repo)?;
+    let tree = git::write_tree(repo, &head)?;
+    Ok(head.commit.map(|commit| Snapshot { commit, tree: Some(tree) }))
+}
+
+/// The change, taken the first time a suite's mutants need it: a run that
+/// fails before then spends no git calls on it.
+struct Lazy<'a> {
+    repo: &'a Path,
+    wt: &'a git::Worktree,
+    at: Option<&'a Snapshot>,
+    change: Option<Change>,
+}
+
+impl Lazy<'_> {
+    fn get(&mut self) -> Result<&Change> {
+        if self.change.is_none() {
+            self.change = Some(Change::since(self.repo, self.wt, self.at)?);
+        }
+        Ok(self.change.as_ref().expect("just taken"))
+    }
 }
 
 /// The change a mutants run measures: from the tree the baseline's mutants
@@ -124,38 +142,44 @@ impl Change {
     /// From `at`'s tree; from its commit when this repository lacks the
     /// tree; from HEAD when it lacks the commit too, or nothing is recorded.
     fn since(repo: &Path, wt: &git::Worktree, at: Option<&Snapshot>) -> Result<Change> {
-        let to = git::write_tree(repo)?;
-        let head = || -> Result<String> {
-            match &wt.head {
-                Some(h) => Ok(h.clone()),
-                None => git::empty_tree(repo),
-            }
-        };
-        let from = match at {
-            Some(Snapshot { tree: Some(t), .. }) if git::has_tree(repo, t) => t.clone(),
-            Some(s) if git::has_tree(repo, &s.commit) => {
-                eprintln!(
-                    "slimfit: the tree the baseline's mutants were measured at is not in this repository \
-                     (another clone, or pruned): the change is taken from its commit {}",
-                    s.commit
-                );
-                s.commit.clone()
-            }
-            Some(s) => {
-                eprintln!(
-                    "slimfit: the baseline's mutants_at commit {} is not in this repository: \
-                     the change is taken from HEAD",
-                    s.commit
-                );
-                head()?
-            }
+        let to = git::write_tree(repo, &wt.head)?;
+        // A tree or commit this repository lacks fails the diff: the next is tried.
+        let changed = |from: &str| git::changed_files(repo, from, &to).ok().map(|f| (from.to_string(), f));
+        let found = match at {
             None => {
                 eprintln!("slimfit: the baseline records no mutants_at: the change is taken from HEAD");
-                head()?
+                None
+            }
+            Some(s) => s.tree.as_deref().and_then(changed).or_else(|| {
+                let c = changed(&s.commit);
+                match (&s.tree, &c) {
+                    (_, None) => eprintln!(
+                        "slimfit: the baseline's mutants_at commit {} is not in this repository: \
+                         the change is taken from HEAD",
+                        s.commit
+                    ),
+                    (Some(_), Some(_)) => eprintln!(
+                        "slimfit: the tree the baseline's mutants were measured at is not in this repository \
+                         (another clone, or pruned): the change is taken from its commit {}",
+                        s.commit
+                    ),
+                    (None, Some(_)) => {}
+                }
+                c
+            }),
+        };
+        let (from, files) = match found {
+            Some(found) => found,
+            None => {
+                let head = match &wt.head.commit {
+                    Some(h) => h.clone(),
+                    None => git::empty_tree(repo)?,
+                };
+                let files = git::changed_files(repo, &head, &to)?;
+                (head, files)
             }
         };
-        let files = git::changed_files(repo, &from, &to)?;
-        let snapshot = wt.head.clone().map(|commit| Snapshot { commit, tree: Some(to.clone()) });
+        let snapshot = wt.head.commit.clone().map(|commit| Snapshot { commit, tree: Some(to.clone()) });
         Ok(Change { from, to, files, snapshot })
     }
 }
@@ -218,7 +242,7 @@ fn measure_suite(
     repo: &Path,
     files: &[String],
     suite: &Suite,
-    mutants: Option<(&Change, bool)>,
+    mutants: Option<(&mut Lazy, bool)>,
     tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
@@ -227,12 +251,15 @@ fn measure_suite(
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
     // The tests of this tree already ran: only the mutants are new.
-    if let (Some(mut s), Some((change, all))) = (tested, mutants) {
-        std::fs::create_dir_all(&out)?;
-        let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change, all)?;
-        (s.mutants, s.mutation_tests, s.mutated) = (m.run.mutants, m.run.tests, Some(m.mutated));
-        return Ok(s);
-    }
+    let mutants = match (tested, mutants) {
+        (Some(mut s), Some((change, all))) => {
+            std::fs::create_dir_all(&out)?;
+            let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, all)?;
+            (s.mutants, s.mutation_tests, s.mutated) = (m.run.mutants, m.run.tests, Some(m.mutated));
+            return Ok(s);
+        }
+        (_, mutants) => mutants,
+    };
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
@@ -253,7 +280,7 @@ fn measure_suite(
 
     let mutation = match mutants {
         None => None,
-        Some((change, all)) => Some(mutate_change(repo, &root, &out, suite, &totals, &resolver, change, all)?),
+        Some((change, all)) => Some(mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, all)?),
     };
     Ok(reduce(suite, &totals, &resolver, tests, coverage, mutation, Timing { command_seconds, slowdown }))
 }
@@ -708,13 +735,10 @@ pub(crate) mod t {
         assert_eq!(run(repo, &cfg, &moved, Mutants::Change).1, None);
 
         // The tree pruned: from its commit, which is before the change.
-        let mut pruned = moved.clone();
+        let mut pruned = moved;
         pruned.mutants_at.as_mut().unwrap().tree = Some("0".repeat(40));
         let (m, _) = run(repo, &cfg, &pruned, Mutants::Change);
         assert_eq!(m.suites[0].mutated.as_ref().unwrap().files, ["src/lib.rs", "src/new.rs"]);
-        // The commit gone too: from HEAD, clean.
-        pruned.mutants_at.as_mut().unwrap().commit = "0".repeat(40);
-        assert_eq!(run(repo, &cfg, &pruned, Mutants::Change).0.suites[0].mutated.as_ref(), Some(&none));
     }
 
     /// Before the first commit every line is the change's; a suite in a

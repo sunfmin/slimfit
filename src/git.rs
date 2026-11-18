@@ -53,8 +53,7 @@ fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
 pub struct Worktree {
     /// Tracked files plus untracked ones git does not ignore, relative to `repo`.
     pub files: Vec<String>,
-    /// `None` before the first commit.
-    pub head: Option<String>,
+    pub head: Head,
     /// HEAD plus a hash of every local change outside `.slimfit/`, so a
     /// measurement can be reused exactly while the tree is unchanged.
     pub key: String,
@@ -66,9 +65,9 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
     let listing = listing(repo)?;
     let untracked: Vec<String> = listing.iter().filter(|(t, f)| !t && outside(f)).map(|(_, f)| f.clone()).collect();
     let files: Vec<String> = listing.into_iter().map(|(_, f)| f).collect();
-    let head = run(repo, &["rev-parse", "--verify", "HEAD"]).ok().map(|h| h.trim().to_string());
+    let head = head(repo)?;
     // Before the first commit every file is a local change.
-    let changed = match &head {
+    let changed = match &head.commit {
         Some(commit) => differing(repo, commit, &untracked)?,
         None => files.iter().filter(|f| outside(f)).cloned().collect(),
     };
@@ -84,7 +83,7 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
             .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
             .hash(&mut h);
     }
-    let key = format!("{}+{:016x}", head.as_deref().unwrap_or("unborn"), h.finish());
+    let key = format!("{}+{:016x}", head.commit.as_deref().unwrap_or("unborn"), h.finish());
     Ok(Worktree { files, head, key })
 }
 
@@ -102,23 +101,39 @@ fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<Vec<Stri
 /// The working tree (untracked files git does not ignore included) written
 /// as a tree object, through a copy of the index kept in the git directory:
 /// the real index is not touched.
-pub fn write_tree(repo: &Path) -> Result<String> {
-    let paths =
-        run(repo, &["rev-parse", "--path-format=absolute", "--git-path", "index", "--git-path", "slimfit-index"])?;
-    let mut paths = paths.lines().map(std::path::PathBuf::from);
-    let (index, scratch) = (paths.next().context("git's index path")?, paths.next().context("a scratch index path")?);
-    match std::fs::copy(index, &scratch) {
+pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
+    match std::fs::copy(&head.index, &head.scratch) {
         Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&scratch),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&head.scratch),
         Err(e) => return Err(e.into()),
     }
-    run_with_index(repo, Some(&scratch), &["add", "-A", "--", "."])?;
-    Ok(run_with_index(repo, Some(&scratch), &["write-tree"])?.trim().to_string())
+    run_with_index(repo, Some(&head.scratch), &["add", "-A", "--", "."])?;
+    Ok(run_with_index(repo, Some(&head.scratch), &["write-tree"])?.trim().to_string())
 }
 
-/// Whether `rev` names a tree (or a commit, for its tree) in this repository.
-pub fn has_tree(repo: &Path, rev: &str) -> bool {
-    run(repo, &["cat-file", "-e", &format!("{rev}^{{tree}}")]).is_ok()
+/// HEAD, and where git keeps the index and slimfit its copy of it: one
+/// `rev-parse`, as each spawn costs on a loaded host (ADR 0003).
+pub struct Head {
+    /// `None` before the first commit.
+    pub commit: Option<String>,
+    index: std::path::PathBuf,
+    scratch: std::path::PathBuf,
+}
+
+pub fn head(repo: &Path) -> Result<Head> {
+    const PATHS: [&str; 6] =
+        ["rev-parse", "--path-format=absolute", "--git-path", "index", "--git-path", "slimfit-index"];
+    let with_head = [&PATHS[..], &["--verify", "HEAD"]].concat();
+    // Before the first commit `--verify HEAD` fails the whole call.
+    let (out, born) = match run(repo, &with_head) {
+        Ok(out) => (out, true),
+        Err(_) => (run(repo, &PATHS)?, false),
+    };
+    let mut lines = out.lines().map(str::trim);
+    let index = lines.next().context("git's index path")?.into();
+    let scratch = lines.next().context("a scratch index path")?.into();
+    let commit = if born { Some(lines.next().context("HEAD")?.to_string()) } else { None };
+    Ok(Head { commit, index, scratch })
 }
 
 /// The tree with no files: what a repository with no commit is compared to.
