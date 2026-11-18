@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::git;
 use crate::loc::{Classifier, Kind};
-use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
+use crate::model::{Measurement, MutantStatus, ReachTest, SuiteMeasurement};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -180,11 +180,13 @@ pub const MERGE_OVERLAP: f64 = 0.8;
 /// the slowest first. Coverage only proposes:
 /// the steps decide by reading the assertions.
 fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
-    let Some(per_test) = &s.test_lines else { return vec![] };
+    let Some((reach, per_test)) = s.reach.as_ref().and_then(|r| Some((r, r.lines.as_ref()?))) else { return vec![] };
     let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.seconds);
+    let ids: Vec<String> = reach.tests.iter().map(ReachTest::id).collect();
     // Each test, the (file, line)s it runs, and its seconds.
-    let lines: Vec<_> = per_test
+    let lines: Vec<_> = ids
         .iter()
+        .zip(per_test)
         .map(|(t, files)| {
             let ls: BTreeSet<(&str, u32)> =
                 files.iter().flat_map(|(f, ls)| ls.iter().map(move |l| (f.as_str(), *l))).collect();
@@ -351,11 +353,12 @@ mod t {
         let tests = [("wide", 0.1, 1..=10), ("inside", 0.3, 2..=4), ("twin", 0.2, 1..=10), ("near", 0.1, 20..=29)];
         let tests =
             tests.into_iter().chain([("near2", 0.5, 21..=30), ("apart", 0.1, 40..=45), ("loose", 0.1, 41..=50)]);
-        let mut per_test = BTreeMap::new();
+        let mut reach = crate::model::Reach { lines: Some(vec![]), ..Default::default() };
         let mut cases = Vec::new();
         for (name, secs, lines) in tests {
-            per_test.insert(name.to_string(), [("a.rs".to_string(), lines.collect())].into());
-            cases.push(TestCase { id: name.into(), seconds: secs, passed: true, start: None });
+            reach.tests.push(ReachTest { binary: "t".into(), name: name.into() });
+            reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.collect())].into());
+            cases.push(TestCase { id: format!("t::{name}"), seconds: secs, passed: true, start: None });
         }
         let s = SuiteMeasurement {
             suite: "s".into(),
@@ -363,8 +366,7 @@ mod t {
             tests: cases,
             uncovered: vec![],
             mutants: vec![],
-            test_lines: Some(per_test),
-            reach: None,
+            reach: Some(reach),
             mutated: None,
             command_seconds: 0.0,
             load_slowdown: 1.0,
@@ -374,7 +376,8 @@ mod t {
             .map(|t| (t.evidence["test"].as_str().unwrap().into(), t.evidence["other_test"].as_str().unwrap().into()))
             .collect();
         let want = [("near2", "near"), ("inside", "twin"), ("twin", "wide")];
-        assert_eq!(got, want.map(|(a, b)| (a.to_string(), b.to_string())));
-        assert!(redundant(&SuiteMeasurement { test_lines: None, ..s }).is_empty());
+        assert_eq!(got, want.map(|(a, b)| (format!("t::{a}"), format!("t::{b}"))));
+        let functions_only = crate::model::Reach { lines: None, ..s.reach.clone().unwrap() };
+        assert!(redundant(&SuiteMeasurement { reach: Some(functions_only), ..s }).is_empty());
     }
 }

@@ -267,6 +267,7 @@ mod tests {
             tests: vec![t("tests::adds"), t("tests::adult"), t("tests::slow")],
             functions: [("sub/src/lib.rs".into(), [(1, vec![0, 2]), (5, vec![]), (11, vec![1]), (12, vec![2])].into())]
                 .into(),
+            lines: None,
         }
     }
 

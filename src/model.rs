@@ -121,13 +121,9 @@ pub struct SuiteMeasurement {
     pub uncovered: Vec<Span>,
     /// Empty when mutants were not run.
     pub mutants: Vec<Mutant>,
-    /// The source lines each test runs, by test id and file, when the test
-    /// run records coverage per test: what redundant-test candidates are
-    /// found from (ADR 0006). `None` when it does not.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub test_lines: Option<BTreeMap<String, BTreeMap<String, Vec<u32>>>>,
-    /// Which tests ran each source function, when the test run records it
-    /// (the Rust preset): what each mutant's tests are chosen from (ADR 0007).
+    /// What each test ran, when the test run records coverage per test (the
+    /// Rust preset): the one per-test record, which each mutant's tests are
+    /// chosen from (ADR 0007) and redundant tests are proposed from (ADR 0006).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<Reach>,
     /// What the mutation run covered; `None` without mutants.
@@ -151,6 +147,11 @@ pub struct Reach {
     /// none. A test whose profile could not be read counts as running every
     /// function.
     pub functions: BTreeMap<String, BTreeMap<u32, Vec<u32>>>,
+    /// The source lines each test ran, by file, in the order of `tests`:
+    /// what redundant-test candidates are found from (ADR 0006). `None`
+    /// until the test run records lines (slimfit#32).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<BTreeMap<String, Vec<u32>>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -366,6 +366,9 @@ fn help() -> Help {
         .constant("ACCEPT_COMMANDS", prose_list(tasks::TaskKind::accepts().iter().map(|c| format!("`{c}`")), "or"))
         .constant("LANGUAGES", languages("and"))
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
+        .constant("REACHED", languages_where(|s| s.mutants_tests == config::MutantTests::Reached))
+        .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
+        .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
@@ -530,7 +533,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                         .to_string(),
                 );
             }
-            for s in m.suites.iter().filter(|s| s.test_lines.is_none()) {
+            for s in m.suites.iter().filter(|s| s.reach.as_ref().is_none_or(|r| r.lines.is_none())) {
                 notes.push(format!(
                     "{}: its test run records no coverage per test, so no redundant test can be proposed",
                     s.suite

@@ -725,7 +725,6 @@ pub(crate) fn reduce(
         tests,
         uncovered,
         mutants,
-        test_lines: None,
         reach,
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
