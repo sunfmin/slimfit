@@ -56,7 +56,16 @@ fn cargo_mutants(text: &str, dir: &Path, run: &mut MutationRun) -> Result<()> {
         }
         let m = &o["scenario"]["Mutant"];
         if m.is_null() {
-            continue; // the baseline
+            // The baseline: when the unmutated tests fail, no mutant was
+            // tested, and an empty report would read as a file with none.
+            if o["scenario"] == "Baseline" && o["summary"] != "Success" {
+                anyhow::bail!(
+                    "cargo-mutants: the tests fail on the unmutated tree ({}), so no mutant was tested; see its log {}",
+                    o["summary"].as_str().unwrap_or("?"),
+                    o["log_path"].as_str().unwrap_or("")
+                );
+            }
+            continue;
         }
         let summary = o["summary"].as_str().unwrap_or("");
         let status = match summary {
@@ -372,6 +381,8 @@ mod t {
         assert_eq!(r.tests, Some(vec!["c::t::hangs".to_string(), "c::t::quick".to_string()]));
         let r = report("test");
         assert!(r.tests.is_none() && r.mutants[0].killed_by.is_none());
+        let failed = r#"{"outcomes":[{"scenario":"Baseline","summary":"Failure","log_path":"log/baseline.log"}]}"#;
+        assert!(read(MutantsFormat::CargoMutants, &[(dir.path().join("outcomes.json"), failed.into())]).is_err());
     }
 
     #[test]
