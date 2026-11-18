@@ -1,13 +1,13 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 3100,
-      "test_lines": 1543,
-      "tests": 45,
+      "prod_lines": 3276,
+      "test_lines": 1629,
+      "tests": 48,
       "failures": 0,
       "test_seconds": 7.5,
-      "covered_lines": 1570,
-      "uncovered_lines": 176,
+      "covered_lines": 1659,
+      "uncovered_lines": 168,
       "mutants": {
         "killed": 466,
         "survived": 138,
