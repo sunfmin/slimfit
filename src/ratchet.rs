@@ -3,8 +3,9 @@
 //! better measurement. Bounds only tighten unless loosened with a reason.
 
 use crate::config::CheckConfig;
+use crate::fault::{Fault, Faults, fault};
 use crate::model::{Measurement, Metrics, Snapshot, SuiteMeasurement};
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -103,7 +104,12 @@ pub struct Verdict {
 
 pub fn load(repo: &Path) -> Result<Baseline> {
     match std::fs::read_to_string(repo.join(FILE)) {
-        Ok(t) => serde_json::from_str(&t).with_context(|| format!("reading {FILE}")),
+        Ok(t) => serde_json::from_str(&t).map_err(|e| {
+            fault(
+                format!("{FILE} is not a baseline: {e}"),
+                format!("restore it: `git checkout -- {FILE}`; with none committed, delete it and run `slimfit init`"),
+            )
+        }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Baseline::default()),
         Err(e) => Err(e.into()),
     }
@@ -153,14 +159,24 @@ fn improved_below(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
 }
 
 fn fix(b: Bound, s: &SuiteMeasurement) -> String {
+    let list = |kind: &str| format!("`slimfit next --all --kind {kind}` lists them");
     match b {
         Bound::Failures => {
             let failing: Vec<&str> = s.tests.iter().filter(|t| !t.passed).map(|t| t.id.as_str()).take(10).collect();
-            format!("make these tests pass: {}", failing.join(", "))
+            format!("make these tests pass: {}; {}", failing.join(", "), list("failing-test"))
         }
-        Bound::TestSeconds => "the tests got slower: find the new slow tests with `slimfit next --all` (kind slow-test) and make them cheaper, or move them behind a faster adapter".into(),
-        Bound::UncoveredLines => "new lines run under no test: cover each through its module's interface, or delete it; the spans are in `slimfit next --all` (kind uncovered)".into(),
-        Bound::SurvivedMutants => "more mutants survive: a test lost its teeth or new code is untested; see `slimfit next --all` (kind surviving-mutant)".into(),
+        Bound::TestSeconds => format!(
+            "the tests got slower: make the new slow tests cheaper, or move them behind a faster adapter; {}",
+            list("slow-test")
+        ),
+        Bound::UncoveredLines => format!(
+            "new lines run under no test: cover each through its module's interface, or delete it; {}",
+            list("uncovered")
+        ),
+        Bound::SurvivedMutants => format!(
+            "more mutants survive: a test lost its teeth or new code is untested; assert what each mutant changes; {}",
+            list("surviving-mutant")
+        ),
     }
 }
 
@@ -233,24 +249,30 @@ pub fn ratchet(
         .partition(|v| m.piece && v.metric == Bound::TestSeconds && !loosen.contains(&Bound::TestSeconds));
     let blocking: Vec<&Violation> =
         violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
-    if !blocking.is_empty() {
-        let lines: Vec<String> = blocking
-            .iter()
-            .map(|v| {
-                format!(
-                    "  {} {}: {} > {} ({})",
-                    v.suite,
-                    serde_json::to_value(v.metric).unwrap_or_default().as_str().unwrap_or(""),
-                    v.current,
-                    v.limit,
-                    v.fix
-                )
-            })
-            .collect();
-        bail!("cannot ratchet while bounds are violated:\n{}", lines.join("\n"));
-    }
+    let mut faults: Vec<Fault> = blocking
+        .iter()
+        .map(|v| {
+            let name = serde_json::to_value(v.metric).unwrap_or_default().as_str().unwrap_or("").to_string();
+            let raise = if v.metric == Bound::Failures {
+                String::new()
+            } else {
+                format!("; or, if the rise is right, `slimfit ratchet --loosen {name} --reason \"<why>\"`")
+            };
+            Fault {
+                fault: format!("cannot ratchet: {} {name} is {}, over its bound {}", v.suite, v.current, v.limit),
+                fix: format!("{}{raise}", v.fix),
+            }
+        })
+        .collect();
     if !loosen.is_empty() && reason.is_none_or(|r| r.trim().is_empty()) {
-        bail!("--loosen needs --reason: it is recorded in the baseline for whoever reads it next");
+        faults.push(Fault {
+            fault: "--loosen without --reason".into(),
+            fix: "add `--reason \"<why the bound must rise>\"`: it is kept in the baseline for whoever reads it next"
+                .into(),
+        });
+    }
+    if !faults.is_empty() {
+        return Err(Faults(faults).into());
     }
     let mutants_at = if m.with_mutants { m.snapshot.clone() } else { base.mutants_at.clone() };
     let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), mutants_at };
@@ -331,6 +353,7 @@ mod t {
         let cfg = CheckConfig::default();
         let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(12, 12.9, Some(1)), true), &cfg);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::UncoveredLines]);
+        assert!(v.violations[0].fix.ends_with("`slimfit next --all --kind uncovered` lists them"));
         assert_eq!(v.improved.len(), 1);
         let v = check(&base(m(10, 10.0, Some(2))), &measurement(m(10, 13.1, None), false), &cfg);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
@@ -338,6 +361,17 @@ mod t {
         // A suite new to the baseline is recorded, but its failures still fail.
         let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0, None) }, false), &cfg);
         assert_eq!((v.new_suites, v.violations.len()), (vec!["s".to_string()], 1));
+    }
+
+    #[test]
+    fn a_baseline_that_does_not_parse_is_restored_from_git() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load(dir.path()).unwrap(), Baseline::default());
+        std::fs::create_dir_all(dir.path().join(".slimfit")).unwrap();
+        std::fs::write(dir.path().join(FILE), "{").unwrap();
+        let f = &crate::fault::of(load(dir.path()).unwrap_err())[0];
+        assert!(f.fault.starts_with(".slimfit/baseline.json is not a baseline"), "{f:?}");
+        assert!(f.fix.starts_with("restore it: `git checkout -- .slimfit/baseline.json`"), "{f:?}");
     }
 
     #[test]
@@ -353,8 +387,20 @@ mod t {
     fn loosening_needs_a_reason_and_is_recorded() {
         let cfg = CheckConfig::default();
         let (b, cur) = (base(m(10, 10.0, None)), measurement(m(12, 10.0, None), false));
-        assert!(ratchet(&b, &cur, &cfg, &[], None).is_err());
-        assert!(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None).is_err());
+        let fixes = |r: Result<(Baseline, Vec<Violation>)>| -> Vec<String> {
+            crate::fault::of(r.unwrap_err()).into_iter().map(|f| f.fix).collect()
+        };
+        let f = fixes(ratchet(&b, &cur, &cfg, &[], None));
+        assert!(
+            f[0].ends_with("or, if the rise is right, `slimfit ratchet --loosen uncovered_lines --reason \"<why>\"`")
+        );
+        assert!(fixes(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None))[0].starts_with("add `--reason"));
+        // Every refusal at once: each violated bound, and the missing reason.
+        let worse = measurement(Metrics { failures: 1, ..m(12, 20.0, None) }, false);
+        let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::TestSeconds], None));
+        assert_eq!(f.len(), 3, "{f:?}");
+        assert!(f[0].starts_with("make these tests pass") && !f[0].contains("--loosen failures"), "{f:?}");
+        assert!(f[1].contains("--loosen uncovered_lines") && f[2].starts_with("add `--reason"), "{f:?}");
         let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap().0;
         assert_eq!(next.suites["s"].uncovered_lines, 12);
         assert_eq!(next.loosened[0].reason, "generated code");
