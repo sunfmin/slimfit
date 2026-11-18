@@ -11,7 +11,11 @@ slimfit is made for AI coding agents. The agent changes code; slimfit measures e
 
 `slimfit next` hands out one task at a time, cheapest and safest first: fix failing tests, remove uncovered code, remove redundant tests, speed up slow tests, kill surviving mutants, and deepen modules that keep changing. Each task carries its evidence and the command that accepts it.
 
-The full manual is `slimfit --help`.
+The manual is `slimfit --help`, and it is the only copy: how to place slimfit in a gate, what each command costs, and the loop are there, not here. Read its first screen before adopting slimfit on a repo. It leads with what matters most:
+
+```sh
+slimfit --help | sed -n '/^1\./,/^WHAT EACH/p'
+```
 
 ## Install
 
@@ -31,36 +35,9 @@ Each language is a preset: the tools its community uses, each run once to write 
 | Kotlin | Gradle `test` + Kover (JUnit, JaCoCo XML) | PIT with `fullMutationMatrix` | the Kover and `info.solidsoft.pitest` plugins (see `testdata/kotlin/build.gradle.kts`) and a JDK Gradle can use |
 | Swift | `swift test` + `llvm-cov export` (xUnit, LCOV) | muter | `brew install muter-mutation-testing/formulae/muter` |
 
-Mutants are measured in two ways:
-
-- `--all-mutants` mutates every file. `init --mutants` does this for the first baseline.
-- `--mutants` mutates only the source files that changed since the commit the baseline's mutants were measured at. Every other file keeps its per-file count from the baseline.
-
-A workspace too large for one `--all-mutants` run builds its baseline in pieces: `slimfit ratchet --pending-seconds 1500` mutates the changed files as `--mutants` does, then files with no count yet, one tool run per file, until the budget is spent (at least one file), and ratchets them in. Commit the baseline and repeat until `check --mutants` lists no `mutants_pending`; until then it holds only the files that have a count. See `docs/adr/0002-mutants-baseline-in-pieces.md`.
-
-`--mutants` falls back to every file when the suite's tool cannot be limited to files. Today that is every language except Rust. A test changed outside source files is seen only by `--all-mutants`; see `docs/adr/0001-mutate-only-changed-files.md`.
+`--mutants` mutates only the files changed since the baseline's mutants were measured where the tool can be limited to files; today that is Rust only, and every other language falls back to every file. See `docs/adr/0001-mutate-only-changed-files.md` and `docs/adr/0002-mutants-baseline-in-pieces.md`.
 
 Redundant tests can be found only where the mutation tool records which test kills which mutant: TypeScript (Stryker) and Kotlin (PIT). For the other languages, `slimfit next` says so.
-
-## Use
-
-```sh
-slimfit init          # detect suites, write slimfit.toml, measure, write .slimfit/baseline.json
-slimfit next          # the next task
-slimfit check         # exit 1 if a bound got worse; --mutants also mutates the changed files, --all-mutants every file
-slimfit ratchet       # lock the gain into the baseline
-slimfit report        # metrics, baseline, and line counts over git history
-```
-
-In a repo gated by factorium:
-
-```toml
-[gate]
-fast = "slimfit check"
-slow = "slimfit check --mutants"
-```
-
-Before that slow gate can run, ratchet once with `slimfit ratchet --all-mutants`, or build the baseline in pieces as above. That records the per-file counts and the commit later runs build on.
 
 ## Develop
 

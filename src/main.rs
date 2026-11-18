@@ -21,7 +21,43 @@ const LONG_ABOUT: &str = "\
 Keep a codebase small and its tests few, fast and strong.
 
 You (the agent) change code; slimfit measures and ratchets. Never argue with a
-number: change the code until `slimfit check` passes.
+number: change the code until `slimfit check` passes. What matters most, first:
+
+1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs
+   the tests at most once. `slimfit check` IS a test run (instrumented, ~1.5×
+   a plain run): it replaces the project's own test run in that gate, never
+   adds to it.
+2. MUTANTS NEVER IN A GATE. Mutation testing is expensive: never put it in a
+   gate that holds up a landing or a promotion. Run it on an idle host at
+   background priority (in factorium: `[idle]`).
+3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast
+   test or delete the code; never with a slow test. This holds for uncovered
+   and surviving-mutant tasks alike.
+
+WHAT EACH COMMAND COSTS
+  check             one instrumented test run
+  check --mutants   one test run per mutant of the files changed since the
+                    baseline's mutants were measured
+  check --all-mutants
+                    one test run per mutant of every file: hours on a large
+                    workspace
+  Estimate first: mutant count × one test run (Rust: `cargo mutants --list |
+  wc -l`; the time of one run is `test_seconds` plus the build).
+
+MEASUREMENTS DEPEND ON HOST LOAD
+  On a busy host the same tests run slower. Do not set or ratchet
+  test_seconds then. Busy: the 1-minute load average (`uptime`) is above the
+  core count (`sysctl -n hw.ncpu` on macOS, `nproc` on Linux).
+
+BEFORE ADOPTING ON A REPO
+  Time `slimfit init` (one instrumented test run) and count the mutants (as
+  above). Then place slimfit from those numbers: `slimfit check` in the gate
+  in place of the project's own test run; mutants, if they fit at all, in
+  idle work, built in pieces on a large workspace (below).
+
+DON'T COMPETE WITH OTHER HEAVY WORK
+  Measure on an idle host, or at background priority (`nice -n 19 slimfit
+  ...`) so builds, gates and other projects' mutants go first.
 
 THE LOOP
   1. slimfit next             one task: kind, evidence, files, steps, accept command
@@ -91,9 +127,14 @@ A LARGE WORKSPACE: BUILD THE MUTANTS BASELINE IN PIECES
 SET UP
   slimfit init                detect suites (Rust, Go, Swift, Kotlin, TypeScript),
                               write slimfit.toml, measure, write the baseline
-  In factorium.toml:          fast = \"slimfit check\", slow = \"slimfit check --mutants\"
-                              (ratchet once with --all-mutants first, or build
-                              the baseline in pieces, above)
+  In the gate:                `slimfit check` in place of the project's own test
+                              run (e.g. factorium.toml `fast = \"slimfit check\"`
+                              with `cargo test` taken out of the gate script)
+  Mutants:                    never in `fast` or `slow`; in factorium.toml
+                              `[idle] steps = [\"slimfit check --mutants\"]`
+                              (runs only while the host is idle). Ratchet the
+                              mutants baseline by hand on an idle host: once
+                              with --all-mutants, or in pieces, above
 
 OUTPUT
   Every command prints JSON on stdout with a `next` field: the command to run
@@ -382,4 +423,23 @@ fn ensure_gitignore(repo: &std::path::Path) -> Result<()> {
         std::fs::write(&path, format!("{text}{sep}{}\n", measure::OUT))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    /// What matters most stays on the help's first screen, ahead of the loop:
+    /// an agent that reads only that far still keeps its tests fast.
+    #[test]
+    fn help_leads_with_fast_tests_no_gated_mutants_and_fast_new_tests() {
+        let help = super::Cli::command().render_long_help().to_string();
+        let lines: Vec<&str> = help.lines().collect();
+        let at = |s: &str| lines.iter().position(|l| l.contains(s)).unwrap_or_else(|| panic!("help lacks {s:?}"));
+        let first =
+            [at("1. FAST TESTS COME FIRST"), at("2. MUTANTS NEVER IN A GATE"), at("3. A NEW TEST MUST BE FAST TOO")];
+        assert!(first.windows(2).all(|w| w[0] < w[1]), "points 1-3 out of order: {first:?}");
+        assert!(first[2] + 3 < 24, "point 3 ends past the first screen (line {})", first[2]);
+        assert!(first[2] < at("THE LOOP"));
+    }
 }
