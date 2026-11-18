@@ -7,7 +7,8 @@
 #   add an untested function  → check exits 1 on uncovered_lines
 # With E2E_MUTANTS=1, also (before the injection):
 #   next --all --mutants      → a `surviving-mutant` task (the is_adult boundary)
-# A language whose toolchain is missing is skipped, and says so.
+# A language whose toolchain for this run is incomplete (the mutants tool too
+# under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
 # Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
 set -eu
 cd "$(dirname "$0")"
@@ -18,14 +19,23 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 have() { command -v "$1" >/dev/null 2>&1; }
-needs() {
+# Prints what the language's toolchain for this run lacks; nothing if whole.
+missing() {
+  m=""
+  need() { have "$1" || m="$m $1"; }
+  mut() { [ "${E2E_MUTANTS:-}" = 1 ] && need "$1"; return 0; }
   case "$1" in
-    rust) have cargo-llvm-cov && have cargo-nextest ;;
-    go) have go ;;
-    typescript) have npm ;;
-    kotlin) [ -n "${JAVA_HOME:-}" ] && "$JAVA_HOME/bin/java" -version >/dev/null 2>&1 ;;
-    swift) have swift && have xcrun ;;
+    rust) need cargo-llvm-cov; need cargo-nextest; mut cargo-mutants ;;
+    go) need go; mut gremlins ;;
+    typescript) need npm ;;
+    kotlin) [ -n "${JAVA_HOME:-}" ] && "$JAVA_HOME/bin/java" -version >/dev/null 2>&1 || m="$m java (JAVA_HOME)" ;;
+    swift)
+      need swift
+      # Command Line Tools ship swift but not XCTest; only Xcode has it.
+      { have xcrun && xcrun --find xctest >/dev/null 2>&1; } || m="$m XCTest (Xcode)"
+      mut muter ;;
   esac
+  echo "${m# }"
 }
 # An untested function appended to the sample's source, per language.
 inject() {
@@ -42,8 +52,9 @@ json() { uv run --no-project python -c "import json,sys; d=json.load(sys.stdin);
 langs=${*:-rust go typescript kotlin swift}
 failed=0
 for lang in $langs; do
-  if ! needs "$lang"; then
-    echo "e2e $lang: SKIP (toolchain missing)"
+  lack=$(missing "$lang")
+  if [ -n "$lack" ]; then
+    echo "e2e $lang: SKIP (missing: $lack)"
     continue
   fi
   dir="$work/$lang"
