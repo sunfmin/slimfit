@@ -117,5 +117,6 @@ report a test copies) is not divided by a slowdown it never ran under.
 
 What the gate does: it holds test_seconds as before, at normal priority,
 and the suite keeps a margin under its bound instead of relying on the
-correction: 5.0-5.5 at load 9-12 after #27, against a bound of 10 on the
-7.5 baseline.
+correction. Clean clones at normal priority, load 9-14: c01e62c read 9.72
+and 9.38 (67 tests), #27's tip 5.34 and 5.29 (62), against a bound of 10
+on the 7.5 baseline.
