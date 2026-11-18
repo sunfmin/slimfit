@@ -10,6 +10,9 @@ mod model;
 mod ratchet;
 mod report;
 mod tasks;
+// build.rs runs it to stamp the version; compiled here too, for its tests and mutants.
+#[cfg_attr(not(test), allow(dead_code))]
+mod version;
 
 use agent_help::{Help, Topic};
 use anyhow::Result;
@@ -43,7 +46,7 @@ agent_help::binary!("slimfit");
 #[derive(Parser)]
 #[command(
     name = "slimfit",
-    version,
+    version = env!("SLIMFIT_VERSION"),
     verbatim_doc_comment,
     disable_help_subcommand = true,
     arg_required_else_help = true
