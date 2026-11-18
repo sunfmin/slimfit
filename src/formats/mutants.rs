@@ -350,6 +350,29 @@ mod t {
     }
 
     #[test]
+    fn a_timed_out_mutant_is_killed_by_the_tests_still_running_and_cargo_test_records_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = "  START [ ] (1/2) c t::quick\n  START [ ] (2/2) c t::hangs\n   PASS [ 0.01s] (1/2) c t::quick\n   SLOW [> 60s] (2/2) c t::hangs\n";
+        std::fs::write(dir.path().join("hang.log"), log).unwrap();
+        let outcome = |summary: &str, tool: &str| {
+            format!(
+                r#"{{"scenario":{{"Mutant":{{"file":"src/a.rs","name":"src/a.rs:1:1: replace f with ()"}}}},"summary":"{summary}","log_path":"hang.log",
+                    "phase_results":[{{"phase":"Test","argv":["cargo","{tool}","run","--no-fail-fast"]}}]}}"#
+            )
+        };
+        let report = |tool: &str| {
+            let text = format!(r#"{{"outcomes":[{},{}]}}"#, outcome("Timeout", tool), outcome("Unviable", tool));
+            read(MutantsFormat::CargoMutants, &[(dir.path().join("outcomes.json"), text)]).unwrap()
+        };
+        let r = report("nextest");
+        assert_eq!(r.mutants[0].killed_by, Some(vec!["c::t::hangs".to_string()]));
+        assert_eq!(r.mutants[1].status, MutantStatus::Unviable);
+        assert_eq!(r.tests, Some(vec!["c::t::hangs".to_string(), "c::t::quick".to_string()]));
+        let r = report("test");
+        assert!(r.tests.is_none() && r.mutants[0].killed_by.is_none());
+    }
+
+    #[test]
     fn pit_names_match_junit_ids() {
         assert_eq!(
             pit_test_name("a.b.FooTest.[engine:junit-jupiter]/[class:a.b.FooTest]/[method:bar()]"),
