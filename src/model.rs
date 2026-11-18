@@ -62,20 +62,9 @@ pub struct Metrics {
     pub test_seconds: f64,
     pub covered_lines: u64,
     pub uncovered_lines: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mutants: Option<MutantCounts>,
-    /// `mutants` file by file (they add up to it): what a run that mutates
-    /// only the changed files keeps for the files it does not mutate.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub mutant_files: BTreeMap<String, MutantCounts>,
-    /// Source files with no mutant count yet, while a baseline is built in
-    /// pieces (`ratchet --pending-files/--pending-seconds`): their mutants
-    /// are not in `mutants`, so `check` does not hold them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mutants_pending: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MutantCounts {
     pub killed: u64,
     pub survived: u64,
@@ -94,28 +83,19 @@ impl MutantCounts {
         }
         c
     }
+}
 
-    pub fn by_file(mutants: &[Mutant]) -> BTreeMap<String, Self> {
-        let mut out: BTreeMap<String, Self> = BTreeMap::new();
-        for m in mutants {
-            out.entry(m.file.clone()).or_default().add(&Self::of(std::slice::from_ref(m)));
-        }
-        out
-    }
-
-    pub fn sum<'a>(counts: impl IntoIterator<Item = &'a Self>) -> Self {
-        let mut c = Self::default();
-        for x in counts {
-            c.add(x);
-        }
-        c
-    }
-
-    fn add(&mut self, o: &Self) {
-        self.killed += o.killed;
-        self.survived += o.survived;
-        self.unviable += o.unviable;
-    }
+/// What a mutation run covered, and what it found in the change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Mutated {
+    /// Every mutant was run (`--all-mutants`, or a tool that cannot be
+    /// limited); otherwise only those of the change.
+    pub all: bool,
+    /// The source files with lines in the change.
+    pub files: Vec<String>,
+    /// The mutants in the change's lines, by outcome: survivors here are the
+    /// change's own, and `check --mutants` holds them at 0.
+    pub change: MutantCounts,
 }
 
 /// A run of uncovered lines in one file.
@@ -140,10 +120,9 @@ pub struct SuiteMeasurement {
     /// Every test the mutation tool knew of, when it records killers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutation_tests: Option<Vec<String>>,
-    /// The files mutated when only those changed since the baseline were;
-    /// `None` when every file was (or none, without mutants).
+    /// What the mutation run covered; `None` without mutants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mutated: Option<Vec<String>>,
+    pub mutated: Option<Mutated>,
     pub command_seconds: f64,
     /// How much the host's load slowed the test command: the tests'
     /// durations are divided by it (ADR 0003).
@@ -155,47 +134,36 @@ pub struct Measurement {
     /// Identifies the working tree measured: HEAD plus a hash of local changes.
     pub tree: String,
     pub with_mutants: bool,
-    /// A piece (`ratchet --pending-seconds`): it filled in pending mutant
-    /// counts, so a test_seconds overrun does not refuse its ratchet.
-    #[serde(default)]
-    pub piece: bool,
-    /// The commit measured and the files that differed from it.
+    /// With mutants: the tree measured, which `ratchet` records as the
+    /// baseline's `mutants_at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<Snapshot>,
+    /// With mutants: the baseline's `mutants_at` the change was taken from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Snapshot>,
     pub suites: Vec<SuiteMeasurement>,
 }
 
-/// A working tree named by git: a commit, and the files (repository
-/// relative) whose contents differed from it, untracked ones included.
+/// A working tree named by git: HEAD, and the tree object its files
+/// (untracked ones included) were written to. The tree is unreachable, so
+/// another clone, or `git gc` after a while, loses it; the commit stays.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Snapshot {
     pub commit: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dirty: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Each status counts in its own field, per file and in the sum of the files.
+    /// Each status counts in its own field.
     #[test]
-    fn mutant_counts_count_each_status_per_file_and_in_sum() {
-        let m = |file: &str, status| Mutant {
-            file: file.into(),
-            line: 1,
-            description: String::new(),
-            status,
-            killed_by: None,
-        };
+    fn mutant_counts_count_each_status() {
+        let m = |status| Mutant { file: "a".into(), line: 1, description: String::new(), status, killed_by: None };
         use MutantStatus::*;
-        let all =
-            [m("a", Killed), m("a", Unviable), m("a", Unviable), m("b", Survived), m("b", Unviable), m("b", Killed)];
-        let c = |killed, survived, unviable| MutantCounts { killed, survived, unviable };
-        let by_file = MutantCounts::by_file(&all);
-        assert_eq!(by_file["a"], c(1, 0, 2));
-        assert_eq!(by_file["b"], c(1, 1, 1));
-        assert_eq!(MutantCounts::sum(by_file.values()), c(2, 1, 3));
-        assert_eq!(MutantCounts::of(&all), c(2, 1, 3));
+        let all = [m(Killed), m(Unviable), m(Unviable), m(Survived), m(Killed), m(Killed)];
+        assert_eq!(MutantCounts::of(&all), MutantCounts { killed: 3, survived: 1, unviable: 2 });
     }
 }

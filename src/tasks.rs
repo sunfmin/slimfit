@@ -113,13 +113,11 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
 }
 
 /// Tests whose killed mutants are all killed by a cheaper cover of the
-/// rest: a time-weighted greedy set cover over the kill matrix.
-/// Not when only the changed files were mutated: a test that kills only
-/// mutants of the others would look as if it killed none.
+/// rest: a time-weighted greedy set cover over the kill matrix of the
+/// mutants that ran. When only the change's ran, a test that killed none of
+/// them is not named: it may kill others.
 fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
-    if s.mutated.is_some() {
-        return vec![];
-    }
+    let every = s.mutated.as_ref().is_none_or(|m| m.all);
     let killed: Vec<(usize, &Vec<String>)> = s
         .mutants
         .iter()
@@ -158,8 +156,11 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
         covered.extend(&kills[t]);
         chosen.insert(t.clone());
     }
-    let mut spare: Vec<(&String, &BTreeSet<usize>, Option<f64>)> =
-        kills.iter().filter(|(t, _)| !chosen.contains(*t)).map(|(t, ks)| (t, ks, seconds(t))).collect();
+    let mut spare: Vec<(&String, &BTreeSet<usize>, Option<f64>)> = kills
+        .iter()
+        .filter(|(t, ks)| !chosen.contains(*t) && (every || !ks.is_empty()))
+        .map(|(t, ks)| (t, ks, seconds(t)))
+        .collect();
     spare.sort_by(|a, b| b.2.unwrap_or(0.0).total_cmp(&a.2.unwrap_or(0.0)).then(a.0.cmp(b.0)));
     spare
         .into_iter()
@@ -168,16 +169,19 @@ fn redundant(s: &SuiteMeasurement) -> Vec<Task> {
             suite: s.suite.clone(),
             summary: if ks.is_empty() {
                 format!("{t} kills no mutant")
-            } else {
+            } else if every {
                 format!("{t} kills only mutants other tests also kill ({})", ks.len())
+            } else {
+                format!("{t} kills only mutants other tests also kill ({}, of the change's)", ks.len())
             },
             files: vec![],
             evidence: json!({ "test": t, "seconds": secs, "mutants_killed": ks.len(),
                               "also_killed_by": ks.iter().flat_map(|i| s.mutants[*i].killed_by.iter().flatten()).filter(|k| *k != t).collect::<BTreeSet<_>>() }),
             steps: "Read the test. If it checks behaviour no other test pins down (a user-visible outcome the mutants here don't reach), keep it and strengthen the code it covers instead. \
-                    Otherwise delete it. The mutation bound proves nothing was lost: the accept command mutates every file, since a deleted test can let mutants of unchanged files survive."
+                    Otherwise delete it. No bound proves a deletion lost nothing: a deletion adds no line, so no mutant is run for it, and the evidence covers only the mutants that ran. \
+                    When those were only a change's, read what else the test asserts before deleting it."
                 .into(),
-            accept: "slimfit check --all-mutants".into(),
+            accept: "slimfit check".into(),
         })
         .collect()
 }
