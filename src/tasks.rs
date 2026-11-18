@@ -271,7 +271,7 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
 #[cfg(test)]
 mod t {
     use super::*;
-    use crate::model::{Metrics, Mutant, TestCase};
+    use crate::model::{Metrics, Mutant, Mutated, TestCase};
 
     fn mutant(status: MutantStatus, killers: &[&str]) -> Mutant {
         Mutant {
@@ -326,9 +326,20 @@ mod t {
             command_seconds: 0.0,
             load_slowdown: 1.0,
         };
-        let tasks = redundant(&s);
-        let names: Vec<&str> = tasks.iter().map(|t| t.evidence["test"].as_str().unwrap()).collect();
-        assert_eq!(names, vec!["slow", "idle"]);
-        assert!(tasks[1].summary.contains("kills no mutant"));
+        let names = |s: &SuiteMeasurement| -> Vec<(String, String)> {
+            redundant(s).into_iter().map(|t| (t.evidence["test"].as_str().unwrap().into(), t.summary)).collect()
+        };
+        let all = names(&s);
+        assert_eq!(all.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow", "idle"]);
+        assert!(all[1].1.contains("kills no mutant"));
+        // Only the change's mutants ran: a test that killed none of them may
+        // kill others, so it is not named.
+        let change = SuiteMeasurement {
+            mutated: Some(Mutated { all: false, files: vec!["a".into()], change: Default::default() }),
+            ..s
+        };
+        let some = names(&change);
+        assert_eq!(some.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["slow"]);
+        assert!(some[0].1.ends_with("(1, of the change's)"), "{some:?}");
     }
 }

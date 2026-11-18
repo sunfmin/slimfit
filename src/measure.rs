@@ -145,7 +145,8 @@ impl Change {
 /// `prefix` + the diff's `b/` path.
 fn added_lines(patch: &str, prefix: &str) -> BTreeMap<String, BTreeSet<u32>> {
     let mut out: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
-    let (mut file, mut line, mut old_left, mut new_left) = (None::<String>, 0u32, 0u32, 0u32);
+    // "" while in a deleted file, which adds no line.
+    let (mut file, mut line, mut old_left, mut new_left) = (String::new(), 0u32, 0u32, 0u32);
     for l in patch.lines() {
         if old_left > 0 || new_left > 0 {
             match l.as_bytes().first() {
@@ -154,15 +155,13 @@ fn added_lines(patch: &str, prefix: &str) -> BTreeMap<String, BTreeSet<u32>> {
                 }
                 Some(b'-') => old_left = old_left.saturating_sub(1),
                 Some(b'+') => {
-                    if let Some(f) = &file {
-                        out.entry(f.clone()).or_default().insert(line);
-                    }
+                    out.entry(file.clone()).or_default().insert(line);
                     (new_left, line) = (new_left.saturating_sub(1), line + 1);
                 }
                 _ => {}
             }
         } else if let Some(p) = l.strip_prefix("+++ ") {
-            file = p.strip_prefix("b/").map(|p| format!("{prefix}{p}"));
+            file = p.strip_prefix("b/").map(|p| format!("{prefix}{p}")).unwrap_or_default();
         } else if let Some(h) = l.strip_prefix("@@ -") {
             let count = |r: &str| -> (u32, u32) {
                 let (a, n) = r.split_once(',').unwrap_or((r, "1"));
@@ -648,6 +647,27 @@ mod t {
         }
     }
 
+    /// Before the first commit every line is the change's; a suite in a
+    /// subdirectory gets the diff relative to its root.
+    #[test]
+    fn an_unborn_repository_is_all_change_and_a_suites_diff_is_relative_to_its_root() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        std::fs::remove_dir_all(repo.join(".git")).unwrap();
+        git(repo, &["init", "-q"]);
+        std::fs::create_dir(repo.join("sub")).unwrap();
+        for f in ["Cargo.toml", "src"] {
+            std::fs::rename(repo.join(f), repo.join("sub").join(f)).unwrap();
+        }
+        cfg.suites[0].root = "sub".into();
+        let (m, args) = run(repo, &cfg, &Baseline::default(), Mutants::Change);
+        assert_eq!(m.suites[0].mutated.as_ref().unwrap().files, ["sub/src/lib.rs"]);
+        assert!(args.unwrap().starts_with("--in-diff "));
+        let patch = std::fs::read_to_string(repo.join(OUT).join("rust/change.diff")).unwrap();
+        assert!(patch.contains("+++ b/src/lib.rs"), "{patch}");
+        assert_eq!(m.snapshot, None);
+    }
+
     /// A tool with no diff flag runs the touched files (with a file flag) or
     /// every mutant; only the survivors in the added lines are the change's.
     #[test]
@@ -677,7 +697,7 @@ mod t {
     #[test]
     fn added_lines_follow_the_hunks() {
         let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,4 +1,4 @@\n x\n--- y\n+++ z\n w\n \n\
-                     @@ -10 +10,2 @@\n-old\n+new\n+more\n\\ No newline at end of file\n\
+                     @@ -10 +10,2 @@\n-old\n\\ No newline at end of file\n+new\n+more\n\
                      diff --git a/gone.rs b/gone.rs\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n\
                      diff --git a/n.rs b/n.rs\n--- /dev/null\n+++ b/n.rs\n@@ -0,0 +1 @@\n+n\n";
         let got = added_lines(patch, "sub/");
