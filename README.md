@@ -36,11 +36,11 @@ Mutants are measured in two ways:
 - `--all-mutants` mutates every file. `init --mutants` does this for the first baseline.
 - `--mutants` mutates only the source files that changed since the commit the baseline's mutants were measured at. Every other file keeps its per-file count from the baseline.
 
-A workspace too large for one `--all-mutants` run builds its baseline in pieces: `slimfit ratchet --pending-seconds 1500` mutates the changed files as `--mutants` does, then files with no count yet, one tool run per file, until the budget is spent (at least one file), and ratchets them in. Commit the baseline and repeat until `check --mutants` lists no `mutants_pending`; until then it holds only the files that have a count. See `docs/adr/0002-mutants-baseline-in-pieces.md`.
+A workspace too large for one `--all-mutants` run builds its baseline in pieces: `slimfit ratchet --pending-seconds 1500` mutates the changed files as `--mutants` does, then files with no count yet, one tool run per file, until the budget is spent (at least one file), and ratchets them in. Commit the baseline and repeat until `check --mutants` lists no `mutants_pending`; until then it holds only the files that have a count. A piece is not refused for test_seconds over its bound (host load swells it): it says so in `not_recorded` and keeps the old test_seconds. See `docs/adr/0002-mutants-baseline-in-pieces.md`.
 
 `--mutants` falls back to every file when the suite's tool cannot be limited to files. Today that is every language except Rust. A test changed outside source files is seen only by `--all-mutants`; see `docs/adr/0001-mutate-only-changed-files.md`.
 
-Redundant tests can be found only where the mutation tool records which test kills which mutant: Rust (cargo-mutants under nextest, from each mutant's log), TypeScript (Stryker) and Kotlin (PIT). For the other languages, `slimfit next` says so. Recording every killer means running every test on every killed mutant instead of stopping at the first failure; `docs/adr/0003-rust-kill-matrix.md` says what that costs.
+Redundant tests can be found only where the mutation tool records which test kills which mutant: Rust (cargo-mutants under nextest, from each mutant's log), TypeScript (Stryker) and Kotlin (PIT). For the other languages, `slimfit next` says so. Recording every killer means running every test on every killed mutant instead of stopping at the first failure; `docs/adr/0004-rust-kill-matrix.md` says what that costs.
 
 ## Use
 

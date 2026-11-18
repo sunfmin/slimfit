@@ -3,6 +3,7 @@ mod config;
 mod fixtures;
 mod formats;
 mod git;
+mod load;
 mod loc;
 mod measure;
 mod model;
@@ -49,7 +50,10 @@ TASK KINDS (`slimfit next` gives them in this order: cheapest and safest first)
 WHAT `slimfit check` HOLDS (against .slimfit/baseline.json)
   failures          0
   test_seconds      ≤ baseline × (1 + time_tolerance) + time_slack
-                    (sum of the tests' own durations; build time excluded)
+                    (sum of the tests' own durations; build time excluded;
+                    each divided by how much the host's load slowed a
+                    CPU-bound thread meanwhile, so a busy host does not fail
+                    it: the measurement's load_slowdown)
   uncovered_lines   ≤ baseline + coverage_slack: code may grow, untested code
                     may not. A drop counts as a gain only past the slack, so
                     a line whose coverage flaps by timing never fails the gate
@@ -87,6 +91,10 @@ A LARGE WORKSPACE: BUILD THE MUTANTS BASELINE IN PIECES
                     source files pending. Until then `check --mutants` holds
                     only the files that have a count; a new file is mutated
                     as a changed one, not left pending.
+                    A piece is refused only for failing tests, new uncovered
+                    lines or more surviving mutants; test_seconds over its
+                    bound (a loaded host) is listed in `not_recorded` and
+                    the baseline keeps its old test_seconds.
 
 SET UP
   slimfit init                detect suites (Rust, Go, Swift, Kotlin, TypeScript),
@@ -319,11 +327,12 @@ fn run() -> Result<()> {
                 scope(mutants, all_mutants)
             };
             let m = measure::current(&repo, &cfg, &old, &measure::Options { mutants: scope, fresh })?;
-            let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            let (new, not_recorded) = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             ratchet::save(&repo, &new)?;
             print(json!({
                 "baseline": new.suites,
                 "loosened": new.loosened,
+                "not_recorded": not_recorded,
                 "next": "commit .slimfit/baseline.json with the change it records; then `slimfit next` \
                          (while a suite lists mutants_pending, a --pending-seconds piece again)",
             }));

@@ -7,7 +7,7 @@
 use crate::config::{CheckConfig, Preset, preset};
 use crate::formats::{self, CoverageFormat, MutantsFormat, TestsFormat};
 use crate::loc::Classifier;
-use crate::measure::{Resolver, reduce};
+use crate::measure::{Resolver, Timing, reduce};
 use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
 use crate::ratchet::{Baseline, check, ratchet};
 use crate::tasks::{TaskKind, of_measurement};
@@ -67,7 +67,7 @@ fn measure_with_coverage(
     for x in &mut m.mutants {
         x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), 0.0)
+    reduce(&suite, &totals, &resolver, t, c, Some(m.into()), Timing { command_seconds: 0.0, slowdown: 1.0 })
 }
 
 /// What every sample must show, whatever the language.
@@ -132,6 +132,7 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let run = |lcov: String| Measurement {
         tree: "t".into(),
         with_mutants: false,
+        piece: false,
         snapshot: None,
         suites: vec![measure_with_coverage(
             "rust",
@@ -150,11 +151,11 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let cfg = CheckConfig::default();
     for (first, second) in [(&reached, &missed), (&missed, &reached)] {
         let mut base = Baseline::default();
-        base = ratchet(&base, first, &cfg, &[], None).unwrap();
+        base = ratchet(&base, first, &cfg, &[], None).unwrap().0;
         for m in [second, first, second] {
             let v = check(&base, m, &cfg);
             assert!(v.ok && v.improved.is_empty(), "{v:?}");
-            base = ratchet(&base, m, &cfg, &[], None).unwrap();
+            base = ratchet(&base, m, &cfg, &[], None).unwrap().0;
             assert_eq!(base.suites["rust"].uncovered_lines, uncovered(first));
         }
     }

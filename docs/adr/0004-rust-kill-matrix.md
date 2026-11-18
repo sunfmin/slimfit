@@ -1,4 +1,4 @@
-# 3. Rust records every killing test: cargo-mutants under nextest, no fail-fast
+# 4. Rust records every killing test: cargo-mutants under nextest, no fail-fast
 
 ## Context
 
