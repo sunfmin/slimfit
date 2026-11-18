@@ -231,7 +231,9 @@ fn measure_suite(
         std::fs::remove_file(old)?;
     }
     let started = Instant::now();
-    let (run, probe) = load::probe_during(|| shell(&root, &out, &suite.test_command, "test"));
+    let since_epoch =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test"));
     let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
     let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
@@ -281,7 +283,15 @@ fn measure_suite(
             }
         }),
     };
-    Ok(reduce(suite, &totals, &resolver, tests, coverage, mutation, Timing { command_seconds, probe }))
+    Ok(reduce(
+        suite,
+        &totals,
+        &resolver,
+        tests,
+        coverage,
+        mutation,
+        Timing { command_seconds, slowdown, started: since_epoch },
+    ))
 }
 
 /// One run of the mutation tool, its paths resolved to the suite's files.
@@ -481,10 +491,12 @@ impl Resolver {
     }
 }
 
-/// How long the test command took, and what the load probe saw meanwhile.
+/// How long the test command took, how much the host's load slowed it,
+/// and when it started (seconds since the Unix epoch).
 pub(crate) struct Timing {
     pub command_seconds: f64,
-    pub probe: load::Probe,
+    pub slowdown: f64,
+    pub started: f64,
 }
 
 pub(crate) fn reduce(
@@ -497,20 +509,15 @@ pub(crate) fn reduce(
     timing: Timing,
 ) -> SuiteMeasurement {
     // A test's duration as the runner timed it, less what the host's load
-    // added to it while it ran (ADR 0003). A report that says when the test
-    // started gives its window; a test the probe did not see run (a report
-    // older than the command) is left as reported. Without a start, the
-    // whole command's slowdown.
-    let whole = timing.probe.slowdown();
-    let wall: f64 = tests.iter().map(|t| t.seconds).sum();
+    // added to it (ADR 0003). A test whose report says it started before
+    // the command (a report the command did not write) ran under a load
+    // the probe never saw: it stays as reported.
     for t in &mut tests {
-        t.seconds /= match t.start {
-            Some(start) => timing.probe.slowdown_over(start, start + t.seconds).unwrap_or(1.0),
-            None => whole,
-        };
+        // Report timestamps are rounded to the millisecond.
+        if t.start.is_none_or(|s| s >= timing.started - 0.01) {
+            t.seconds /= timing.slowdown;
+        }
     }
-    let normalised: f64 = tests.iter().map(|t| t.seconds).sum();
-    let slowdown = if normalised > 0.0 { wall / normalised } else { whole };
     // Coverage of prod lines only: test files and inline test blocks are out.
     let mut lines: BTreeMap<String, BTreeMap<u32, u64>> = BTreeMap::new();
     for (raw, hits) in coverage.lines {
@@ -574,7 +581,7 @@ pub(crate) fn reduce(
         mutation_tests,
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
-        load_slowdown: (slowdown * 1000.0).round() / 1000.0,
+        load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
     }
 }
 
@@ -827,8 +834,7 @@ pub(crate) mod t {
     }
 
     #[test]
-    /// Each by the slowdown while it ran, or the whole command's when the
-    /// report gives no start; a test from before the command, as reported.
+    /// A test whose report says it started before the command, as reported.
     fn the_tests_durations_are_divided_by_the_hosts_slowdown() {
         let totals = Totals::default();
         let tests = vec![
@@ -836,7 +842,7 @@ pub(crate) mod t {
             TestCase { id: "b".into(), seconds: 1.5, passed: true, start: Some(102.0) },
             TestCase { id: "c".into(), seconds: 2.0, passed: true, start: Some(50.0) },
         ];
-        let timing = Timing { command_seconds: 9.87654, probe: crate::load::Probe::steady(100.0, 10.0, 1.23456) };
+        let timing = Timing { command_seconds: 9.87654, slowdown: 1.23456, started: 100.0 };
         let m = reduce(
             &crate::config::preset(crate::config::Preset::Rust),
             &totals,
@@ -850,7 +856,7 @@ pub(crate) mod t {
             m.tests.iter().map(|t| (t.seconds * 1e6).round()).collect::<Vec<_>>(),
             [2_430_016.0, 1_215_008.0, 2_000_000.0]
         );
-        assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (5.645, 1.151, 9.877));
+        assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (5.645, 1.235, 9.877));
     }
 
     #[test]
