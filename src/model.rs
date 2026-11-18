@@ -75,6 +75,12 @@ pub struct Metrics {
     pub mutants_pending: Vec<String>,
 }
 
+/// What a suite's [`Metrics`] print, as the command pages name them.
+pub const METRICS_HELP: &str = "`prod_lines` and `test_lines` (lines of code), `tests`, `failures`, `test_seconds`, `covered_lines`, `uncovered_lines` and, once mutants are measured, `mutants` (`killed`, `survived` and `unviable` mutants)";
+
+/// What a baseline's [`Metrics`] print beyond [`METRICS_HELP`].
+pub const HELD_HELP: &str = "`mutant_files` (per file, the same three counts) and, while the mutants baseline is built in pieces, `mutants_pending` (the source files with no mutant count yet)";
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub struct MutantCounts {
     pub killed: u64,
