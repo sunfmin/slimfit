@@ -167,11 +167,12 @@ impl Sample {
         json
     }
 
-    /// slimfit's error, which must name each word in `names`.
+    /// slimfit's error, its faults one per line, which must name each word
+    /// in `names`; each fault carries a fix.
     fn error(&self, args: &[&str], names: &[&str]) -> String {
         let (code, json, stderr) = self.slimfit(args);
         assert_eq!(code, 2, "slimfit {args:?}: {json:#}\n{stderr}");
-        let e = json["error"].as_str().unwrap().to_string();
+        let e = faults(&json);
         for n in names {
             assert!(e.contains(n), "slimfit {args:?}: the error does not name {n:?}: {e}");
         }
@@ -244,6 +245,21 @@ fn measures_through_its_tools(lang: &Lang) -> Sample {
     s
 }
 
+/// An error's faults, one per line, each followed by its fix; a fault
+/// with no fix fails.
+fn faults(json: &Value) -> String {
+    let faults = json["error"].as_array().unwrap_or_else(|| panic!("no list of faults: {json:#}"));
+    faults
+        .iter()
+        .map(|f| {
+            let (fault, fix) = (f["fault"].as_str().unwrap(), f["fix"].as_str().unwrap_or_default());
+            assert!(!fix.is_empty(), "a fault with no fix: {f:#}");
+            format!("{fault}\nfix: {fix}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A test or mutants tool that is missing, exits non-zero, or writes no
 /// report. A failing exit alone is no error: failing tests still write
 /// their reports (a mutants tool's exit is covered at `init`). No report
@@ -257,7 +273,7 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     }
     for tool in tools {
         let link = s.unlink(tool);
-        s.error(ARGS, &["no report at", tool]);
+        s.error(ARGS, &["_report at", "fix: fix the command's failure in its log", tool]);
         s.relink(&link);
     }
     let no_report = Some(Fault { exit: 0, no_report: true });
@@ -267,12 +283,15 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     let (code, json, stderr) = s.slimfit(ARGS);
     assert_eq!(code, 2, "{}: {json:#}\n{stderr}", lang.name);
     assert!(stderr.contains("test command exited exit status: 3"), "{}: {first}: {stderr}", lang.name);
-    assert!(json["error"].as_str().unwrap().contains(&format!("standin {mutants}: writing no report")), "{json:#}");
+    assert!(faults(&json).contains(&format!("standin {mutants}: writing no report")), "{json:#}");
     s.fault(first, None);
     s.fault(mutants, None);
     for step in lang.test_steps {
         s.fault(step, no_report);
-        s.error(ARGS, &["no report at", &format!("standin {step}: writing no report")]);
+        s.error(
+            ARGS,
+            &["_report at", "fix: fix the command's failure in its log", &format!("standin {step}: writing no report")],
+        );
         s.fault(step, None);
     }
 }
@@ -312,7 +331,10 @@ fn go() {
         "preset = \"go\"\ntest_command = \"go test ./... > \\\"$SLIMFIT_OUT/test.json\\\"\"",
     );
     std::fs::write(s.repo.join("slimfit.toml"), cfg).unwrap();
-    s.error(&["check", "--fresh"], &["no report at", "standin go test: no -json"]);
+    s.error(
+        &["check", "--fresh"],
+        &["_report at", "fix: fix the command's failure in its log", "standin go test: no -json"],
+    );
 }
 
 #[test]

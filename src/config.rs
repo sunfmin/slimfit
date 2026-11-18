@@ -1,9 +1,10 @@
 //! `slimfit.toml`: which suites a repository has and how each is measured.
 //! A suite names a preset; any field the preset sets can be overridden.
 
+use crate::fault::{Fault, Faults, fault};
 use crate::formats::{CoverageFormat, MutantsFormat, TestsFormat};
 use crate::tools::*;
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -293,19 +294,47 @@ pub fn detect(files: &[String]) -> Vec<SuiteConfig> {
         .collect()
 }
 
+/// `slimfit.toml`, or every fault found in it.
 pub fn load(repo: &Path) -> Result<Config> {
     let path = repo.join(FILE);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("no {FILE}: run `slimfit init` first"))?;
-    let cfg: Config = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        fault(
+            format!("cannot read {} ({e})", path.display()),
+            "`slimfit init` writes it (or restore it from git: `git checkout -- slimfit.toml`)",
+        )
+    })?;
+    let cfg: Config = toml::from_str(&text).map_err(|e| {
+        fault(
+            format!("{FILE} is not valid: {}", e.to_string().trim()),
+            format!(
+                "edit {FILE} where the fault points; each [[suite]] needs name and preset (rust, go, swift, \
+                     kotlin or typescript), and may set root"
+            ),
+        )
+    })?;
+    let mut faults = Vec::new();
     if cfg.suites.is_empty() {
-        bail!("{FILE} names no [[suite]]");
+        faults.push(Fault {
+            fault: format!("{FILE} names no [[suite]]"),
+            fix: format!("add one: `[[suite]]` with name, preset and root, or delete {FILE} and run `slimfit init`"),
+        });
     }
-    let mut names: Vec<&str> = cfg.suites.iter().map(|s| s.name.as_str()).collect();
-    names.sort();
-    if names.windows(2).any(|w| w[0] == w[1]) {
-        bail!("{FILE}: two suites share a name");
+    for (i, s) in cfg.suites.iter().enumerate() {
+        // Once per name: at its second suite.
+        if cfg.suites[..i].iter().filter(|t| t.name == s.name).count() == 1 {
+            faults.push(Fault {
+                fault: format!("{FILE}: more than one [[suite]] is named {:?}", s.name),
+                fix: format!("rename all but one of the suites named {:?}: each needs its own name", s.name),
+            });
+        }
+        if !repo.join(&s.root).is_dir() {
+            faults.push(Fault {
+                fault: format!("{FILE}: suite {:?} has root {:?}, which is no directory", s.name, s.root),
+                fix: format!("set root of suite {:?} to its directory, relative to the repository", s.name),
+            });
+        }
     }
-    Ok(cfg)
+    if faults.is_empty() { Ok(cfg) } else { Err(Faults(faults).into()) }
 }
 
 #[cfg(test)]
@@ -332,6 +361,37 @@ mod tests {
             got,
             vec![("rust", ".", Preset::Rust), ("svc", "svc", Preset::Go), ("web", "web", Preset::Typescript)]
         );
+    }
+
+    /// Every fault of slimfit.toml at once, each with its fix.
+    #[test]
+    fn load_names_every_fault_with_its_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let faults = |text: Option<&str>| {
+            if let Some(t) = text {
+                std::fs::write(dir.path().join(FILE), t).unwrap();
+            }
+            crate::fault::of(load(dir.path()).unwrap_err())
+        };
+        let f = faults(None);
+        assert!(f[0].fault.starts_with("cannot read") && f[0].fix.starts_with("`slimfit init` writes it"), "{f:?}");
+        let f = faults(Some("[[suite]]\nname = \"a\"\npreset = \"cobol\"\n"));
+        assert!(f[0].fault.starts_with("slimfit.toml is not valid") && f[0].fault.contains("cobol"), "{f:?}");
+        assert!(f[0].fix.contains("preset (rust, go, swift, kotlin or typescript)"), "{f:?}");
+        let f = faults(Some("suite = []\n"));
+        assert!(f[0].fix.starts_with("add one: `[[suite]]`"), "{f:?}");
+        let s = |name: &str, root: &str| format!("[[suite]]\nname = \"{name}\"\npreset = \"go\"\nroot = \"{root}\"\n");
+        let f = faults(Some(&[s("a", "."), s("a", "."), s("a", "."), s("b", "gone")].concat()));
+        let fixes: Vec<&str> = f.iter().map(|f| f.fix.as_str()).collect();
+        assert_eq!(
+            fixes,
+            [
+                "rename all but one of the suites named \"a\": each needs its own name",
+                "set root of suite \"b\" to its directory, relative to the repository"
+            ]
+        );
+        std::fs::write(dir.path().join(FILE), s("a", ".")).unwrap();
+        assert_eq!(load(dir.path()).unwrap().suites.len(), 1);
     }
 
     #[test]
