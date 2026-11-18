@@ -65,6 +65,8 @@ mod tests {
     /// The hog is other processes, as a busy host's load is: threads of
     /// this one would share its coverage counters with the stand-in, and
     /// contend for their cache lines, which no host load does.
+    /// Not run under mutants (.cargo/mutants.toml): its timing verdict on a
+    /// busy host would count kills that are not the mutant's.
     #[test]
     fn a_cpu_hog_leaves_the_normalised_time_within_tolerance() {
         let tolerance = crate::config::CheckConfig::default().time_tolerance;
