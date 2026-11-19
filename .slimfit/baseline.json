@@ -1,13 +1,13 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 5377,
-      "test_lines": 3077,
-      "tests": 75,
+      "prod_lines": 5626,
+      "test_lines": 3218,
+      "tests": 81,
       "failures": 0,
       "test_seconds": 9.383,
-      "covered_lines": 2968,
-      "uncovered_lines": 65
+      "covered_lines": 3095,
+      "uncovered_lines": 51
     }
   },
   "loosened": [
@@ -47,5 +47,6 @@
       "reason": "slimfit#43: test_seconds is now the tests' CPU time (ADR 0010), no longer wall time corrected for load; re-set once from a CPU-timed slimfit check of this tree under worker exclusive (measurements in slimfit#43's comments)."
     }
   ],
+  "kept": [],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f"
 }

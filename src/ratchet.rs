@@ -20,8 +20,15 @@ pub struct Baseline {
     pub loosened: Vec<Loosening>,
     /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
     /// each against its test's text: not proposed again until it changes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Written even when empty, so `report`'s history tells none kept from
+    /// a baseline older than verdicts.
+    #[serde(default)]
     pub kept: Vec<Kept>,
+    /// Deepen candidates the agent judged deep enough (`slimfit keep <file>`),
+    /// each against the file's size and churn then: not proposed again until
+    /// it has grown or churned well past them ([`KeptFile::holds`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_files: Vec<KeptFile>,
     /// The commit whose code no landing is charged to a mutants run for:
     /// what was there before the rule came in (ADR 0008). It counts only
     /// while the target has not reached it; set by hand, once.
@@ -44,6 +51,41 @@ impl Kept {
         self.suite == suite && self.test == test.id() && test.source.as_ref().is_some_and(|s| s.hash == self.hash)
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KeptFile {
+    pub suite: String,
+    pub file: String,
+    /// Its prod lines when it was kept.
+    pub prod_lines: u64,
+    /// The commits that changed it in the `DEEPEN_DAYS` before it was kept.
+    pub commits_90d: u64,
+    /// The commits that ever changed it, when it was kept.
+    pub commits_total: u64,
+    pub reason: String,
+}
+
+/// How much a kept file's prod lines may grow before it is proposed again:
+/// half as many again.
+pub const KEPT_GROWTH: f64 = 0.5;
+/// How many commits may change a kept file before it is proposed again, as
+/// a share of the commits that made it a candidate: as many again.
+pub const KEPT_CHURN: f64 = 1.0;
+
+impl KeptFile {
+    /// Whether this verdict still holds for `file` of `suite`, now
+    /// `prod_lines` long and changed by `commits_total` commits in all.
+    pub fn holds(&self, suite: &str, file: &str, prod_lines: u64, commits_total: u64) -> bool {
+        let since = commits_total.saturating_sub(self.commits_total) as f64;
+        self.suite == suite
+            && self.file == file
+            && (prod_lines as f64) < self.prod_lines as f64 * (1.0 + KEPT_GROWTH)
+            && since < self.commits_90d as f64 * KEPT_CHURN
+    }
+}
+
+/// What a [`KeptFile`] prints, as the command pages name it.
+pub const KEPT_FILE_HELP: &str = "each with `suite`, `file`, its `prod_lines`, `commits_90d` and `commits_total` (every commit that changed it) when kept, and `reason`";
 
 /// What a [`Kept`] prints, as the command pages name it.
 pub const KEPT_HELP: &str = "each with `suite`, `test`, `hash` (of the test's text when kept) and `reason`";
@@ -354,6 +396,7 @@ pub fn ratchet(
         suites: BTreeMap::new(),
         loosened: base.loosened.clone(),
         kept,
+        kept_files: base.kept_files.clone(),
         mutants_from: base.mutants_from.clone(),
     };
     for s in &m.suites {
@@ -446,6 +489,23 @@ mod t {
             "mutated":{"all":true,"files":[],"change":{"killed":0,"survived":0,"unviable":0}},"command_seconds":1.0,"load_slowdown":1.0}]}"#;
         let m: Measurement = serde_json::from_str(cached).unwrap();
         assert_eq!(m.suites[0].mutants.len(), 1);
+    }
+
+    /// A kept file holds up to its thresholds and not at them: 100 prod
+    /// lines hold at 149, not 150; 4 commits since its 4 in 90 days
+    /// hold at 3, not 4.
+    #[test]
+    fn a_kept_file_holds_below_its_thresholds_only() {
+        let k = KeptFile {
+            suite: "s".into(),
+            file: "f.rs".into(),
+            prod_lines: 100,
+            commits_90d: 4,
+            commits_total: 10,
+            reason: "r".into(),
+        };
+        let holds = |lines, total| k.holds("s", "f.rs", lines, total);
+        assert_eq!((holds(149, 13), holds(150, 13), holds(149, 14)), (true, false, false));
     }
 
     fn base(metrics: Metrics) -> Baseline {

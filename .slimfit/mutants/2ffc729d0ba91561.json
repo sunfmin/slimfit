@@ -1,0 +1,32 @@
+{
+  "tree": "b5d20bbe0f4821ae3e8c8acff64d2b74e36fb864+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/ratchet.rs:80:36: replace < with <= in KeptFile::holds",
+        "why": "growth threshold boundary: just under +50% stays kept",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:81:22: replace < with <= in KeptFile::holds",
+        "why": "churn threshold boundary: as many commits again returns it",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:78:20: replace == with != in KeptFile::holds",
+        "why": "a verdict on another suite must not hold",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:402:28: delete ! in deepen",
+        "why": "a holding verdict suppresses the candidate",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:367:25: replace == with != in source_suite",
+        "why": "keep routes a suite source file to a file verdict, not a test",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
