@@ -291,7 +291,7 @@ enum Cmd {
         /// Allow this bound to rise (repeatable); needs `--reason`.
         #[arg(long, value_enum, verbatim_doc_comment)]
         loosen: Vec<ratchet::Bound>,
-        /// Why the bound may rise, kept in the baseline.
+        /// Why the bound may rise, kept in the baseline: one sentence of why, with the issue it came from. Measurements go in a comment on that issue, not here.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
         /// Measure again even if the working tree is unchanged.

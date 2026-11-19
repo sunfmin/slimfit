@@ -152,7 +152,7 @@ pub struct Suite {
     pub mutants_report: Report<MutantsFormat>,
     /// The flag that limits `mutants_command` to the lines a unified diff
     /// adds, given the diff's path (paths in it relative to the suite root):
-    /// how `--mutants` runs only the change's mutants (ADR 0005).
+    /// how `--mutants` runs only the change's mutants (ADR 0006).
     pub mutants_diff_flag: String,
     /// The flag that runs one mutant by name, given once per pick with the
     /// name as an anchored regular expression: how `--mutants <name>...`
