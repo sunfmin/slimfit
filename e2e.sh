@@ -5,12 +5,14 @@
 #   next --all                → an `uncovered` task names the `unused` function's file
 #   check                     → passes
 #   add an untested function  → check exits 1 on uncovered_lines
-# With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool is
-# limited to a change; nothing mutates a whole sample), after the injection:
-#   check --mutants           → cargo-mutants runs only the injected lines'
-#                               mutants, each with only the tests that ran
-#                               its function (none, for the untested one),
-#                               and their survivors fail the check
+# With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool lists
+# a change's mutants and runs them by name; nothing mutates a whole sample),
+# after the injection:
+#   check --mutants           → lists the injected lines' mutants
+#   check --mutants <2 picks> → cargo-mutants runs only those two of the
+#                               untested function, each with only the tests
+#                               that ran its function (none), and their
+#                               survivors fail the check
 #   next --all                → a `surviving-mutant` task in src/lib.rs, from
 #                               the same measurement (cached; no mutant runs again)
 # A language whose toolchain for this run is incomplete (cargo-mutants too
@@ -81,7 +83,9 @@ for lang in $langs; do
     git init -q && git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm sample
     start=$(date +%s)
     "$bin" init >/dev/null 2>"$out/init.log" || { tail -20 "$out/init.log"; exit 1; }
-    git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit
+    # The branch changes land on: what the injection adds is the change.
+    printf '\n[check]\ntarget = "base"\n' >> slimfit.toml
+    git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit && git branch base
     "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
     "$bin" check >/dev/null 2>&1
     inject "$lang"
@@ -91,9 +95,13 @@ for lang in $langs; do
     fi
     json '[v["metric"] for v in d["verdict"]["violations"]]' <"$out/check.json" | grep -q uncovered_lines
     if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
-      "$bin" check --mutants >"$out/change.json" 2>"$out/change.log" && { echo "check --mutants passed the untested function" >&2; exit 1; }
-      json 'd["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <"$out/change.json" \
-        | grep -qx "\['src/lib.rs'\] True" || { cat "$out/change.json"; tail -20 "$out/change.log"; exit 1; }
+      "$bin" check --mutants >"$out/list.json" 2>"$out/list.log" || { tail -20 "$out/list.log"; exit 1; }
+      pick() { json "[c['name'] for c in d['candidates']['rust'] if c['function'] == 'untested'][$1]" <"$out/list.json"; }
+      first=$(pick 0) second=$(pick 1)
+      "$bin" check --mutants "$first" "$second" --why "its result" "its result" >"$out/change.json" 2>"$out/change.log" \
+        && { echo "check --mutants passed the untested function" >&2; exit 1; }
+      json '[p["outcome"] for p in d["mutated"]["rust"]["picks"]]' <"$out/change.json" \
+        | grep -qx "\['survived', 'survived'\]" || { cat "$out/change.json"; tail -20 "$out/change.log"; exit 1; }
       grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
         || { echo "the untested function's mutants ran tests" >&2; tail -20 "$out/change.log"; exit 1; }
       "$bin" next --all 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \

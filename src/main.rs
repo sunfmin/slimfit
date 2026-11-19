@@ -32,15 +32,15 @@ agent_help::binary!("slimfit");
 /// You (the agent) change code; slimfit measures each change and ratchets the result. Never argue with a number: change the code until `slimfit check` passes. Run `slimfit <command> --help` before a command's first run. What matters most, first:
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
-/// 2. MUTANTS NEVER IN A GATE, AND ONLY ON A CHANGE. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase: `--mutants` runs only the mutants of the changed lines (see [mutants scope](help:mutants-scope)). You, the agent that made the change, run `slimfit check --mutants` on it at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants`) then `slimfit ratchet`, which records the lines it measured in `.slimfit/mutants/`, and you commit that with the change. The gate holds you to it without running a mutant: its plain `slimfit check` fails while the change adds a source line no ratcheted mutants run measured (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
+/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: you, the agent that made the change, pick the few worth running. `slimfit check --mutants` lists the change's mutants (nothing builds); read your change and pick at most {const:PICKS_MAX}, on the decisions it makes; run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet` records the picks, why, and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When nothing in it is worth a mutant, `slimfit ratchet --no-mutants "<why>"` records that instead. The guarantee is your picks, not every mutant: the gate holds only that a record exists, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no record (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
 /// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike.
 ///
 /// ## The loop
 ///
 /// 1. `slimfit next`: one task, with its kind, evidence, files, steps and accept command.
 /// 2. Do exactly that task, nothing else.
-/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}). When the change touched source lines, also `slimfit check --mutants` on it, at background priority (rule 2).
-/// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json` (and, after `--mutants`, record the lines measured in `.slimfit/mutants/`: the gate's `check` fails without it, see [what the gate holds](help:mutants-scope)).
+/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}). When the change adds source lines, also pick and run its mutants, at background priority (rule 2; `slimfit next` gives that as a `pick-mutants` task).
+/// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json` (and, after `--mutants <name>...` or with `--no-mutants "<why>"`, write the change's record in `.slimfit/mutants/`: the gate's `check` fails without it, see [what the gate holds](help:mutants-scope)).
 /// 5. Commit the code and `.slimfit/` together (one task, one commit); back to 1.
 ///
 /// When setting up slimfit on a repo or a host, run `slimfit doctor` first and do each finding's `fix`. Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
@@ -117,7 +117,7 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_file_flag` (the flag that limits it to one file; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_pick_flag` (the flag that runs one mutant by name; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
@@ -131,7 +131,7 @@ enum Cmd {
     ///
     /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
     /// - On a busy host its `test_seconds` comes out high, and the baseline holds it from then on: run it on a quiet host (see [host load](help:host-load)).
-    /// - Run again, it keeps `.slimfit/mutants/`: the lines measured there stay measured.
+    /// - Run again, it keeps `.slimfit/mutants/`: the records there stay.
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init {
         #[command(flatten)]
@@ -139,6 +139,9 @@ enum Cmd {
         /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
         #[arg(long, verbatim_doc_comment)]
         dry_run: bool,
+        /// Record that nothing in the change is worth a mutant, and why (one line): the record of a change that picks none. No mutant runs.
+        #[arg(long, value_name = "WHY", verbatim_doc_comment)]
+        no_mutants: Option<String>,
     },
     /// The next task to do, with its evidence and accept command.
     ///
@@ -160,10 +163,11 @@ enum Cmd {
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
     ///
     /// - `failing-test`: `test` and `log`, the test run's log.
+    /// - `pick-mutants`: `lines`, the source lines the change adds, and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
     /// - `redundant-test`: `test`, its `seconds`, `lines` (how many source lines it runs) and `other_test`, the test whose lines it overlaps most: one that runs every one of them too, when there is one.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
-    /// - `surviving-mutant`: `survivors`, each with its `line` and `mutant` (the change it makes).
+    /// - `surviving-mutant`: `survivors`, each picked mutant that survived, with its `line` and `mutant` (the change it makes).
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
     ///
     /// ## What it may refuse
@@ -172,8 +176,9 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants` of this same tree, the one way mutants run (on your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
-    /// - Surviving-mutant tasks name only survivors in the changed lines: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants <name>...` of this same tree, the one way mutants run (your picks of your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
+    /// - A pick-mutants task lists the change's mutants as the mutation tool does (`slimfit check --mutants`): that runs the tool's listing, a few seconds, and builds nothing.
+    /// - Surviving-mutant tasks name only picks that survived: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
     /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
@@ -194,15 +199,15 @@ enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that it was: `unmeasured_mutants` (see [what the gate holds](help:mutants-scope)).
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change: first with no name, to list the mutants to pick from; then with the picks, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that the change adds a record of them: `unrecorded_mutants` (see [what the gate holds](help:mutants-scope)).
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and the records of measured lines in `.slimfit/mutants/`. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache and the suites' reports and logs beside it. The baseline is never written: `slimfit ratchet` does that.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and which files in `.slimfit/mutants/` the change adds. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache and the suites' reports and logs beside it. The baseline is never written: `slimfit ratchet` does that.
     ///
     /// ## What it holds
     ///
-    /// Per suite, against `.slimfit/baseline.json` and `.slimfit/mutants/`:
+    /// Per suite, against `.slimfit/baseline.json`, and the change's record in `.slimfit/mutants/`:
     ///
     /// {table:bound}
     ///
@@ -211,12 +216,14 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held: their tests ran inside `--mutants`, or over the bound on a busy host (see [host load](help:host-load)).
-    /// - `landing`: the change the gate holds to a mutants measurement (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
+    /// - `landing`: the change the gate holds to a record of its mutants (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
-    /// - `mutated`: per suite, `files` (the source files that hold changed lines) and `change` (their mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
+    /// - `mutated`: per suite, `picks` (the picked mutants it ran, {const:PICK}) and `change` (the picks by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
     /// - `next`: what to do now.
     ///
     /// It exits {const:EXIT_OK} when `ok`, {const:EXIT_VIOLATION} when a bound is violated.
+    ///
+    /// With `--mutants` and no name it measures nothing and answers `candidates`: per suite, the mutants of the change's lines, as its mutation tool lists them without building, {const:CANDIDATE}; and `next`. It exits {const:EXIT_OK}.
     ///
     /// ## What it may refuse
     ///
@@ -226,15 +233,19 @@ enum Cmd {
     ///
     /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
     /// - `test_seconds` swells on a busy host. slimfit corrects for load, but a violation on a loaded host is worth one `--fresh` run on a quiet one before you chase it (see [host load](help:host-load)).
-    /// - A change that only deletes code or tests adds no line, so `--mutants` runs no mutant for it: what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
+    /// - A change that only deletes code or tests adds no line: it lists no mutant and needs no record; what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
+    /// - A pick's name holds its line and column: an edit above it renames it, and the old name is refused. List again after editing.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Check {
         #[command(flatten)]
         at: At,
-        /// Also check `survived_mutants`: run the mutants of the changed lines; none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
-        #[arg(long, verbatim_doc_comment)]
-        mutants: bool,
+        /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (at most {const:PICKS_MAX}, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
+        #[arg(long, num_args = 0.., value_name = "NAME", verbatim_doc_comment)]
+        mutants: Option<Vec<String>>,
+        /// Why each pick is worth running, one line per `--mutants` name, in their order; kept in the record `slimfit ratchet` writes.
+        #[arg(long, num_args = 1.., value_name = "WHY", verbatim_doc_comment)]
+        why: Vec<String>,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -243,18 +254,18 @@ enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). On a change to source, run `slimfit check --mutants` first, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants`): never in a gate, not as idle work. After it passes, it reuses that measurement and records the lines it measured in a file of their own in `.slimfit/mutants/`: commit it with the change, or the gate's `check` fails (see [what the gate holds](help:mutants-scope)). A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
+    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). On a change that adds source lines, run your picks of its mutants first, `slimfit check --mutants <name>... --why <why>...` at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants ...`): never in a gate, not as idle work. After it passes, it reuses that measurement and writes the change's record in a file of its own in `.slimfit/mutants/`: commit it with the change, or the gate's `check` fails (see [what the gate holds](help:mutants-scope)). When nothing in the change is worth a mutant, `--no-mutants "<why>"` writes a record of that instead. A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement has mutants it also writes `.slimfit/mutants/<hash>.json`, the lines that run measured, each by a hash of its text (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement ran picked mutants, or with `--no-mutants`, it also writes `.slimfit/mutants/<hash>.json`, the change's record: the tree it was made of, and per suite the picks ({const:PICK}), or `none`, the reason none was picked; named by its contents (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
     /// - `changed`: whether the baseline moved. `false` is nothing to ratchet: an answer (exit {const:EXIT_OK}), and the baseline is not rewritten.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `measured`: after `--mutants`, the record of the lines measured, `.slimfit/mutants/<hash>.json`; `null` when no line was.
+    /// - `record`: after `--mutants <name>...` or with `--no-mutants`, the change's record, `.slimfit/mutants/<hash>.json`; `null` when there is none.
     /// - `next`: commit, then `slimfit next` (or, when nothing changed, just `slimfit next`).
     /// - `would_write`: with `--dry-run` only, each file it would change (`.slimfit/baseline.json`, the record), with its whole new text.
     ///
@@ -263,14 +274,15 @@ enum Cmd {
     /// It writes nothing when it refuses.
     ///
     /// - A bound got worse: `failures` always; any other unless `--loosen` names it.
-    /// - `--loosen` without `--reason`, and `--loosen unmeasured_mutants`: measure them instead.
+    /// - `--loosen` without `--reason`, and `--loosen unrecorded_mutants`: pick and record the mutants instead.
+    /// - `--no-mutants` without a one-line reason, or of a measurement that ran picks (their record is the one).
     /// - {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
     ///
     /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
     /// - It runs no mutant, and takes no `--mutants`: mutants run one way, `slimfit check --mutants` at background priority, and `ratchet` reuses that measurement while the tree is unchanged. A second path would run them at the agent's own priority.
-    /// - A `ratchet` of a measurement without mutants records no measured line: the change stays to be measured by `slimfit check --mutants`, and the gate's `check` fails until it is.
+    /// - A `ratchet` of a measurement without picks, and without `--no-mutants`, writes no record: the gate's `check` fails on a change that adds source lines until one is committed.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
@@ -288,6 +300,9 @@ enum Cmd {
         /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
         #[arg(long, verbatim_doc_comment)]
         dry_run: bool,
+        /// Record that nothing in the change is worth a mutant, and why (one line): the record of a change that picks none. No mutant runs.
+        #[arg(long, value_name = "WHY", verbatim_doc_comment)]
+        no_mutants: Option<String>,
     },
     /// Records that a redundant-test candidate is kept: it is not proposed again until its text changes.
     ///
@@ -335,7 +350,7 @@ enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the records in `.slimfit/mutants/`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
     ///
     /// ## What it answers
     ///
@@ -343,6 +358,7 @@ enum Cmd {
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
     /// - `history`: oldest first, each point's `commit`, `date` and `suites`: per suite, `prod` and `test` lines.
+    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only.
     /// - `next`: `slimfit next`.
     ///
     /// ## What it may refuse
@@ -421,6 +437,7 @@ fn help() -> Help {
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
         .constant("REACHED", languages_where(|s| s.mutants_tests == config::MutantTests::Reached))
         .constant("PER_TEST", languages_where(|s| !s.reach_report.path.is_empty()))
+        .constant("PICKS_MAX", measure::PICKS_MAX)
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
@@ -435,6 +452,9 @@ fn help() -> Help {
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("LANDING", landing::HELD_HELP)
+        .constant("RECORDS", landing::RECORDS_HELP)
+        .constant("CANDIDATE", model::CANDIDATE_HELP)
+        .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
         .constant("KEPT", ratchet::KEPT_HELP)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
@@ -602,8 +622,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut notes = Vec::new();
             if !m.with_mutants {
                 notes.push(
-                    "mutants not measured: surviving-mutant tasks need `slimfit check --mutants` of this tree first \
-                     (at background priority); `slimfit next` then reads its survivors"
+                    "mutants not measured: surviving-mutant tasks need `slimfit check --mutants <name>...` of this \
+                     tree first (your picks, at background priority); `slimfit next` then reads its survivors"
                         .to_string(),
                 );
             }
@@ -617,7 +637,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 if m.with_mutants {
                     "nothing left to do: the codebase is at its fittest by these measures"
                 } else {
-                    "slimfit check --mutants (at background priority), then `slimfit next`"
+                    "nothing left to do but what mutants would show: they run on a change, picked (`slimfit check --mutants`)"
                 }
             } else {
                 "do the task, then run its accept command, then `slimfit ratchet` and commit"
@@ -631,20 +651,45 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Check { mutants, fresh, .. } => {
+        Cmd::Check { mutants: Some(names), why, .. } if names.is_empty() => {
+            let (cfg, _) = loaded(&repo)?;
+            if !why.is_empty() {
+                return Err(fault::fault(
+                    "--why without a mutant's name",
+                    "give each pick's name to `--mutants`, in the order of `--why`",
+                ));
+            }
+            measure::refuse_unpickable(&cfg)?;
+            let candidates = measure::candidates(&repo, &cfg)?;
+            let next = if candidates.values().all(Vec::is_empty) {
+                "no mutant of the change to pick: when it adds source lines, `slimfit ratchet --no-mutants \"<why>\"`, \
+                 then commit .slimfit/"
+            } else {
+                "read your change and pick at most 5 of `candidates` on the decisions it makes (comparisons, boolean \
+                 logic, match guards, a return value that matters), none that cannot build; run them at background \
+                 priority: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why \
+                 <why>...` (outside factorium, `nice -n 19 slimfit check ...`), then `slimfit ratchet`; or, when none \
+                 is worth running, `slimfit ratchet --no-mutants \"<why>\"`"
+            };
+            Ok((json!({ "candidates": candidates, "next": next }), EXIT_OK))
+        }
+        Cmd::Check { mutants, why, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let picks = picks(mutants.unwrap_or_default(), why)?;
+            let with_mutants = !picks.is_empty();
+            let scope = if with_mutants { measure::Mutants::Picks(picks) } else { measure::Mutants::None };
             let m = measure::current(
                 &repo,
                 &cfg,
-                &measure::Options { mutants: scope(mutants), fresh, dry_run: false, timed: !mutants },
+                &measure::Options { mutants: scope, fresh, dry_run: false, timed: !with_mutants },
             )?;
             let mut v = ratchet::check(&base, &m, &cfg.check);
-            let (landing, unmeasured) = landing::hold(&repo, &cfg, &m)?;
-            v.violations.extend(unmeasured);
+            let (landing, unrecorded) = landing::hold(&repo, &cfg, m.with_mutants)?;
+            v.violations.extend(unrecorded);
             v.ok = v.violations.is_empty();
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
-            } else if !v.improved.is_empty() || !v.new_suites.is_empty() {
+            } else if !v.improved.is_empty() || !v.new_suites.is_empty() || with_mutants {
                 "slimfit ratchet, then commit"
             } else {
                 "slimfit next"
@@ -655,7 +700,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 code,
             ))
         }
-        Cmd::Ratchet { loosen, reason, fresh, dry_run, .. } => {
+        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, .. } => {
             let (cfg, old) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
@@ -663,14 +708,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
             )?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
-            // The lines a mutants run measured, recorded apart from the baseline.
-            let mut measured = landing::Hashes::new();
-            for mutated in m.suites.iter().filter_map(|s| s.mutated.as_ref()) {
-                for (f, h) in &mutated.lines {
-                    measured.entry(f.clone()).or_default().extend(h.iter().cloned());
-                }
-            }
-            let record = if measured.is_empty() { None } else { Some(landing::record(&measured)?) };
+            let record = record(&m, no_mutants)?.map(|r| r.file()).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
@@ -694,7 +732,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "changed": changed,
                     "baseline": new.suites,
                     "loosened": new.loosened,
-                    "measured": record.map(|(path, _)| path),
+                    "record": record.map(|(path, _)| path),
                     "next": next,
                 })),
                 EXIT_OK,
@@ -749,12 +787,14 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
             let history = report::history(&repo, &cfg, commits, points)?;
+            let records = landing::records(&repo)?;
             Ok((
                 json!({
                     "current": metrics_of(&m),
                     "baseline": base.suites,
                     "loosened": base.loosened,
                     "history": history,
+                    "mutants_records": records,
                     "next": "slimfit next",
                 }),
                 EXIT_OK,
@@ -804,8 +844,60 @@ fn parse(help: &Help, args: impl IntoIterator<Item = std::ffi::OsString>) -> Res
     })
 }
 
-fn scope(mutants: bool) -> measure::Mutants {
-    if mutants { measure::Mutants::Change } else { measure::Mutants::None }
+/// The picks `check --mutants <name>... --why <why>...` names: at most
+/// `PICKS_MAX`, each with its own one-line reason.
+fn picks(names: Vec<String>, why: Vec<String>) -> Result<Vec<model::Pick>> {
+    let mut faults = Vec::new();
+    if names.len() > measure::PICKS_MAX {
+        faults.push(fault::Fault {
+            fault: format!("{} mutants picked, more than {}", names.len(), measure::PICKS_MAX),
+            fix: format!(
+                "pick at most {}: those on the decisions the change makes (comparisons, boolean logic, match \
+                 guards, a return value that matters)",
+                measure::PICKS_MAX
+            ),
+        });
+    }
+    if names.len() != why.len() || why.iter().any(|w| w.trim().is_empty() || w.contains('\n')) {
+        faults.push(fault::Fault {
+            fault: format!("{} mutant(s) picked, with {} `--why`", names.len(), why.len()),
+            fix: "give each pick one `--why` of one line, in the order of the names".into(),
+        });
+    }
+    if !faults.is_empty() {
+        return Err(fault::Faults(faults).into());
+    }
+    Ok(names.into_iter().zip(why).map(|(name, why)| model::Pick { name, why, outcome: None }).collect())
+}
+
+/// The record `ratchet` writes of `m`: its picks, or, with `--no-mutants`,
+/// why none was picked; `None` when there is neither.
+fn record(m: &model::Measurement, no_mutants: Option<String>) -> Result<Option<landing::Record>> {
+    let picks: std::collections::BTreeMap<String, Vec<model::Pick>> = m
+        .suites
+        .iter()
+        .filter_map(|s| Some((s.suite.clone(), s.mutated.as_ref()?.picks.clone())))
+        .filter(|(_, p)| !p.is_empty())
+        .collect();
+    let none = match no_mutants {
+        Some(_) if !picks.is_empty() => {
+            return Err(fault::fault(
+                "--no-mutants, but this tree's measurement ran picked mutants",
+                "leave out `--no-mutants`: the record is of those picks (or `--fresh` to measure without them)",
+            ));
+        }
+        Some(why) if why.trim().is_empty() || why.contains('\n') => {
+            return Err(fault::fault(
+                "--no-mutants without a reason",
+                "say in one line why nothing in the change is worth a mutant",
+            ));
+        }
+        none => none,
+    };
+    if picks.is_empty() && none.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(landing::Record { tree: m.tree.clone(), picks, none }))
 }
 
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {
@@ -817,13 +909,7 @@ fn mutated_of(m: &model::Measurement) -> serde_json::Value {
     if !m.with_mutants {
         return serde_json::Value::Null;
     }
-    // The lines' hashes are for the record `ratchet` writes, not for reading.
-    let shown = |m: &model::Mutated| json!({ "files": m.files, "change": m.change });
-    m.suites
-        .iter()
-        .map(|s| (s.suite.clone(), s.mutated.as_ref().map(shown).into()))
-        .collect::<serde_json::Map<_, _>>()
-        .into()
+    m.suites.iter().map(|s| (s.suite.clone(), json!(s.mutated))).collect::<serde_json::Map<_, _>>().into()
 }
 
 /// The files a command writes, by path in the repo: written at once, or in
@@ -900,8 +986,21 @@ mod tests {
         assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
-        let held = crate::landing::Held { target: String::new(), from: String::new(), lines: 0, unmeasured: 0 };
+        let held = crate::landing::Held { target: String::new(), from: String::new(), lines: 0, records: vec![] };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
+        assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
+        let candidate = model::Candidate {
+            name: String::new(),
+            file: String::new(),
+            line: 0,
+            function: String::new(),
+            replacement: String::new(),
+        };
+        assert_eq!(named(model::CANDIDATE_HELP), keys(&candidate));
+        let pick = model::Pick { name: String::new(), why: String::new(), outcome: None };
+        assert_eq!(named(model::PICK_HELP)[..3], keys(&pick)[..]);
+        let check = super::help().command_help(&["check"]).unwrap();
+        assert!(check.contains(model::CANDIDATE_HELP) && check.contains(model::PICK_HELP), "{check}");
         let loosening = ratchet::Loosening {
             suite: String::new(),
             metric: ratchet::Bound::Failures,
@@ -1047,13 +1146,22 @@ mod answer_tests {
         assert!(f[0].starts_with("`slimfit init` writes it") && f[1].starts_with("restore it: `git checkout"));
     }
 
-    /// The gate's plain `check` holds a landing's source lines to a
-    /// ratcheted mutants run (ADR 0008): it fails while a line none measured
-    /// is in the change, passes once one did, and fails again on a line
-    /// edited after. Two branches that each measured their own change merge
-    /// without a conflict, and neither's lines are unmeasured after.
+    /// `slimfit` with `args` as given, spaces in them kept.
+    fn slimfit_args(repo: &Path, args: &[&str]) -> anyhow::Result<(Value, i32)> {
+        let mut all: Vec<std::ffi::OsString> = vec!["slimfit".into()];
+        all.extend(args.iter().map(Into::into));
+        all.extend(["--repo".into(), repo.into()]);
+        run(all)
+    }
+
+    /// The gate's plain `check` holds a landing that adds source lines to a
+    /// record of its mutants (ADR 0008): it fails while the change adds
+    /// none, and passes once it adds one, of picks or of a reason none is
+    /// worth one, whatever lines it covers. `next` asks for the picks first.
+    /// Two branches that each recorded their own change merge without a
+    /// conflict, and `report` counts their records.
     #[test]
-    fn a_landing_passes_only_with_its_lines_measured() {
+    fn a_landing_passes_only_with_a_record_of_its_mutants() {
         let (dir, mut cfg) = sample_repo();
         let repo = dir.path();
         cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
@@ -1074,51 +1182,73 @@ mod answer_tests {
             let old = std::fs::read_to_string(&p).unwrap_or_default();
             std::fs::write(p, old + text).unwrap();
         };
-        let measure = |branch: &str| {
-            // Mutants run one way, `check --mutants`; `ratchet` reuses it.
-            slimfit(repo, "check --mutants").unwrap();
-            let (out, code) = slimfit(repo, "ratchet --loosen survived_mutants --reason equivalent").unwrap();
-            assert!(code == 0 && out["measured"].as_str().unwrap().starts_with(".slimfit/mutants/"), "{out:#}");
+        let commit = |branch: &str| {
             git(repo, &["add", "-A"]);
             git(repo, &["commit", "-qm", branch]);
         };
+        let killed = "src/lib.rs:12:9: replace >= with < in is_adult";
 
         git(repo, &["checkout", "-qb", "a"]);
         add("src/lib.rs", "\npub fn a_one() -> u8 {\n    1\n}\n");
         let out = held(crate::EXIT_VIOLATION);
         let v = &out["verdict"]["violations"][0];
-        assert_eq!((v["metric"].as_str(), v["current"].as_f64()), (Some("unmeasured_mutants"), Some(3.0)), "{out:#}");
-        assert!(
-            v["fix"].as_str().unwrap().contains("`factorium worker exclusive --background -- slimfit check --mutants`")
-        );
-        assert_eq!((out["landing"]["lines"].as_u64(), out["landing"]["unmeasured"].as_u64()), (Some(3), Some(3)));
+        assert_eq!((v["metric"].as_str(), v["current"].as_f64()), (Some("unrecorded_mutants"), Some(3.0)), "{out:#}");
+        assert!(v["fix"].as_str().unwrap().contains("slimfit check --mutants <name>... --why <why>..."), "{v:#}");
+        assert_eq!((out["landing"]["lines"].as_u64(), &out["landing"]["records"]), (Some(3), &serde_json::json!([])));
+        // `next` asks for the picks first, with the candidates to pick from.
+        let (next, _) = slimfit(repo, "next").unwrap();
+        assert_eq!(next["task"]["kind"], "pick-mutants", "{next:#}");
+        assert_eq!(next["task"]["evidence"]["candidates"].as_array().unwrap().len(), 17, "{next:#}");
+        let (listed, code) = slimfit(repo, "check --mutants").unwrap();
+        assert_eq!((listed["candidates"]["rust"][16]["name"].as_str(), code), (Some(killed), 0));
         // Committing it changes nothing: the change is the branch's, not the working tree's.
-        git(repo, &["commit", "-qam", "a, unmeasured"]);
+        git(repo, &["commit", "-qam", "a, unrecorded"]);
         held(crate::EXIT_VIOLATION);
-        measure("a");
-        assert_eq!(held(crate::EXIT_OK)["landing"]["unmeasured"].as_u64(), Some(0));
-        // Edited after it was measured: unmeasured again.
+        // Too many picks, or a pick without its reason: refused.
+        let six = format!("check --mutants {} --why {}", ["n"; 6].join(" "), ["w"; 6].join(" "));
+        assert!(faults(repo, &six)[0].fault.contains("6 mutants picked, more than 5"));
+        assert!(faults(repo, "check --mutants n m --why w")[0].fault.contains("2 mutant(s) picked, with 1 `--why`"));
+        let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
+        assert_eq!((code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()), (0, Some("killed")), "{out:#}");
+        let no = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", "nothing"]).unwrap_err());
+        assert!(no[0].fault.contains("--no-mutants, but this tree's measurement ran picked mutants"), "{no:?}");
+        let (out, _) = slimfit(repo, "ratchet").unwrap();
+        let record = out["record"].as_str().unwrap().to_string();
+        assert!(record.starts_with(".slimfit/mutants/"), "{out:#}");
+        let text = std::fs::read_to_string(repo.join(&record)).unwrap();
+        assert!(text.contains("\"why\": \"the age bound\"") && text.contains("\"outcome\": \"killed\""), "{text}");
+        commit("a");
+        assert_eq!(held(crate::EXIT_OK)["landing"]["records"], serde_json::json!([record]));
+        // Which lines a record covers is not held: an edit after it passes.
         let text = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
         std::fs::write(repo.join("src/lib.rs"), text.replace("    1\n}\n", "    2\n}\n")).unwrap();
-        let out = held(crate::EXIT_VIOLATION);
-        assert_eq!(out["landing"]["unmeasured"].as_u64(), Some(1), "{out:#}");
+        held(crate::EXIT_OK);
         git(repo, &["checkout", "--", "src/lib.rs"]);
 
-        // Another branch measures its own change, in a file of its own.
+        // Another branch records that nothing in its change is worth a mutant.
         git(repo, &["checkout", "-qb", "b", "target"]);
         add("src/b.rs", "pub fn b_two() -> u8 {\n    2\n}\n");
         held(crate::EXIT_VIOLATION);
-        measure("b");
+        assert!(faults(repo, "ratchet --no-mutants")[0].fault.contains("a value is required"));
+        let (out, _) = slimfit_args(repo, &["ratchet", "--no-mutants", "a constant: no decision to mutate"]).unwrap();
+        let none = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
+        assert!(none.contains("\"none\": \"a constant: no decision to mutate\"") && !none.contains("picks"), "{none}");
+        commit("b");
         held(crate::EXIT_OK);
         git(repo, &["checkout", "-q", "a"]);
         git(repo, &["merge", "-q", "--no-edit", "b"]);
         let out = held(crate::EXIT_OK);
-        assert_eq!((out["landing"]["lines"].as_u64(), out["landing"]["unmeasured"].as_u64()), (Some(6), Some(0)));
-        assert_eq!(std::fs::read_dir(repo.join(crate::landing::DIR)).unwrap().count(), 2);
+        assert_eq!(
+            (out["landing"]["lines"].as_u64(), out["landing"]["records"].as_array().unwrap().len()),
+            (Some(6), 2)
+        );
+        let (report, _) = slimfit(repo, "report --points 1").unwrap();
+        let counts = serde_json::json!({ "with_picks": 1, "without_picks": 1, "older": 0 });
+        assert_eq!(report["mutants_records"], counts, "{report:#}");
         // A record that does not parse, and a target that is not there, are refused.
         std::fs::write(repo.join(crate::landing::DIR).join("x.json"), "{").unwrap();
-        let f = faults(repo, "check");
-        assert!(f[0].fault.contains("x.json is not a record of measured lines"), "{f:?}");
+        let f = faults(repo, "report");
+        assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");
         assert_eq!(f[0].fix, "restore it from git: `git checkout -- .slimfit/mutants`");
         std::fs::remove_file(repo.join(crate::landing::DIR).join("x.json")).unwrap();
         cfg.check.target = Some("gone".into());
@@ -1163,7 +1293,7 @@ mod answer_tests {
         let held = |want: i32| {
             let (out, code) = slimfit(repo, "check").unwrap();
             assert_eq!(code, want, "{out:#}");
-            (out["landing"]["from"].as_str().unwrap().to_string(), out["landing"]["unmeasured"].as_u64().unwrap())
+            (out["landing"]["from"].as_str().unwrap().to_string(), out["landing"]["lines"].as_u64().unwrap())
         };
         git(repo, &["checkout", "-qb", "a"]);
         add("src/lib.rs", "\npub fn before_the_rule() -> u8 {\n    1\n}\n");
@@ -1175,7 +1305,7 @@ mod answer_tests {
         // A ratchet keeps the cut.
         slimfit(repo, "ratchet").unwrap();
         assert_eq!(crate::ratchet::load(repo).unwrap().mutants_from.as_deref(), Some(before.as_str()));
-        // A line added after the cut is the change's, unmeasured: check fails.
+        // A line added after the cut is the change's, with no record: check fails.
         add("src/lib.rs", "\npub fn after_the_rule() -> u8 {\n    2\n}\n");
         assert_eq!(held(crate::EXIT_VIOLATION), (before.clone(), 3));
         // A cut not on HEAD's history (or no commit at all) moves nothing.
@@ -1193,8 +1323,8 @@ mod answer_tests {
         std::fs::write(dir.path().join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let (first, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((first["changed"].as_bool(), code), (Some(true), 0));
-        // No mutants ran: no measured line is recorded.
-        assert_eq!(first["measured"], Value::Null, "{first}");
+        // No mutants ran, and none is said to be worth one: no record.
+        assert_eq!(first["record"], Value::Null, "{first}");
         let (again, code) = slimfit(dir.path(), "ratchet").unwrap();
         assert_eq!((again["changed"].as_bool(), code), (Some(false), 0));
         assert!(again["next"].as_str().unwrap().starts_with("nothing to ratchet"));

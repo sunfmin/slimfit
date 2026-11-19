@@ -18,6 +18,9 @@ pub enum TaskKind {
     /// A test fails. Fix it first; nothing else is measured honestly.
     #[value(verbatim_doc_comment)]
     FailingTest,
+    /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Read your change, pick at most {const:PICKS_MAX} of the listed mutants on the decisions it makes, run them, and ratchet; or record why none is worth one.
+    #[value(verbatim_doc_comment)]
+    PickMutants,
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
     #[value(verbatim_doc_comment)]
     Uncovered,
@@ -27,7 +30,7 @@ pub enum TaskKind {
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
-    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs a `slimfit check --mutants` of this tree first.
+    /// A picked mutant of the change no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Comes from a `slimfit check --mutants <name>...` of this tree.
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
     /// A big file that keeps changing. Load the codebase-design and improve-codebase-architecture skills; design the deeper interface first, then move to it one passing step at a time.
@@ -39,8 +42,8 @@ impl TaskKind {
     /// The command that must pass after a task of this kind is done.
     pub fn accept(self) -> &'static str {
         match self {
-            TaskKind::FailingTest | TaskKind::Uncovered | TaskKind::RedundantTest => "slimfit check",
-            TaskKind::SlowTest | TaskKind::SurvivingMutant | TaskKind::Deepen => "slimfit check --mutants",
+            TaskKind::SurvivingMutant => "slimfit check --mutants <its picks> --why <why>...",
+            _ => "slimfit check",
         }
     }
 
@@ -111,7 +114,7 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
 }
 
 pub fn all(repo: &Path, cfg: &Config, m: &Measurement, kept: &[Kept]) -> Result<Vec<Task>> {
-    let mut out = Vec::new();
+    let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, kept));
         out.extend(deepen(repo, &Classifier::new(&sc.resolve())?, s)?);
@@ -140,6 +143,48 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
             accept: TaskKind::FailingTest.accept().into(),
         })
         .collect()
+}
+
+/// A task per suite whose change adds source lines and no record of its
+/// mutants (none due once `picked` ran: `ratchet` records them), with what
+/// its tool lists of the change to pick from.
+fn pick_mutants(repo: &Path, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
+    let (_, unrecorded) = crate::landing::hold(repo, cfg, picked)?;
+    if unrecorded.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut candidates = crate::measure::candidates(repo, cfg)?;
+    Ok(unrecorded
+        .into_iter()
+        .map(|v| {
+            let listed = candidates.remove(&v.suite).unwrap_or_default();
+            let files: BTreeSet<String> = listed.iter().map(|c| c.file.clone()).collect();
+            Task {
+                kind: TaskKind::PickMutants,
+                summary: format!(
+                    "the change adds {} source line(s) and no record of its mutants: pick the few worth running, of {}",
+                    v.current,
+                    listed.len()
+                ),
+                suite: v.suite,
+                files: files.into_iter().collect(),
+                evidence: json!({ "lines": v.current, "candidates": listed }),
+                steps: format!(
+                    "Read your change. Of `candidates` (what `slimfit check --mutants` lists), pick at most {} on the \
+                     decisions it makes: comparisons, boolean logic, match guards, a function whose return value \
+                     matters. Skip those that cannot build, such as a body replaced by `Default::default()` for a \
+                     type with no default. Run them at background priority: `factorium worker exclusive --background \
+                     -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit \
+                     check ...`), one one-line `--why` per pick. A survivor: assert what it changes with a fast test, \
+                     or, if it changes nothing observable, `slimfit ratchet --loosen survived_mutants --reason \
+                     \"<why>\"`. Then `slimfit ratchet` writes the record. If nothing in the change is worth a mutant, \
+                     `slimfit ratchet --no-mutants \"<why>\"` records that instead. Commit .slimfit/ with the change.",
+                    crate::measure::PICKS_MAX
+                ),
+                accept: TaskKind::PickMutants.accept().into(),
+            }
+        })
+        .collect())
 }
 
 fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
@@ -307,9 +352,18 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
                     If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
                     The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
                 .into(),
-            accept: TaskKind::SurvivingMutant.accept().into(),
+            accept: accept_picks(s),
         })
         .collect()
+}
+
+/// The command that runs the suite's picks again, as they were picked.
+fn accept_picks(s: &SuiteMeasurement) -> String {
+    let quoted = |t: &str| format!("'{}'", t.replace('\'', "'\\''"));
+    let picks = s.mutated.as_ref().map(|m| m.picks.as_slice()).unwrap_or_default();
+    let names: Vec<String> = picks.iter().map(|p| quoted(&p.name)).collect();
+    let whys: Vec<String> = picks.iter().map(|p| quoted(&p.why)).collect();
+    format!("slimfit check --mutants {} --why {}", names.join(" "), whys.join(" "))
 }
 
 /// Source files that keep changing and are big: where a deeper module pays

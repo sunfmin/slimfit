@@ -92,18 +92,45 @@ impl MutantCounts {
     }
 }
 
-/// What a mutation run of the change covered, and what it found there.
+/// A mutant of the change, as the suite's tool lists it: what the agent
+/// picks from (`check --mutants` with no names).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Candidate {
+    /// The tool's name for it: what `check --mutants <name>` picks it by.
+    pub name: String,
+    pub file: String,
+    pub line: u32,
+    /// The function it is in; empty when the tool names none.
+    pub function: String,
+    /// The code it puts in place of the original.
+    pub replacement: String,
+}
+
+/// What a [`Candidate`] prints, as the command pages name it.
+pub const CANDIDATE_HELP: &str = "each with `name` (what a pick names), `file`, `line`, `function` and \
+     `replacement` (the code it puts in)";
+
+/// A mutant the agent picked, why, and what its run found.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Pick {
+    pub name: String,
+    pub why: String,
+    /// `None` when its run reported no outcome for it.
+    pub outcome: Option<MutantStatus>,
+}
+
+/// What a [`Pick`] prints, as the command pages name it.
+pub const PICK_HELP: &str = "each with `name`, `why` (the reason it was picked) and `outcome` (`killed`, \
+     `survived` or `unviable`; `null` when the run reported none)";
+
+/// The picked mutants a run of the change ran, and what they came to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Mutated {
-    /// The source files with lines in the change.
-    pub files: Vec<String>,
-    /// The mutants in the change's lines, by outcome: survivors here are the
-    /// change's own, and `check --mutants` holds them at 0.
+    #[serde(default)]
+    pub picks: Vec<Pick>,
+    /// The picks by outcome: a survivor here is the change's own, and
+    /// `check --mutants` holds them at 0.
     pub change: MutantCounts,
-    /// The lines the run measured, by the hash of their text: what `ratchet`
-    /// records in `.slimfit/mutants/` (ADR 0008).
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub lines: crate::landing::Hashes,
 }
 
 /// A run of uncovered lines in one file.
@@ -130,7 +157,7 @@ pub struct SuiteMeasurement {
     /// chosen from (ADR 0007) and redundant tests are proposed from (ADR 0006).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<Reach>,
-    /// What the mutation run covered; `None` without mutants.
+    /// The picks the mutation run ran; `None` without mutants.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Mutated>,
     pub command_seconds: f64,
@@ -207,11 +234,8 @@ impl ReachTest {
 pub struct Measurement {
     /// Identifies the working tree measured: HEAD plus a hash of local changes.
     pub tree: String,
+    /// Picked mutants of the change ran (ADR 0008).
     pub with_mutants: bool,
-    /// With mutants: the commit the change was taken from, HEAD's merge base
-    /// with the branch it lands on (ADR 0008).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<String>,
     pub suites: Vec<SuiteMeasurement>,
 }
 

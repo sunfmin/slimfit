@@ -73,12 +73,12 @@ pub enum Bound {
     /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
     #[value(verbatim_doc_comment)]
     UncoveredLines,
-    /// Mutants no test kills in the changed lines: none, checked only with `--mutants` (see [mutants scope](help:mutants-scope)). Survivors elsewhere are tasks, not violations; no baseline keeps a count.
+    /// Picked mutants of the change no test kills: none, checked only with `--mutants <name>...` (see [mutants scope](help:mutants-scope)). No baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
-    /// Source lines the change adds that no ratcheted mutants run measured: none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
+    /// Source lines the change adds while it adds no record of its mutants (picks, or a reason none is worth one): none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
     #[value(verbatim_doc_comment)]
-    UnmeasuredMutants,
+    UnrecordedMutants,
 }
 
 /// What a [`Loosening`] prints, as the command pages name it.
@@ -163,7 +163,7 @@ fn value(m: &Metrics, b: Bound) -> Option<f64> {
         Bound::Failures => m.failures as f64,
         Bound::TestSeconds => m.test_seconds,
         Bound::UncoveredLines => m.uncovered_lines as f64,
-        Bound::SurvivedMutants | Bound::UnmeasuredMutants => return None,
+        Bound::SurvivedMutants | Bound::UnrecordedMutants => return None,
     })
 }
 
@@ -205,17 +205,19 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             list("uncovered")
         ),
         Bound::SurvivedMutants => format!(
-            "mutants survive in the changed lines: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
+            "picked mutants of the change survive: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
         ),
-        Bound::UnmeasuredMutants => MEASURE_THE_CHANGE.into(),
+        Bound::UnrecordedMutants => PICK_THE_MUTANTS.into(),
     }
 }
 
-/// What clears `unmeasured_mutants`: the rule of every change to source.
-pub const MEASURE_THE_CHANGE: &str = "measure the change's mutants at background priority, never in a gate: \
-     `factorium worker exclusive --background -- slimfit check --mutants` (outside factorium, `nice -n 19 slimfit \
-     check --mutants`), then `slimfit ratchet`, then commit .slimfit/mutants/ with the change";
+/// What clears `unrecorded_mutants`: the rule of every change to source.
+pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --mutants`), pick at most 5 worth \
+     running (`slimfit next` gives the task) and run them at background priority, never in a gate: `factorium worker \
+     exclusive --background -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 \
+     slimfit check ...`), then `slimfit ratchet`; or, when nothing in the change is worth a mutant, `slimfit ratchet \
+     --no-mutants \"<why>\"`; then commit .slimfit/mutants/ with the change";
 
 /// What times a tree's tests after `--mutants` ran them (`untimed`).
 pub const TIME_THE_TESTS: &str =
@@ -287,8 +289,8 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
 
 /// The new baseline: each bound at the better of baseline and current;
 /// a loosened bound at current, recorded with its reason. Refuses while
-/// any other bound is violated. The lines a mutants run measured are
-/// recorded by the caller (`landing::record`), not in the baseline.
+/// any other bound is violated. The picks a mutants run ran are recorded
+/// by the caller (`landing::Record`), not in the baseline.
 pub fn ratchet(
     base: &Baseline,
     m: &Measurement,
@@ -314,11 +316,11 @@ pub fn ratchet(
             }
         })
         .collect();
-    if loosen.contains(&Bound::UnmeasuredMutants) {
+    if loosen.contains(&Bound::UnrecordedMutants) {
         faults.push(Fault {
-            fault: "--loosen unmeasured_mutants: unmeasured lines are never loosened".into(),
+            fault: "--loosen unrecorded_mutants: a change without a record of its mutants is never loosened".into(),
             fix: format!(
-                "{MEASURE_THE_CHANGE}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
+                "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
             ),
         });
     }
@@ -435,11 +437,7 @@ mod t {
             uncovered: vec![],
             mutants: vec![],
             reach: None,
-            mutated: survived.map(|n| Mutated {
-                files: vec!["src/a.rs".into()],
-                change: change(n),
-                lines: Default::default(),
-            }),
+            mutated: survived.map(|n| Mutated { picks: vec![], change: change(n) }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
             host_load: 0.0,
@@ -449,16 +447,11 @@ mod t {
 
     /// `survived`: the change's survivors, when mutants were measured.
     fn measurement(metrics: Metrics, survived: Option<u64>) -> Measurement {
-        Measurement {
-            tree: "t".into(),
-            with_mutants: survived.is_some(),
-            since: survived.map(|_| "c".into()),
-            suites: vec![suite("s", metrics, survived)],
-        }
+        Measurement { tree: "t".into(), with_mutants: survived.is_some(), suites: vec![suite("s", metrics, survived)] }
     }
 
     /// A baseline, and a cached measurement, written before whole-codebase
-    /// runs, the kill matrix and `mutants_at` were removed still load: the
+    /// runs, the kill matrix, `mutants_at` and per-line records were removed still load: the
     /// removed fields are ignored, and the next ratchet writes the baseline
     /// without them.
     #[test]
@@ -505,7 +498,7 @@ mod t {
 
     /// No baseline keeps a mutant count: a survivor in the change fails the
     /// check, in a new suite too, until it is killed or loosened with a
-    /// reason; `unmeasured_mutants` is never loosened.
+    /// reason; `unrecorded_mutants` is never loosened.
     #[test]
     fn the_changes_own_survivors_fail_until_loosened() {
         let cfg = CheckConfig::default();
@@ -523,7 +516,7 @@ mod t {
         assert_eq!((l.metric, l.from, l.to, l.reason.as_str()), (Bound::SurvivedMutants, 0.0, 2.0, "equivalent"));
         let clean = ratchet(&base(m(10, 10.0)), &measurement(m(10, 10.0), Some(0)), &cfg, &[], None).unwrap();
         assert!(clean.loosened.is_empty());
-        let never = ratchet(&base(m(10, 10.0)), &two, &cfg, &[Bound::UnmeasuredMutants], Some("x")).unwrap_err();
+        let never = ratchet(&base(m(10, 10.0)), &two, &cfg, &[Bound::UnrecordedMutants], Some("x")).unwrap_err();
         let f = crate::fault::of(never);
         assert!(f.iter().any(|f| f.fault.contains("never loosened") && f.fix.contains("--background")), "{f:?}");
     }

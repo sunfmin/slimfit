@@ -1,6 +1,6 @@
 use super::MutantsFormat;
 use super::xml::{Node, walk};
-use crate::model::{Mutant, MutantStatus};
+use crate::model::{Candidate, Mutant, MutantStatus};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -18,6 +18,24 @@ pub fn read(format: MutantsFormat, reports: &[String]) -> Result<Vec<Mutant>> {
         }
     }
     Ok(run)
+}
+
+/// The mutants `cargo mutants --list --json` lists, paths as it gives them
+/// (relative to where it ran).
+pub fn list(text: &str) -> Result<Vec<Candidate>> {
+    let v: Value = serde_json::from_str(text).context("cargo mutants --list --json")?;
+    let s = |v: &Value| v.as_str().unwrap_or("").to_string();
+    let listed = v.as_array().context("cargo mutants --list --json is not a list")?;
+    Ok(listed
+        .iter()
+        .map(|m| Candidate {
+            name: s(&m["name"]),
+            file: s(&m["file"]),
+            line: line_of(&m["span"]["start"]["line"]),
+            function: s(&m["function"]["function_name"]),
+            replacement: s(&m["replacement"]),
+        })
+        .collect())
 }
 
 fn line_of(v: &Value) -> u32 {
