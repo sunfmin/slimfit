@@ -27,7 +27,7 @@ pub enum TaskKind {
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
-    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs `--mutants`.
+    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs a `slimfit check --mutants` of this tree first.
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
     /// A big file that keeps changing. Load the codebase-design and improve-codebase-architecture skills; design the deeper interface first, then move to it one passing step at a time.

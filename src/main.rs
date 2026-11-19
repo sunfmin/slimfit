@@ -172,7 +172,7 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants` of this same tree, the one way mutants run (on your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
-    /// - Those survivors are only the changed lines', so surviving-mutant tasks name only the survivors there; nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - Surviving-mutant tasks name only survivors in the changed lines: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
     /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
