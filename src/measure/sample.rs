@@ -127,25 +127,17 @@ pub fn draw(pool: &[(String, Candidate)], picked: &BTreeSet<String>, tip: &str) 
 /// (the empty tree in a younger repository); never before the baseline's
 /// `mutants_from`, code from before picks.
 fn from(repo: &Path, head: &str) -> Result<String> {
-    let mut last: Option<String> = None;
-    for s in on_disk(repo).into_iter().filter(|s| git::is_ancestor(repo, &s.tip, head)) {
-        if last.as_ref().is_none_or(|l| git::is_ancestor(repo, l, &s.tip)) {
-            last = Some(s.tip);
-        }
-    }
+    let tips = on_disk(repo).into_iter().map(|s| s.tip).filter(|t| git::is_ancestor(repo, t, head));
+    let last = tips.reduce(|a, b| if git::is_ancestor(repo, &a, &b) { b } else { a });
     let window = || {
         let before = format!("--before={SAMPLE_DAYS}.days.ago");
         let c = git::run(repo, &["rev-list", "-1", "--first-parent", &before, head]).unwrap_or_default();
         Some(c.trim().to_string()).filter(|c| !c.is_empty())
     };
-    let start = last.or_else(window);
+    let start = last.or_else(window).unwrap_or_else(|| EMPTY_TREE.into());
     let cut = crate::ratchet::load(repo)?.mutants_from.filter(|c| git::is_ancestor(repo, c, head));
-    Ok(match (start, cut) {
-        (Some(s), Some(c)) if git::is_ancestor(repo, &s, &c) => c,
-        (Some(s), _) => s,
-        (None, Some(c)) => c,
-        (None, None) => EMPTY_TREE.into(),
-    })
+    let before_cut = |c: &String| start == EMPTY_TREE || git::is_ancestor(repo, &start, c);
+    Ok(cut.filter(before_cut).unwrap_or(start))
 }
 
 /// The samples in `.slimfit/samples/`; one that does not read is left out.
@@ -160,14 +152,10 @@ fn on_disk(repo: &Path) -> Vec<Sample> {
 fn picked_since(repo: &Path, from: &str, head: &str) -> Result<BTreeSet<String>> {
     let added =
         git::run(repo, &["diff", "--name-only", "--diff-filter=A", "--no-renames", from, head, "--", landing::DIR])?;
-    let mut out = BTreeSet::new();
-    for path in added.lines().filter(|p| p.ends_with(".json")) {
-        let text = git::run(repo, &["show", &format!("{head}:{path}")]).unwrap_or_default();
-        if let Ok(r) = serde_json::from_str::<Record>(&text) {
-            out.extend(r.picks.into_values().flatten().map(|p| p.name));
-        }
-    }
-    Ok(out)
+    let read = |path: &str| git::run(repo, &["show", &format!("{head}:{path}")]).ok();
+    let records = added.lines().filter(|p| p.ends_with(".json")).filter_map(read);
+    let records = records.filter_map(|t| serde_json::from_str::<Record>(&t).ok());
+    Ok(records.flat_map(|r| r.picks.into_values().flatten().map(|p| p.name)).collect())
 }
 
 /// Draws `n` viable mutants of what HEAD's history added since the last
@@ -237,15 +225,12 @@ fn run(
         if round.is_empty() {
             break;
         }
-        for (s, l) in listed {
-            let picks: Vec<Pick> = round
-                .iter()
-                .filter(|(suite, _)| suite == s)
-                .map(|(_, c)| Pick { name: c.name.clone(), why: "sampled".into(), outcome: None })
-                .collect();
-            if picks.is_empty() {
-                continue;
-            }
+        let mut by_suite: BTreeMap<&String, Vec<Pick>> = BTreeMap::new();
+        for (s, c) in round {
+            by_suite.entry(s).or_default().push(Pick { name: c.name.clone(), why: "sampled".into(), outcome: None });
+        }
+        for (s, picks) in by_suite {
+            let l = &listed[s];
             let suite = cfg.suites.iter().find(|x| &x.name == s).expect("a configured suite").resolve();
             let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
             let totals = Classifier::of_worktree(&suite, repo, &files)?
@@ -307,6 +292,16 @@ mod t {
         let order = draw(&p, &picked, "aaaa");
         assert_eq!(order.len(), 35);
         assert!(order.iter().all(|(_, c)| !a.contains(&c.name)), "{order:?}");
+    }
+
+    /// A sample counts what built apart from what did not, or said nothing.
+    #[test]
+    fn a_sample_counts_its_outcomes() {
+        let d = |outcome| Drawn { name: String::new(), outcome };
+        use MutantStatus::*;
+        let drawn = vec![d(Some(Killed)), d(Some(Survived)), d(Some(Unviable)), d(None), d(Some(Killed))];
+        let s = Sample { drawn: [("rust".to_string(), drawn)].into(), ..Default::default() };
+        assert_eq!(s.counts(), MutantCounts { killed: 2, survived: 1, unviable: 2 });
     }
 
     /// A name without its place keeps its file and the change it makes.

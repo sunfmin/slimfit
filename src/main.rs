@@ -723,6 +723,16 @@ mod answer_tests {
         git(repo, &["commit", "-qm", "a, recorded"]);
         // Landed: the target is where the change now is.
         git(repo, &["branch", "-f", "target"]);
+        // Code from before picks is not drawn from: the baseline's cut bounds the window.
+        let adopt =
+            std::process::Command::new("git").arg("-C").arg(repo).args(["rev-parse", "HEAD~1"]).output().unwrap();
+        let adopt = String::from_utf8(adopt.stdout).unwrap().trim().to_string();
+        let b = repo.join(crate::ratchet::FILE);
+        let mut base: Value = serde_json::from_str(&std::fs::read_to_string(&b).unwrap()).unwrap();
+        base["mutants_from"] = adopt.clone().into();
+        std::fs::write(&b, base.to_string()).unwrap();
+        git(repo, &["commit", "-qam", "cut"]);
+        git(repo, &["branch", "-f", "target"]);
 
         let (out, code) = slimfit(repo, "next --all --sample 20").unwrap();
         assert_eq!(code, 0, "{out:#}");
@@ -742,6 +752,7 @@ mod answer_tests {
         let sample: crate::measure::sample::Sample = serde_json::from_str(text).unwrap();
         let drawn: Vec<&str> = sample.drawn["rust"].iter().map(|d| d.name.as_str()).collect();
         assert_eq!((drawn.len(), sample.pool), (16, 16), "{text}");
+        assert_eq!(sample.from, adopt, "{text}");
         assert!(!drawn.contains(&killed), "{drawn:?}");
         // Every viable one ran in the first round: none is unviable in the fixture.
         assert_eq!(sample.counts().unviable, 0);
