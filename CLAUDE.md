@@ -7,7 +7,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/cli.rs`: the command line, read against the manual: the commands and flags with their pages, the topics, the placeholders' values, and the exit codes. `cli::read` answers help itself and turns a line clap refuses into a fault. `src/main.rs` runs the command it reads and prints the answer.
 - `src/formats/`: readers for the report files the tools write (JUnit, go test JSON, LCOV, Go coverprofile, JaCoCo, and the reports of cargo-mutants, Stryker, PIT, gremlins and muter). Each reads into the shapes in `src/model.rs`.
 - `src/config.rs`: `slimfit.toml` and the per-language presets. A language is just data: commands plus report formats.
-- `src/measure.rs`: runs a suite's commands, resolves the reports' paths to repo files, reduces everything to metrics, and caches the result per working tree.
+- `src/measure.rs`: runs a suite's commands, resolves the reports' paths to repo files, reduces everything to metrics, and caches the result per working tree. `src/measure/mutants.rs`: the change's mutants (ADR 0006-0008): what each tool lists of the change, the picks among them, and their run.
 - `src/ratchet.rs`: the baseline, `check` and `ratchet`.
 - `src/tasks.rs`: turns a measurement into tasks for `slimfit next`.
 - `src/select.rs`: which tests each mutant runs (ADR 0007): the plan, and the shim slimfit becomes when run as `cargo-nextest`.
