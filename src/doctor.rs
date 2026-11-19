@@ -153,6 +153,26 @@ const TEST_RUNNERS: &[&str] = &[
     "pytest",
 ];
 
+/// What follows `cargo llvm-cov` on a line that runs no test: it prints the
+/// environment, reports or cleans what an earlier run left.
+const LLVM_COV_NO_RUN: &[&str] = &["show-env", "report", "clean"];
+
+/// The test runner `line` runs tests with, if it does: a runner named with
+/// `--no-run` only builds, and `cargo llvm-cov show-env` (or `report`,
+/// `clean`) runs nothing.
+fn runs_tests(line: &str) -> Option<&'static str> {
+    let words: Vec<&str> =
+        line.split(|c: char| c.is_whitespace() || "\"'`$();|&".contains(c)).filter(|w| !w.is_empty()).collect();
+    if words.contains(&"--no-run") {
+        return None;
+    }
+    let llvm_cov = words.windows(2).position(|w| w == ["cargo", "llvm-cov"]);
+    if llvm_cov.and_then(|i| words.get(i + 2)).is_some_and(|w| LLVM_COV_NO_RUN.contains(w)) {
+        return None;
+    }
+    TEST_RUNNERS.iter().find(|r| line.contains(*r)).copied()
+}
+
 /// What in a gate's line is mutation testing.
 const MUTATION: &[&str] = &["--mutants", "cargo mutants", "stryker", "pitest", "gremlins", "muter run"];
 
@@ -246,7 +266,7 @@ fn gates(repo: &Path) -> Vec<Finding> {
         out.extend(mutation(&lines, &format!("in the `{key}` gate, holding up every landing")));
         let checks = lines.iter().any(|(_, l)| l.contains("slimfit check"));
         for (place, line) in lines.iter().filter(|(_, l)| !l.contains("slimfit")) {
-            if checks && let Some(r) = TEST_RUNNERS.iter().find(|r| line.contains(*r)) {
+            if checks && let Some(r) = runs_tests(line) {
                 out.push(finding(
                     Kind::TestsRunTwice,
                     None,
@@ -460,6 +480,24 @@ mod tests {
         let f = diagnose(r.path(), &host(&every_tool()));
         assert_eq!(kinds(&f), vec![Kind::TestsRunTwice], "{f:#?}");
         assert!(f[0].fix.contains("`cargo test --workspace` out of gate.sh:4"), "{f:#?}");
+    }
+
+    /// A line that only builds the tests (`--no-run`) or only prints
+    /// llvm-cov's environment runs no test, beside `slimfit check`; a
+    /// `cargo llvm-cov nextest` still does.
+    #[test]
+    fn a_gate_building_tests_beside_check_runs_them_once() {
+        let script = "#!/bin/sh\neval \"$(cargo llvm-cov show-env --sh)\"\ncargo nextest run --workspace --no-run\ncargo test --no-run\nslimfit check\n";
+        let r = repo(&[("factorium.toml", "[gate]\nfast = \"./gate.sh\"\n"), ("gate.sh", script)]);
+        let f = diagnose(r.path(), &host(&every_tool()));
+        assert_eq!(kinds(&f), vec![], "{f:#?}");
+        let r = repo(&[
+            ("factorium.toml", "[gate]\nfast = \"./gate.sh\"\n"),
+            ("gate.sh", &format!("{script}cargo llvm-cov nextest --workspace\n")),
+        ]);
+        let f = diagnose(r.path(), &host(&every_tool()));
+        assert_eq!(kinds(&f), vec![Kind::TestsRunTwice], "{f:#?}");
+        assert!(f[0].what.contains("`cargo llvm-cov`"), "{f:#?}");
     }
 
     /// Mutants in a gate, written in its entry or its script, or in an
