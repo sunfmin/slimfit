@@ -514,6 +514,23 @@ mod t {
         assert_eq!(m.suites[0].mutants.len(), 1);
     }
 
+    /// A kept file holds up to its thresholds and not at them: 100 prod
+    /// lines hold at 149, not 150; 4 commits since its 4 in 90 days
+    /// hold at 3, not 4.
+    #[test]
+    fn a_kept_file_holds_below_its_thresholds_only() {
+        let k = KeptFile {
+            suite: "s".into(),
+            file: "f.rs".into(),
+            prod_lines: 100,
+            commits_90d: 4,
+            commits_total: 10,
+            reason: "r".into(),
+        };
+        let holds = |lines, total| k.holds("s", "f.rs", lines, total);
+        assert_eq!((holds(149, 13), holds(150, 13), holds(149, 14)), (true, false, false));
+    }
+
     fn base(metrics: Metrics) -> Baseline {
         Baseline { suites: [("s".to_string(), metrics)].into(), ..Baseline::default() }
     }
