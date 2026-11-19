@@ -106,7 +106,7 @@ pub struct Loosening {
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
 pub enum Bound {
-    /// Failing tests: at most the baseline's (none, once every test passes); never loosened.
+    /// Failing tests: none, whatever the baseline records (`init` records failing tests as they are); never loosened.
     #[value(verbatim_doc_comment)]
     Failures,
     /// The CPU time (user + sys) the tests' own processes spent, in seconds, build excluded: each test's own process and those it starts where the test command records it (the Rust preset's runner), otherwise the test command's process tree after the suite's `build_command`. A busy host barely moves it, as it does wall time (see [host load](help:host-load)). At most baseline × (1 + `time_tolerance`) + `time_slack` (`slimfit.toml`'s `[check]`; by default {const:TIME_TOLERANCE} and {const:TIME_SLACK} seconds).
@@ -197,41 +197,91 @@ pub fn render(b: &Baseline) -> Result<String> {
     Ok(serde_json::to_string_pretty(b)? + "\n")
 }
 
-/// A bound's value in a baseline's (or a measurement's) metrics; none for
-/// `survived_mutants`, which no baseline keeps.
-fn value(m: &Metrics, b: Bound) -> Option<f64> {
-    Some(match b {
-        Bound::Failures => m.failures as f64,
-        Bound::TestSeconds => m.test_seconds,
-        Bound::UncoveredLines => m.uncovered_lines as f64,
-        Bound::SurvivedMutants | Bound::UnrecordedMutants => return None,
-    })
-}
-
 /// The mutants that survive in the lines of the change, when measured.
 fn survivors(s: &SuiteMeasurement) -> Option<f64> {
     s.mutated.as_ref().map(|m| m.change.survived as f64)
 }
 
-fn limit(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
-    match b {
-        Bound::TestSeconds => base * (1.0 + cfg.time_tolerance) + cfg.time_slack,
-        Bound::UncoveredLines => base + cfg.coverage_slack as f64,
-        _ => base,
+/// Each bound's rule, which `check` and `ratchet` both derive from: what the
+/// baseline keeps of it, what a measurement holds, its limit, when it is a
+/// gain (what `check` calls improved and `ratchet` locks in) and whether it
+/// may be loosened.
+impl Bound {
+    /// What the baseline keeps of it: a suite's metrics, none for a suite
+    /// new to the baseline; 0 for the mutants bounds, which no baseline keeps.
+    fn kept(self, b: Option<&Metrics>) -> Option<f64> {
+        match self {
+            Bound::Failures => b.map(|m| m.failures as f64),
+            Bound::TestSeconds => b.map(|m| m.test_seconds),
+            Bound::UncoveredLines => b.map(|m| m.uncovered_lines as f64),
+            Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
+        }
+    }
+
+    /// What a measurement holds of it; none when it was not measured: the
+    /// time of tests run inside `--mutants`, the survivors of a run without
+    /// picks, and `unrecorded_mutants`, which the landing measures.
+    fn current(self, s: &SuiteMeasurement) -> Option<f64> {
+        match self {
+            Bound::TestSeconds if s.untimed => None,
+            Bound::SurvivedMutants => survivors(s),
+            Bound::UnrecordedMutants => None,
+            _ => self.kept(Some(&s.metrics)),
+        }
+    }
+
+    /// Writes what the new baseline keeps of it; no-op for those it keeps none of.
+    fn keep(self, m: &mut Metrics, v: f64) {
+        match self {
+            Bound::Failures => m.failures = v as u64,
+            Bound::TestSeconds => m.test_seconds = v,
+            Bound::UncoveredLines => m.uncovered_lines = v as u64,
+            Bound::SurvivedMutants | Bound::UnrecordedMutants => {}
+        }
+    }
+
+    /// The most it may be, given what the baseline keeps; none when that
+    /// depends on a baseline there is not.
+    fn limit(self, cfg: &CheckConfig, kept: Option<f64>) -> Option<f64> {
+        match self {
+            Bound::TestSeconds => kept.map(|b| b * (1.0 + cfg.time_tolerance) + cfg.time_slack),
+            Bound::UncoveredLines => kept.map(|b| b + cfg.coverage_slack as f64),
+            Bound::Failures | Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
+        }
+    }
+
+    /// Whether `current` is a gain over what the baseline keeps. Coverage
+    /// must drop by more than the slack, or a line that flaps would be
+    /// locked in and then fail the next run.
+    fn gain(self, cfg: &CheckConfig, kept: f64, current: f64) -> bool {
+        let below = match self {
+            Bound::UncoveredLines => kept - cfg.coverage_slack as f64,
+            _ => kept,
+        };
+        current < below - 1e-9
+    }
+
+    /// Why it is never loosened, as the fix to do instead; none when it may be.
+    fn never_loosened(self) -> Option<String> {
+        match self {
+            Bound::Failures => Some(format!("make the failing tests pass, or delete them; {}", list("failing-test"))),
+            Bound::UnrecordedMutants => Some(format!(
+                "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
+            )),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> String {
+        serde_json::to_value(self).unwrap_or_default().as_str().unwrap_or("").to_string()
     }
 }
 
-/// Below this a bound has improved. Coverage must drop by more than the
-/// slack, or a line that flaps would be locked in and then fail the next run.
-fn improved_below(cfg: &CheckConfig, b: Bound, base: f64) -> f64 {
-    match b {
-        Bound::UncoveredLines => base - cfg.coverage_slack as f64,
-        _ => base,
-    }
+fn list(kind: &str) -> String {
+    format!("`slimfit next --all --kind {kind}` lists them")
 }
 
 fn fix(b: Bound, s: &SuiteMeasurement) -> String {
-    let list = |kind: &str| format!("`slimfit next --all --kind {kind}` lists them");
     match b {
         Bound::Failures => {
             let failing: Vec<&str> = s.tests.iter().filter(|t| !t.passed).map(|t| t.id.as_str()).take(10).collect();
@@ -274,47 +324,25 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         time_unchecked: m.suites.iter().filter(|s| s.untimed).map(|s| s.suite.clone()).collect(),
     };
     for s in &m.suites {
-        if let Some(n) = survivors(s).filter(|n| *n > 0.0) {
-            v.violations.push(Violation {
-                suite: s.suite.clone(),
-                metric: Bound::SurvivedMutants,
-                baseline: 0.0,
-                limit: 0.0,
-                current: n,
-                fix: fix(Bound::SurvivedMutants, s),
-            });
-        }
-        let Some(b) = base.suites.get(&s.suite) else {
+        let kept = base.suites.get(&s.suite);
+        if kept.is_none() {
             v.new_suites.push(s.suite.clone());
-            if s.metrics.failures > 0 {
-                v.violations.push(Violation {
-                    suite: s.suite.clone(),
-                    metric: Bound::Failures,
-                    baseline: 0.0,
-                    limit: 0.0,
-                    current: s.metrics.failures as f64,
-                    fix: fix(Bound::Failures, s),
-                });
-            }
-            continue;
-        };
+        }
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
-            let (Some(base_v), Some(cur)) = (value(b, bound), value(&s.metrics, bound)) else { continue };
-            if bound == Bound::TestSeconds && s.untimed {
-                continue;
-            }
-            let lim = if bound == Bound::Failures { 0.0 } else { limit(cfg, bound, base_v) };
+            let Some(cur) = bound.current(s) else { continue };
+            let was = bound.kept(kept);
+            let Some(lim) = bound.limit(cfg, was) else { continue };
             if cur > lim + 1e-9 {
                 v.violations.push(Violation {
                     suite: s.suite.clone(),
                     metric: bound,
-                    baseline: base_v,
+                    baseline: was.unwrap_or(0.0),
                     limit: lim,
                     current: cur,
                     fix: fix(bound, s),
                 });
-            } else if cur < improved_below(cfg, bound, base_v) - 1e-9 && bound != Bound::Failures {
-                v.improved.push(Change { suite: s.suite.clone(), metric: bound, baseline: base_v, current: cur });
+            } else if let Some(was) = was.filter(|w| bound.gain(cfg, *w, cur)) {
+                v.improved.push(Change { suite: s.suite.clone(), metric: bound, baseline: was, current: cur });
             }
         }
     }
@@ -322,8 +350,8 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
     v
 }
 
-/// The new baseline: each bound at the better of baseline and current;
-/// a loosened bound at current, recorded with its reason. Refuses while
+/// The new baseline: each bound at current where that is a gain (as `check`
+/// calls it improved), else at the baseline's; a loosened bound at current, recorded with its reason. Refuses while
 /// any other bound is violated. The picks a mutants run ran are recorded
 /// by the caller (`landing::Record`), not in the baseline.
 pub fn ratchet(
@@ -334,13 +362,14 @@ pub fn ratchet(
     reason: Option<&str>,
 ) -> Result<Baseline> {
     let verdict = check(base, m, cfg);
-    let blocking: Vec<&Violation> =
-        verdict.violations.iter().filter(|v| !loosen.contains(&v.metric) || v.metric == Bound::Failures).collect();
-    let mut faults: Vec<Fault> = blocking
+    let loosened = |b: Bound| loosen.contains(&b) && b.never_loosened().is_none();
+    let mut faults: Vec<Fault> = verdict
+        .violations
         .iter()
+        .filter(|v| !loosened(v.metric))
         .map(|v| {
-            let name = serde_json::to_value(v.metric).unwrap_or_default().as_str().unwrap_or("").to_string();
-            let raise = if v.metric == Bound::Failures {
+            let name = v.metric.name();
+            let raise = if v.metric.never_loosened().is_some() {
                 String::new()
             } else {
                 format!("; or, if the rise is right, `slimfit ratchet --loosen {name} --reason \"<why>\"`")
@@ -351,13 +380,10 @@ pub fn ratchet(
             }
         })
         .collect();
-    if loosen.contains(&Bound::UnrecordedMutants) {
-        faults.push(Fault {
-            fault: "--loosen unrecorded_mutants: a change without a record of its mutants is never loosened".into(),
-            fix: format!(
-                "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
-            ),
-        });
+    for &b in loosen {
+        if let Some(fix) = b.never_loosened() {
+            faults.push(Fault { fault: format!("--loosen {}: it is never loosened", b.name()), fix });
+        }
     }
     // `test_seconds` is set only from a test run at a gate's priority.
     for s in m.suites.iter().filter(|s| s.untimed) {
@@ -400,43 +426,25 @@ pub fn ratchet(
         mutants_from: base.mutants_from.clone(),
     };
     for s in &m.suites {
+        let old = base.suites.get(&s.suite);
         let mut metrics = s.metrics.clone();
-        if loosen.contains(&Bound::SurvivedMutants)
-            && let Some(to) = survivors(s).filter(|n| *n > 0.0)
-        {
-            next.loosened.push(Loosening {
-                suite: s.suite.clone(),
-                metric: Bound::SurvivedMutants,
-                from: 0.0,
-                to,
-                reason: reason.unwrap_or_default().into(),
-            });
-        }
-        if let Some(old) = base.suites.get(&s.suite) {
-            for &bound in loosen {
-                if let (Some(from), Some(to)) = (value(old, bound), value(&metrics, bound))
-                    && to > from
-                {
-                    next.loosened.push(Loosening {
-                        suite: s.suite.clone(),
-                        metric: bound,
-                        from,
-                        to,
-                        reason: reason.unwrap_or_default().into(),
-                    });
-                }
-            }
-            if s.untimed {
-                metrics.test_seconds = old.test_seconds;
-            } else if !loosen.contains(&Bound::TestSeconds) {
-                metrics.test_seconds = metrics.test_seconds.min(old.test_seconds);
-            }
-            if !loosen.contains(&Bound::UncoveredLines)
-                && metrics.uncovered_lines as f64
-                    >= improved_below(cfg, Bound::UncoveredLines, old.uncovered_lines as f64)
+        for &bound in <Bound as clap::ValueEnum>::value_variants() {
+            let (was, cur) = (bound.kept(old), bound.current(s));
+            if loosened(bound)
+                && let (Some(from), Some(to)) = (was, cur)
+                && to > from
             {
-                metrics.uncovered_lines = old.uncovered_lines;
+                next.loosened.push(Loosening {
+                    suite: s.suite.clone(),
+                    metric: bound,
+                    from,
+                    to,
+                    reason: reason.unwrap_or_default().into(),
+                });
             }
+            let Some(was) = was.filter(|_| old.is_some()) else { continue };
+            let gained = cur.filter(|c| loosened(bound) || bound.gain(cfg, was, *c));
+            bound.keep(&mut metrics, gained.unwrap_or(was));
         }
         next.suites.insert(s.suite.clone(), metrics);
     }
@@ -592,6 +600,22 @@ mod t {
         refused(&base(m(10, 10.0)), &[Bound::TestSeconds]);
         refused(&Baseline::default(), &[]);
         assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg).time_unchecked.is_empty());
+    }
+
+    /// Failing tests fail the check whatever the baseline records; once
+    /// they pass that is a gain, which `ratchet` locks in; never loosened.
+    #[test]
+    fn failures_are_held_to_none_and_their_fix_is_a_gain() {
+        let cfg = CheckConfig::default();
+        let failing = base(Metrics { failures: 2, ..m(10, 10.0) });
+        let v = check(&failing, &measurement(Metrics { failures: 1, ..m(10, 10.0) }, None), &cfg);
+        assert_eq!(v.violations.iter().map(|v| (v.metric, v.limit)).collect::<Vec<_>>(), [(Bound::Failures, 0.0)]);
+        let fixed = measurement(m(10, 10.0), None);
+        let v = check(&failing, &fixed, &cfg);
+        assert_eq!(v.improved, [Change { suite: "s".into(), metric: Bound::Failures, baseline: 2.0, current: 0.0 }]);
+        assert_eq!(ratchet(&failing, &fixed, &cfg, &[], None).unwrap().suites["s"].failures, 0);
+        let f = crate::fault::of(ratchet(&failing, &fixed, &cfg, &[Bound::Failures], Some("x")).unwrap_err());
+        assert!(f[0].fault.contains("never loosened") && f[0].fix.starts_with("make the failing tests pass"), "{f:?}");
     }
 
     #[test]

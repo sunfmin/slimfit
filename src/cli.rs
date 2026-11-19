@@ -251,8 +251,8 @@ pub(crate) enum Cmd {
     ///
     /// It writes nothing when it refuses.
     ///
-    /// - A bound got worse: `failures` always; any other unless `--loosen` names it.
-    /// - `--loosen` without `--reason`, and `--loosen unrecorded_mutants`: pick and record the mutants instead.
+    /// - A bound got worse: `failures` and `unrecorded_mutants` always; any other unless `--loosen` names it.
+    /// - `--loosen` without `--reason`; `--loosen failures` (make them pass instead) and `--loosen unrecorded_mutants` (pick and record the mutants instead).
     /// - `--no-mutants` without a one-line reason, or of a measurement that ran picks (their record is the one).
     /// - {const:MEASURE_REFUSALS}
     ///
