@@ -1189,6 +1189,10 @@ mod answer_tests {
         let killed = "src/lib.rs:12:9: replace >= with < in is_adult";
 
         git(repo, &["checkout", "-qb", "a"]);
+        // Nothing added: nothing to pick, and no record due.
+        let (listed, _) = slimfit(repo, "check --mutants").unwrap();
+        assert_eq!(listed["candidates"]["rust"], serde_json::json!([]), "{listed:#}");
+        assert!(listed["next"].as_str().unwrap().starts_with("no mutant of the change to pick"), "{listed:#}");
         add("src/lib.rs", "\npub fn a_one() -> u8 {\n    1\n}\n");
         let out = held(crate::EXIT_VIOLATION);
         let v = &out["verdict"]["violations"][0];
@@ -1208,6 +1212,7 @@ mod answer_tests {
         let six = format!("check --mutants {} --why {}", ["n"; 6].join(" "), ["w"; 6].join(" "));
         assert!(faults(repo, &six)[0].fault.contains("6 mutants picked, more than 5"));
         assert!(faults(repo, "check --mutants n m --why w")[0].fault.contains("2 mutant(s) picked, with 1 `--why`"));
+        assert_eq!(faults(repo, "check --mutants --why w")[0].fault, "--why without a mutant's name");
         let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
         assert_eq!((code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()), (0, Some("killed")), "{out:#}");
         let no = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", "nothing"]).unwrap_err());
@@ -1230,6 +1235,8 @@ mod answer_tests {
         add("src/b.rs", "pub fn b_two() -> u8 {\n    2\n}\n");
         held(crate::EXIT_VIOLATION);
         assert!(faults(repo, "ratchet --no-mutants")[0].fault.contains("a value is required"));
+        let blank = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", " "]).unwrap_err());
+        assert_eq!(blank[0].fault, "--no-mutants without a reason");
         let (out, _) = slimfit_args(repo, &["ratchet", "--no-mutants", "a constant: no decision to mutate"]).unwrap();
         let none = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
         assert!(none.contains("\"none\": \"a constant: no decision to mutate\"") && !none.contains("picks"), "{none}");
@@ -1242,8 +1249,10 @@ mod answer_tests {
             (out["landing"]["lines"].as_u64(), out["landing"]["records"].as_array().unwrap().len()),
             (Some(6), 2)
         );
+        // A per-line record from before picks counts as older.
+        std::fs::write(repo.join(crate::landing::DIR).join("old.json"), r#"{"lines": {}}"#).unwrap();
         let (report, _) = slimfit(repo, "report --points 1").unwrap();
-        let counts = serde_json::json!({ "with_picks": 1, "without_picks": 1, "older": 0 });
+        let counts = serde_json::json!({ "with_picks": 1, "without_picks": 1, "older": 1 });
         assert_eq!(report["mutants_records"], counts, "{report:#}");
         // A record that does not parse, and a target that is not there, are refused.
         std::fs::write(repo.join(crate::landing::DIR).join("x.json"), "{").unwrap();
@@ -1251,6 +1260,7 @@ mod answer_tests {
         assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");
         assert_eq!(f[0].fix, "restore it from git: `git checkout -- .slimfit/mutants`");
         std::fs::remove_file(repo.join(crate::landing::DIR).join("x.json")).unwrap();
+        std::fs::remove_file(repo.join(crate::landing::DIR).join("old.json")).unwrap();
         cfg.check.target = Some("gone".into());
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let f = faults(repo, "check");

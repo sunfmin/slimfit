@@ -84,7 +84,8 @@ for lang in $langs; do
     start=$(date +%s)
     "$bin" init >/dev/null 2>"$out/init.log" || { tail -20 "$out/init.log"; exit 1; }
     # The branch changes land on: what the injection adds is the change.
-    printf '\n[check]\ntarget = "base"\n' >> slimfit.toml
+    perl -0pi -e 's/^\[check\]\n/[check]\ntarget = "base"\n/m' slimfit.toml
+    grep -qx 'target = "base"' slimfit.toml || { echo "e2e: no [check] in slimfit.toml to set the target in" >&2; exit 1; }
     git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit && git branch base
     "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
     "$bin" check >/dev/null 2>&1

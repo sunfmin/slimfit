@@ -385,8 +385,8 @@ fn mutate_picks(
     picks: &[Pick],
     tested: &SuiteMeasurement,
 ) -> Result<Mutation> {
+    // A suite none of whose mutants is picked runs none: no `-F` would run them all.
     if picks.is_empty() {
-        eprintln!("slimfit: {}: no mutant of it is picked: none runs", suite.name);
         return Ok(Mutation { mutants: Vec::new(), mutated: Mutated::default() });
     }
     let diff = out.join("change.diff");

@@ -447,6 +447,17 @@ mod t {
         }
     }
 
+    /// A failing test is a task, with the log to read; a passing one is not.
+    #[test]
+    fn a_failing_test_is_a_task_with_its_log() {
+        let mut s = suite([("ok", 0.1, vec![1]), ("broken", 0.1, vec![2])]);
+        s.tests[1].passed = false;
+        let tasks = failing(&s);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!((tasks[0].kind, tasks[0].summary.as_str()), (TaskKind::FailingTest, "t::broken fails"));
+        assert_eq!(tasks[0].evidence["log"], ".slimfit/out/s/test.log");
+    }
+
     /// Each proposed test with the other test it names.
     fn pairs(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<(String, String)> {
         redundant(s, kept)
