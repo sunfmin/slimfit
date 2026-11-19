@@ -20,7 +20,9 @@ pub struct Baseline {
     pub loosened: Vec<Loosening>,
     /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
     /// each against its test's text: not proposed again until it changes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Written even when empty, so `report`'s history tells none kept from
+    /// a baseline older than verdicts.
+    #[serde(default)]
     pub kept: Vec<Kept>,
     /// Deepen candidates the agent judged deep enough (`slimfit keep <file>`),
     /// each against the file's size and churn then: not proposed again until

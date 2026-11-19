@@ -726,7 +726,7 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
             "keep" => {
                 &["kept", "test", "hash", "reason", "kept_files", "file", "prod_lines", "commits_90d", "commits_total"]
             }
-            _ => &["history", "commit", "from", "mutants_records", "with_picks", "kept", "tests", "files"],
+            _ => &["history", "commit", "from", "mutants_records", "with_picks"],
         };
         for k in reached {
             assert!(ks.contains(*k), "{cmd} printed no {k:?}: the states above no longer reach it");

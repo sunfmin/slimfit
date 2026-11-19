@@ -1,19 +1,14 @@
 # 8. The agent picks the mutants; the gate holds that a record exists
 
-Amends `0005-mutants-of-the-change.md` (where the change is taken from, and
-`mutants_at`) and `0006-mutants-only-on-a-change.md` (who runs mutants, and
-which).
-
 ## Context
 
-ADR 0005 and 0006 made the agent that changes source run `check --mutants`
-on its own change before it ratchets. As a written rule nobody followed it:
-in slimfit, `mutants_at` stayed at d142204 while 88 landings went without a
-mutants run (slimfit#36). The gate had to hold it.
+Mutants run only on a change (ADR 0006), so the agent that changes source
+has to run them on its own change. As a written rule nobody followed it: in
+slimfit 88 landings went without a mutants run (slimfit#36). The gate had to
+hold it.
 
-The first gate (slimfit#36) held every source line a landing adds to a
-ratcheted run of all its mutants, by records of per-line text hashes. It
-held, and it cost too much:
+Holding every source line a landing adds to a run of all its mutants, by
+per-line records, held, and cost too much:
 
 - Running every mutant of a change is slow, and most of a listing cannot
   build (a body replaced by `Default::default()` for a type with no

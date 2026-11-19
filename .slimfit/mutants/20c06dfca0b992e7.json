@@ -1,0 +1,32 @@
+{
+  "tree": "06fb8a84eca33ac5f7f371e7f61b04abdaa86a6e+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/report.rs:58:78: replace == with != in judged",
+        "why": "kept counts only this suite's verdicts",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/report.rs:67:67: replace && with || in records",
+        "why": "only .json files under .slimfit/mutants/ count as records, not the baseline",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/report.rs:97:58: delete ! in history",
+        "why": "the baseline and records are not counted as source lines",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/report.rs:93:32: replace == with != in history",
+        "why": "each point reads the baseline committed at it",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:92:41: delete ! in Records::add",
+        "why": "a record with picks counts as with_picks, not as older",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

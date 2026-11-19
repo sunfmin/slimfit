@@ -81,13 +81,20 @@ pub fn records(repo: &Path) -> Result<Records> {
                 format!("restore it from git: `git checkout -- {DIR}`"),
             )
         })?;
-        match (r.picks.values().any(|p| !p.is_empty()), r.none.is_some()) {
-            (true, _) => n.with_picks += 1,
-            (false, true) => n.without_picks += 1,
-            (false, false) => n.older += 1,
-        }
+        n.add(&r);
     }
     Ok(n)
+}
+
+impl Records {
+    /// Counts `r` as the kind of record it is.
+    pub fn add(&mut self, r: &Record) {
+        match (r.picks.values().any(|p| !p.is_empty()), r.none.is_some()) {
+            (true, _) => self.with_picks += 1,
+            (false, true) => self.without_picks += 1,
+            (false, false) => self.older += 1,
+        }
+    }
 }
 
 /// The change a landing brings: from where the branch forks from its target

@@ -291,7 +291,7 @@ enum Cmd {
         /// Allow this bound to rise (repeatable); needs `--reason`.
         #[arg(long, value_enum, verbatim_doc_comment)]
         loosen: Vec<ratchet::Bound>,
-        /// Why the bound may rise, kept in the baseline.
+        /// Why the bound may rise, kept in the baseline: one sentence of why, with the issue it came from. Measurements go in a comment on that issue, not here.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
         /// Measure again even if the working tree is unchanged.
@@ -364,9 +364,8 @@ enum Cmd {
     /// - `current`: per suite, the metrics measured now: {const:METRICS}.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `history`: oldest first, each point's `commit`, `date` and `suites`: per suite, `prod` and `test` lines.
+    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}) and `mutants_records` (the records `.slimfit/mutants/` held then, counted as below). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
     /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only.
-    /// - `kept`: how many keep verdicts the baseline holds (`slimfit keep`): `tests`, redundant tests kept, and `files`, deepen candidates kept as they are. Many, against few tests deleted or files deepened, is a judgment that always says keep.
     /// - `next`: `slimfit next`.
     ///
     /// ## What it may refuse
@@ -376,6 +375,7 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - `history` counts lines with today's `slimfit.toml`: a commit from before a suite existed counts it as it is configured now.
+    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are the bounds the baseline held at that commit, not a measurement of it; `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
@@ -461,6 +461,7 @@ fn help() -> Help {
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("LANDING", landing::HELD_HELP)
         .constant("RECORDS", landing::RECORDS_HELP)
+        .constant("HISTORY_SUITE", report::LINES_HELP)
         .constant("CANDIDATE", model::CANDIDATE_HELP)
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
@@ -831,7 +832,6 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "loosened": base.loosened,
                     "history": history,
                     "mutants_records": records,
-                    "kept": { "tests": base.kept.len(), "files": base.kept_files.len() },
                     "next": "slimfit next",
                 }),
                 EXIT_OK,
