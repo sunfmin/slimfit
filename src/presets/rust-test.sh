@@ -4,7 +4,7 @@
 # llvm-cov says, of each test's profiles, which functions and lines it ran
 # (ADR 0007), as many tests at once as there are cores. runner.sh also
 # records the CPU time of each test's process and everything it started
-# (ADR 0009): the shell runs the test as its child, then `times` says what
+# (ADR 0010): the shell runs the test as its child, then `times` says what
 # its children spent. It is a builtin and the group's redirection forks
 # nothing, so the record counts only the test.
 printf '[profile.default.junit]\npath = "{NEXTEST_JUNIT}"\n' > "$SLIMFIT_OUT/nextest.toml" &&

@@ -1,27 +1,24 @@
 //! The landing: the source lines a branch adds to the branch it lands on,
-//! and which of them a ratcheted mutants run measured (ADR 0008). Each such
-//! run leaves a record of its own in `.slimfit/mutants/`, so branches that
-//! measure their own changes never write the same file.
+//! and whether it adds a record of the mutants picked for it (ADR 0008).
+//! Each record is a file of its own in `.slimfit/mutants/`, named by its
+//! contents, so two branches never write the same one.
 
 use crate::config::{CheckConfig, Config};
 use crate::fault::fault;
 use crate::git;
 use crate::loc::{Classifier, Kind};
-use crate::model::Measurement;
-use crate::ratchet::{Bound, MEASURE_THE_CHANGE, Violation};
+use crate::model::Pick;
+use crate::ratchet::{Bound, PICK_THE_MUTANTS, Violation};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Where the records of ratcheted mutants runs are kept, one file each.
+/// Where the records of picked mutants are kept, one file each.
 pub const DIR: &str = ".slimfit/mutants";
 
 /// The branch a change lands on when `slimfit.toml` names none.
 pub const DEFAULT_TARGET: &str = "origin/HEAD";
-
-/// Lines by file (repository relative), each by the hash of its text.
-pub type Hashes = BTreeMap<String, BTreeSet<String>>;
 
 /// Lines by file (repository relative): number → text.
 pub type Lines = BTreeMap<String, BTreeMap<u32, String>>;
@@ -36,43 +33,61 @@ pub fn hash(text: &str) -> String {
     format!("{h:016x}")
 }
 
-/// `lines`, each by its text's hash.
-pub fn hashes(lines: &Lines) -> Hashes {
-    lines.iter().map(|(f, l)| (f.clone(), l.values().map(|t| hash(t)).collect())).collect()
-}
-
-/// A record of one ratcheted mutants run: the lines it measured.
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// A record of one change's mutants: the picks a ratcheted run ran, each
+/// with why and its outcome, per suite; or, with none picked, why none was
+/// worth a mutant.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Record {
-    pub lines: Hashes,
+    /// The working tree the record was made of: two branches' records
+    /// differ, and so do their names.
+    #[serde(default)]
+    pub tree: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub picks: BTreeMap<String, Vec<Pick>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub none: Option<String>,
 }
 
-/// The record of `measured`: its path, named by its contents so two
-/// branches never write the same one, and its text.
-pub fn record(measured: &Hashes) -> Result<(String, String)> {
-    let text = serde_json::to_string_pretty(&Record { lines: measured.clone() })? + "\n";
-    Ok((format!("{DIR}/{}.json", hash(&text)), text))
+impl Record {
+    /// Its path, named by its contents, and its text.
+    pub fn file(&self) -> Result<(String, String)> {
+        let text = serde_json::to_string_pretty(self)? + "\n";
+        Ok((format!("{DIR}/{}.json", hash(&text)), text))
+    }
 }
 
-/// Every line some ratcheted mutants run measured: the union of the records.
-pub fn recorded(repo: &Path) -> Result<Hashes> {
-    let mut all = Hashes::new();
-    let Ok(dir) = std::fs::read_dir(repo.join(DIR)) else { return Ok(all) };
-    let mut paths: Vec<_> = dir.filter_map(|e| e.ok().map(|e| e.path())).collect();
-    paths.sort();
-    for p in paths.into_iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
-        let text = std::fs::read_to_string(&p)?;
-        let r: Record = serde_json::from_str(&text).map_err(|e| {
+/// How many records `.slimfit/mutants/` holds: with picks, with none (a
+/// reason instead), and older ones that are neither (per-line records from
+/// before picks).
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct Records {
+    pub with_picks: usize,
+    pub without_picks: usize,
+    pub older: usize,
+}
+
+/// What [`Records`] prints, as the command pages name it.
+pub const RECORDS_HELP: &str = "`with_picks` (records of picked mutants run), `without_picks` (records of none \
+     picked, with a reason) and `older` (records from before picks, of lines measured)";
+
+/// Counts the records in `.slimfit/mutants/`.
+pub fn records(repo: &Path) -> Result<Records> {
+    let mut n = Records::default();
+    let Ok(dir) = std::fs::read_dir(repo.join(DIR)) else { return Ok(n) };
+    for p in dir.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "json")) {
+        let r: Record = serde_json::from_str(&std::fs::read_to_string(&p)?).map_err(|e| {
             fault(
-                format!("{} is not a record of measured lines: {e}", p.display()),
+                format!("{} is not a record of picked mutants: {e}", p.display()),
                 format!("restore it from git: `git checkout -- {DIR}`"),
             )
         })?;
-        for (f, h) in r.lines {
-            all.entry(f).or_default().extend(h);
+        match (r.picks.values().any(|p| !p.is_empty()), r.none.is_some()) {
+            (true, _) => n.with_picks += 1,
+            (false, true) => n.without_picks += 1,
+            (false, false) => n.older += 1,
         }
     }
-    Ok(all)
+    Ok(n)
 }
 
 /// The change a landing brings: from where the branch forks from its target
@@ -141,22 +156,6 @@ pub fn required(repo: &Path, cfg: &Config, added: &Lines) -> Result<BTreeMap<Str
     Ok(out)
 }
 
-/// The lines of `lines` whose text no record in `measured` holds for its file.
-pub fn unmeasured(lines: &Lines, measured: &Hashes) -> Lines {
-    lines
-        .iter()
-        .filter_map(|(f, l)| {
-            let have = measured.get(f);
-            let left: BTreeMap<u32, String> = l
-                .iter()
-                .filter(|(_, t)| !have.is_some_and(|h| h.contains(&hash(t))))
-                .map(|(n, t)| (*n, t.clone()))
-                .collect();
-            (!left.is_empty()).then(|| (f.clone(), left))
-        })
-        .collect()
-}
-
 /// What `check` found of the landing it holds.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Held {
@@ -165,56 +164,51 @@ pub struct Held {
     /// HEAD's merge base with it, or the baseline's `mutants_from` when that
     /// is later: the landing is what was added since.
     pub from: String,
-    /// The source lines it adds that a mutants run must measure.
+    /// The source lines it adds in suites whose mutants can be picked.
     pub lines: usize,
-    /// Of those, the lines no ratcheted mutants run measured (nor this one).
-    pub unmeasured: usize,
+    /// The records of picked mutants it adds.
+    pub records: Vec<String>,
 }
 
 /// What a [`Held`] prints, as the command pages name it.
 pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's merge base with it, or the baseline's cut \
-     point, mutants_from, when that is later), `lines` (the \
-     source lines the change adds that mutants must measure) and `unmeasured` (those no ratcheted mutants run measured)";
+     point, mutants_from, when that is later), `lines` (the source lines the change adds whose mutants can be \
+     picked) and `records` (the records of picked mutants it adds, in .slimfit/mutants/)";
 
 /// Holds the landing to its mutants: per suite, a violation when it adds
-/// lines that neither a record nor `m` (when it ran mutants) measured.
-/// `None`, and no violation, when there is no branch it lands on.
-pub fn hold(repo: &Path, cfg: &Config, m: &Measurement) -> Result<(Option<Held>, Vec<Violation>)> {
+/// source lines and the landing adds no record, nor did the measurement
+/// run picks (`picked`: `ratchet` records them). `None`, and no violation,
+/// when there is no branch it lands on.
+pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Vec<Violation>)> {
     let Some(l) = find(repo, &cfg.check, &git::head(repo)?)? else {
         eprintln!(
-            "slimfit: slimfit.toml sets no [check] target and there is no {DEFAULT_TARGET}: the change's lines are \
-             not held to a mutants measurement (`slimfit doctor` says how to fix it)"
+            "slimfit: slimfit.toml sets no [check] target and there is no {DEFAULT_TARGET}: the change is not held \
+             to a record of its mutants (`slimfit doctor` says how to fix it)"
         );
         return Ok((None, vec![]));
     };
-    let mut measured = recorded(repo)?;
-    for mutated in m.suites.iter().filter_map(|s| s.mutated.as_ref()) {
-        for (f, h) in &mutated.lines {
-            measured.entry(f.clone()).or_default().extend(h.iter().cloned());
-        }
-    }
-    let (mut lines, mut left, mut violations) = (0, 0, vec![]);
+    let records: Vec<String> =
+        l.added.keys().filter(|f| f.starts_with(&format!("{DIR}/")) && f.ends_with(".json")).cloned().collect();
+    let (mut lines, mut violations) = (0, vec![]);
     for (suite, required) in required(repo, cfg, &l.added)? {
-        let missing = unmeasured(&required, &measured);
-        let n: usize = missing.values().map(BTreeMap::len).sum();
-        lines += required.values().map(BTreeMap::len).sum::<usize>();
-        left += n;
-        let Some((file, first)) = missing.iter().next() else { continue };
+        let n: usize = required.values().map(BTreeMap::len).sum();
+        lines += n;
+        let Some((file, first)) = required.iter().next().filter(|_| records.is_empty() && !picked) else { continue };
         let line = first.keys().next().expect("a file listed has a line");
         violations.push(Violation {
             suite,
-            metric: Bound::UnmeasuredMutants,
+            metric: Bound::UnrecordedMutants,
             baseline: 0.0,
             limit: 0.0,
             current: n as f64,
             fix: format!(
-                "{n} source line(s) the change adds since {} ({}) are in no ratcheted mutants run, the first at \
-                 {file}:{line}: {MEASURE_THE_CHANGE}",
+                "the change adds {n} source line(s) since {} ({}), the first at {file}:{line}, and no record of its \
+                 mutants: {PICK_THE_MUTANTS}",
                 l.from, l.target
             ),
         });
     }
-    Ok((Some(Held { target: l.target, from: l.from, lines, unmeasured: left }), violations))
+    Ok((Some(Held { target: l.target, from: l.from, lines, records }), violations))
 }
 
 /// The lines each file gains in a unified diff (new-side numbers, with
@@ -254,14 +248,14 @@ pub fn added_lines(patch: &str, prefix: &str) -> Lines {
 mod t {
     use super::*;
 
-    /// The lines a unified diff adds, counted through context, removals
-    /// that look like headers, and several hunks and files.
-    /// FNV-1a 64, as published: a record written by one build is read by the next.
+    /// FNV-1a 64, as published: a record's name is the hash of its text.
     #[test]
-    fn a_line_hashes_as_fnv_1a() {
+    fn a_text_hashes_as_fnv_1a() {
         assert_eq!((hash(""), hash("a")), ("cbf29ce484222325".into(), "af63dc4c8601ec8c".into()));
     }
 
+    /// The lines a unified diff adds, counted through context, removals
+    /// that look like headers, and several hunks and files.
     #[test]
     fn added_lines_follow_the_hunks() {
         let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,4 +1,4 @@\n x\n--- y\n+++ z\n w\n \n\

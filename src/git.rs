@@ -49,7 +49,7 @@ fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
 }
 
 /// The working tree, read with three git commands: each spawn costs CPU
-/// time, which `test_seconds` counts (ADR 0009).
+/// time, which `test_seconds` counts (ADR 0010).
 pub struct Worktree {
     /// Tracked files plus untracked ones git does not ignore, relative to `repo`.
     pub files: Vec<String>,
@@ -113,7 +113,7 @@ pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
 }
 
 /// HEAD, and where git keeps the index and slimfit its copy of it: one
-/// `rev-parse`, as each spawn costs (ADR 0009).
+/// `rev-parse`, as each spawn costs (ADR 0010).
 pub struct Head {
     /// `None` before the first commit.
     pub commit: Option<String>,

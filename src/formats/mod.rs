@@ -9,7 +9,7 @@ mod tests;
 mod xml;
 
 pub use coverage::read as read_coverage;
-pub use mutants::read as read_mutants;
+pub use mutants::{list as read_mutants_list, read as read_mutants};
 pub use reach::{TestReach, read as read_reach};
 pub use tests::read as read_tests;
 

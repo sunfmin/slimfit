@@ -1,0 +1,32 @@
+{
+  "tree": "1e76345ca884a76f590cefbcad000f61a2282b57+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/landing.rs:196:91: delete ! in hold",
+        "why": "the gate excuses a change without a record only when its measurement ran picks",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:191:69: replace && with || in hold",
+        "why": "only a .json file under .slimfit/mutants/ counts as a record, not the baseline",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:851:20: replace > with >= in picks",
+        "why": "five picks are allowed, six refused",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:78:71: replace == with != in current",
+        "why": "a cached run is reused only for the same picks",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:242:18: replace match guard picks[..i].iter().any(|q| q.name == p.name) with false in choose",
+        "why": "a pick named twice is refused",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

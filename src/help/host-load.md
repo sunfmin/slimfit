@@ -1,4 +1,4 @@
-On a busy host everything runs slower by the wall clock: a gate, a mutants run, each mutant's tests. `test_seconds` is CPU time (the `test_seconds` bound in `slimfit check --help` says what it counts), and the host's load does not raise it: the tests do the same work however long they wait for a core.
+On a busy host everything runs slower by the wall clock: a gate, a mutants run, each mutant's tests. `test_seconds` is CPU time (the `test_seconds` bound in `slimfit check --help` says what it counts), and waiting for a core does not add to it: the tests do the same work however long they wait. With every core busy it still rises a little (on Apple silicon more of the work lands on the slower cores), far less than wall time.
 
 `slimfit doctor` finds `host_busy` when the 1-minute load average (`uptime`) is above {const:BUSY_LOAD} per core (cores: `sysctl -n hw.ncpu` on macOS, `nproc` on Linux). Wall times taken then run high: a gate's, the test command's (`command_seconds` per suite in `.slimfit/out/measurement.json`), and the costs [costs](help:costs) tells you to time.
 

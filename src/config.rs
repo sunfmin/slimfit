@@ -107,7 +107,7 @@ pub struct Overrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_diff_flag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mutants_file_flag: Option<String>,
+    pub mutants_pick_flag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_tests: Option<MutantTests>,
 }
@@ -145,7 +145,7 @@ pub struct Suite {
     /// Rust keeps unit tests in `#[cfg(test)] mod` blocks inside source files.
     pub inline_tests: bool,
     /// Builds what `test_command` runs, before it, so the test command's CPU
-    /// time is the tests' (ADR 0009). Empty: the test command builds, or
+    /// time is the tests' (ADR 0010). Empty: the test command builds, or
     /// records each test's CPU time itself (the Rust preset).
     pub build_command: String,
     pub test_command: String,
@@ -158,21 +158,21 @@ pub struct Suite {
     pub mutants_report: Report<MutantsFormat>,
     /// The flag that limits `mutants_command` to the lines a unified diff
     /// adds, given the diff's path (paths in it relative to the suite root):
-    /// how `--mutants` runs only the change's mutants (ADR 0005).
+    /// how `--mutants` runs only the change's mutants (ADR 0006).
     pub mutants_diff_flag: String,
-    /// Without a diff flag: the flag that limits `mutants_command` to one
-    /// file, given once per file the change touches (paths relative to the
-    /// suite root). Neither: every file is mutated, and the change's mutants
-    /// are told apart by line.
-    pub mutants_file_flag: String,
+    /// The flag that runs one mutant by name, given once per pick with the
+    /// name as an anchored regular expression: how `--mutants <name>...`
+    /// runs only the picks (ADR 0008).
+    pub mutants_pick_flag: String,
     pub mutants_tests: MutantTests,
 }
 
 impl Suite {
-    /// Whether its mutation tool can be limited to a change: no other runs
-    /// mutants (ADR 0006).
+    /// Whether its mutation tool lists a change's mutants (`--list --json`
+    /// with the diff flag) and runs them by name: no other runs mutants
+    /// (ADR 0006, 0008).
     pub fn mutates(&self) -> bool {
-        !self.mutants_diff_flag.is_empty() || !self.mutants_file_flag.is_empty()
+        !self.mutants_diff_flag.is_empty() && !self.mutants_pick_flag.is_empty()
     }
 }
 
@@ -215,8 +215,8 @@ impl SuiteConfig {
         if let Some(v) = o.mutants_diff_flag {
             s.mutants_diff_flag = v
         }
-        if let Some(v) = o.mutants_file_flag {
-            s.mutants_file_flag = v
+        if let Some(v) = o.mutants_pick_flag {
+            s.mutants_pick_flag = v
         }
         if let Some(v) = o.mutants_tests {
             s.mutants_tests = v
@@ -280,7 +280,7 @@ pub fn preset(p: Preset) -> Suite {
         mutants_command: String::new(),
         mutants_report: report(MutantsFormat::Stryker, ""),
         mutants_diff_flag: String::new(),
-        mutants_file_flag: String::new(),
+        mutants_pick_flag: String::new(),
         mutants_tests: MutantTests::All,
     };
     match p {
@@ -300,6 +300,7 @@ pub fn preset(p: Preset) -> Suite {
             mutants_command: RUST_MUTANTS.into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
             mutants_diff_flag: "--in-diff".into(),
+            mutants_pick_flag: "-F".into(),
             mutants_tests: MutantTests::Reached,
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
@@ -331,7 +332,7 @@ pub fn preset(p: Preset) -> Suite {
         },
         Preset::Kotlin => Suite {
             // No daemon: the tests then run in this command's process tree,
-            // where their CPU time is counted (ADR 0009).
+            // where their CPU time is counted (ADR 0010).
             build_command: "./gradlew --quiet --no-daemon testClasses".into(),
             test_command: "./gradlew --quiet --no-daemon test koverXmlReport --continue".into(),
             tests_report: report(TestsFormat::Junit, &format!("**/{GRADLE_TEST_RESULTS}/*.xml")),

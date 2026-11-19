@@ -1,4 +1,4 @@
-# 9. test_seconds is the tests' CPU time
+# 10. test_seconds is the tests' CPU time
 
 Supersedes `0003-test-seconds-normalised-by-load.md`.
 
@@ -6,16 +6,12 @@ Supersedes `0003-test-seconds-normalised-by-load.md`.
 
 `test_seconds` was the tests' wall time, divided by how much a probe thread
 saw the host's load slow a CPU-bound thread (ADR 0003). On a shared host
-the probe missed most of what load did to the tests (many threads, process
+the probe missed most of what load does to tests (many threads, process
 spawns, slower cores), so slimfit#41 stopped holding `test_seconds` over its
-bound once the 1-minute load passed 0.5 per core. On an 18-core host shared
-with agents that load is the usual state: most of the day no check held
-test time, while rule 1 puts fast tests first.
-
-CPU time (user + sys) is the work the tests do. Waiting for a core does not
-add to it, so it is the same on a quiet host and a busy one: factorium's
-suite spent 194-200s of CPU at load 90-134 on the host where it spent
-158-195s of wall time loaded and 24s idle (factorium's SPEC §6).
+bound on a busy host, which on a host shared with agents is most of the
+day. CPU time (user + sys) is the work the tests do: waiting for a core
+does not add to it. It is cheap and objective, as a hard bound must be
+(ADR 0009). The measurements are in slimfit#43's comments.
 
 Invariant: `test_seconds` holds on a busy host, and counts the tests, not
 the build.
@@ -68,9 +64,12 @@ test (ADR 0007) is wall time, so it is set from wall time.
 - A test that waits (sleeps, network, a child it does not wait for) costs
   no CPU and is not held by `test_seconds`. Waiting is not the shared
   host's problem this bound is for; the slow-test steps still name sleeps.
-- On a host with fast and slow cores the same work takes more CPU on a
-  slow core. A run at background priority runs on the slow ones, so a test
-  run inside `--mutants` stays `untimed` (slimfit#39).
+- On a host with fast and slow cores (Apple silicon) the same work takes
+  more CPU time on a slow core, and with every core busy more of it lands
+  there: CPU time still rises under full load, far less than wall time,
+  within `time_tolerance` + `time_slack`. A run at background priority runs
+  on the slow cores only, so a test run inside `--mutants` stays `untimed`
+  (slimfit#39).
 - Where the tree is measured, a test's CPU is its share, not its own:
   the sum is right, the split follows wall time.
 - Baselines written before hold corrected wall time. They are re-set once
