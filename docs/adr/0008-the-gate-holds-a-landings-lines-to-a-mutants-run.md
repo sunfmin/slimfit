@@ -93,6 +93,24 @@ only checks that a measurement covers the change.
 
 ## Measured
 
-See the commit that lands slimfit#36: this change's own `check --mutants`,
-under `factorium worker exclusive --background`, recorded in
-`.slimfit/mutants/`.
+This change on slimfit itself (against b6b83c0), cargo-mutants under
+`factorium worker exclusive --background -- slimfit check --mutants`,
+2026-11-19, a shared 18-core host at a 1-minute load of 5-18:
+
+| run | lines to measure | files run | mutants | outcome | wall |
+|---|---|---|---|---|---|
+| first | 321 | 8 | 97 | 79 caught, 15 unviable, 3 missed | 1470s |
+| after killing the 3 | 318 | 8 | 99 | 84 caught, 15 unviable, 0 missed | 1245s |
+| after a 6-line edit of `main.rs` | 6 | 1 | 8 | 6 caught, 2 unviable | 144s |
+
+The third run is the rule at work: the 6 edited lines were unmeasured
+(plain `check` exited 1 with `unmeasured_mutants` 6), and only the one file
+holding them ran again. The two records are 14.9 KB and 3.4 KB.
+
+A plain `check` of the tree (cached test run) with the landing held: the
+landing adds 324 source lines that must be measured, all recorded.
+
+The first run's survivors: the FNV-1a hash's `^=` (no test pinned its
+value; one does now), `added_lines`' count of a hunk's old side (dead: it
+is gone), and the file-flag half of the "can its tool be limited" test in
+`doctor` (now one `Suite::mutates`, covered where `--mutants` refuses).
