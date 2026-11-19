@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::git;
 use crate::loc::{Classifier, Kind};
-use crate::model::{Measurement, MutantStatus, ReachTest, SuiteMeasurement};
+use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
 use crate::ratchet::{Baseline, Kept, KeptFile};
 use anyhow::Result;
 use serde::Serialize;
@@ -30,9 +30,12 @@ pub enum TaskKind {
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
-    /// A picked mutant of the change no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Comes from a `slimfit check --mutants <name>...` of this tree.
+    /// A mutant no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Its `evidence.source` says who chose it: `author`, a pick of the change, from a `slimfit check --mutants <name>...` of this tree; `sampled`, drawn by `slimfit next --sample` from changes already landed (see [the sample](help:sample)).
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
+    /// A sample's record to commit: `slimfit next --sample` ran it where nothing is committed (idle work), and `slimfit report` reads it only from git. Write `evidence.text` to the file in `files` and commit it, nothing else (see [the sample](help:sample)).
+    #[value(verbatim_doc_comment)]
+    RecordSample,
     /// A big file that keeps changing: a proposal from size and churn, not a verdict. Load the codebase-design and improve-codebase-architecture skills and decide: design the deeper interface first, then move to it one passing step at a time; or keep it as it is (`slimfit keep <file>`).
     #[value(verbatim_doc_comment)]
     Deepen,
@@ -338,16 +341,22 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
     for m in s.mutants.iter().filter(|m| m.status == MutantStatus::Survived) {
         by_file.entry(&m.file).or_default().push(json!({ "line": m.line, "mutant": m.description }));
     }
+    survivors(&s.suite, by_file, Source::Author)
+}
+
+/// The surviving-mutant tasks of `by_file`'s survivors (each with its
+/// `line` and `mutant`) chosen by `source`: one per file, most first.
+fn survivors(suite: &str, by_file: BTreeMap<&str, Vec<Value>>, source: Source) -> Vec<Task> {
     let mut files: Vec<_> = by_file.into_iter().collect();
     files.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
     files
         .into_iter()
         .map(|(file, ms)| Task {
             kind: TaskKind::SurvivingMutant,
-            suite: s.suite.clone(),
-            summary: format!("{} mutants survive in {file}", ms.len()),
+            suite: suite.to_string(),
+            summary: format!("{} mutants survive in {file} ({})", ms.len(), source.name()),
             files: vec![file.to_string()],
-            evidence: json!({ "survivors": ms }),
+            evidence: json!({ "source": source, "survivors": ms }),
             steps: "For each survivor: the change it makes is behaviour no test checks. If the behaviour matters, add an assertion through the module's interface that the mutant breaks. \
                     If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
                     The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
@@ -355,6 +364,43 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
             accept: TaskKind::SurvivingMutant.accept().into(),
         })
         .collect()
+}
+
+/// A sample's tasks: its survivors, as `sampled` surviving-mutant tasks,
+/// and, when it drew any, its record to commit. No `check` reads either.
+pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
+    let (path, text) = s.sample.file()?;
+    let mut out = Vec::new();
+    for (suite, drawn) in &s.sample.drawn {
+        let mut by_file: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+        for d in drawn.iter().filter(|d| d.outcome == Some(MutantStatus::Survived)) {
+            let Some((_, c)) = s.candidates.iter().find(|(x, c)| x == suite && c.name == d.name) else { continue };
+            let mutant = c.name.splitn(4, ':').nth(3).map_or(c.name.as_str(), str::trim);
+            by_file.entry(&c.file).or_default().push(json!({ "line": c.line, "mutant": mutant, "name": c.name }));
+        }
+        out.extend(survivors(suite, by_file, Source::Sampled));
+    }
+    let counts = s.sample.counts();
+    if s.sample.drawn.values().any(|d| !d.is_empty()) {
+        out.push(Task {
+            kind: TaskKind::RecordSample,
+            suite: s.sample.drawn.keys().cloned().collect::<Vec<_>>().join(","),
+            summary: format!(
+                "record the sample drawn at {}: {} killed, {} survived, {} unviable, of {} mutants not picked",
+                &s.sample.tip[..12.min(s.sample.tip.len())],
+                counts.killed,
+                counts.survived,
+                counts.unviable,
+                s.sample.pool
+            ),
+            files: vec![path.clone()],
+            evidence: json!({ "path": path, "counts": counts, "text": text }),
+            steps: "Write `evidence.text` exactly as it is to `evidence.path` and commit it alone. Change nothing                     else: it is a record of what ran, not work on the code; its survivors are tasks of their own.                     The change adds no source line, so it needs no record of mutants."
+                .into(),
+            accept: TaskKind::RecordSample.accept().into(),
+        });
+    }
+    Ok(out)
 }
 
 /// The suite that counts `path` (relative to the repo) as an existing

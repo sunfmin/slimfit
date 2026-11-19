@@ -57,9 +57,9 @@ pub fn refuse_unpickable(cfg: &Config) -> Result<()> {
 /// The change's mutants in one suite: its diff of the landing, and what its
 /// tool lists of it.
 #[derive(Debug, Default)]
-struct Listed {
-    patch: String,
-    candidates: Vec<Candidate>,
+pub(super) struct Listed {
+    pub(super) patch: String,
+    pub(super) candidates: Vec<Candidate>,
 }
 
 /// The candidates the agent picks from, per suite whose tool can pick:
@@ -88,18 +88,18 @@ fn listed(repo: &Path, cfg: &Config, head: &git::Head, scratch: &Path) -> Result
     eprintln!("slimfit: the change is what HEAD adds since its merge base with {}, {}", l.target, l.from);
     let mut out = BTreeMap::new();
     for (name, lines) in landing::required(repo, cfg, &l.added)? {
-        let listed = list_suite(repo, cfg, &l, &name, lines, scratch);
+        let listed = list_suite(repo, cfg, (&l.from, &l.to), &name, lines, scratch);
         out.insert(name.clone(), listed.map_err(|e| fault::within(&format!("suite {name}"), e))?);
     }
     Ok(out)
 }
 
-/// What one suite's tool lists of the landing's `lines` in it: nothing,
-/// and the tool not run, when the suite adds no source line.
-fn list_suite(
+/// What one suite's tool lists of `lines`, those a diff `from` → `to` adds
+/// in it: nothing, and the tool not run, when the suite adds no source line.
+pub(super) fn list_suite(
     repo: &Path,
     cfg: &Config,
-    l: &landing::Landing,
+    (from, to): (&str, &str),
     name: &str,
     lines: landing::Lines,
     scratch: &Path,
@@ -109,7 +109,7 @@ fn list_suite(
     if files.is_empty() {
         return Ok(Listed::default());
     }
-    let patch = git::diff(repo, &l.from, &l.to, &suite.root, &files)?;
+    let patch = git::diff(repo, from, to, &suite.root, &files)?;
     let dir = scratch.join(name);
     std::fs::create_dir_all(&dir)?;
     let (diff, list) = (dir.join("change.diff"), dir.join("mutants.list.json"));
@@ -209,7 +209,7 @@ impl Picked {
 /// Runs the suite's picked mutants of the change, and reads each pick's
 /// outcome. `tested` is this tree's test run: which tests each mutant runs
 /// is chosen from it.
-fn mutate_picks(
+pub(super) fn mutate_picks(
     root: &Path,
     out: &Path,
     suite: &Suite,
@@ -342,7 +342,7 @@ fn mutate(
 /// A mutation run's mutants, and what it covered.
 pub(crate) struct Mutation {
     mutants: Vec<Mutant>,
-    mutated: Mutated,
+    pub(super) mutated: Mutated,
 }
 
 impl Mutation {
