@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 5444,
-      "test_lines": 3112,
-      "tests": 78,
+      "prod_lines": 5506,
+      "test_lines": 3156,
+      "tests": 79,
       "failures": 0,
       "test_seconds": 7.896,
-      "covered_lines": 2985,
+      "covered_lines": 3011,
       "uncovered_lines": 65
     }
   },
@@ -40,5 +40,6 @@
       "reason": "slimfit#34: slimfit#31 ratcheted test_seconds before slimfit#29/#32 added 9 tests, so proving measured over its bound with no change (measurements in slimfit#40's comment \"Evidence of slimfit's own baseline loosenings\")."
     }
   ],
+  "kept": [],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f"
 }

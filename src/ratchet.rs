@@ -20,7 +20,9 @@ pub struct Baseline {
     pub loosened: Vec<Loosening>,
     /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
     /// each against its test's text: not proposed again until it changes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Written even when empty, so `report`'s history tells none kept from
+    /// a baseline older than verdicts.
+    #[serde(default)]
     pub kept: Vec<Kept>,
     /// The commit whose code no landing is charged to a mutants run for:
     /// what was there before the rule came in (ADR 0008). It counts only
