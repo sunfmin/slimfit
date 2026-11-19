@@ -9,7 +9,7 @@ use crate::ratchet::Kept;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum, agent_help::Help)]
@@ -21,7 +21,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
@@ -173,11 +173,18 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
 /// are at least this share of the lines either runs (ADR 0006).
 pub const MERGE_OVERLAP: f64 = 0.8;
 
+/// A line more than this share of a suite's tests run is shared setup (a
+/// scenario's world, a daemon's tick): overlap is computed without it (ADR
+/// 0006).
+pub const COMMON_LINES: f64 = 0.5;
+
 /// Redundant-test candidates from per-test coverage (ADR 0006): a test whose
 /// lines are all run by another test too (when both run the same lines, the
 /// slower of the two is proposed), or that shares at least [`MERGE_OVERLAP`]
 /// of the lines either runs with another (the slower of the two is
-/// proposed). Each is named once, with the other test it most overlaps;
+/// proposed). Overlap is computed without the lines more than
+/// [`COMMON_LINES`] of the tests run, which shared setup makes, not what a
+/// test checks; a subset is of all lines, as setup cannot make one. Each is named once, with the other test it most overlaps;
 /// the slowest first. Coverage only proposes:
 /// the steps decide by reading the assertions. A test kept, unchanged since,
 /// is not proposed.
@@ -196,23 +203,33 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
         })
         .filter(|(_, ls, _)| !ls.is_empty())
         .collect();
+    // Each test's own lines: those COMMON_LINES of the tests or fewer run.
+    let mut runs: HashMap<(&str, u32), usize> = HashMap::new();
+    for l in lines.iter().flat_map(|(_, ls, _)| ls) {
+        *runs.entry(*l).or_default() += 1;
+    }
+    let shared = COMMON_LINES * lines.len() as f64;
+    let own: Vec<BTreeSet<_>> =
+        lines.iter().map(|(_, ls, _)| ls.iter().filter(|l| runs[*l] as f64 <= shared).copied().collect()).collect();
     let at = |id: &str| reach.tests.iter().find(|t| t.id() == id);
     let mut out: Vec<(f64, Task)> = Vec::new();
-    for (t, mine, secs) in &lines {
+    for ((t, mine, secs), mine_own) in lines.iter().zip(&own) {
         if at(t).is_some_and(|rt| kept.iter().any(|k| k.holds(&s.suite, rt))) {
             continue;
         }
         // The other test with the most overlap; its share and whether it runs all of mine.
         let best = lines
             .iter()
-            .filter(|(o, _, _)| o != t)
-            .map(|(o, theirs, o_secs)| {
-                let both = mine.intersection(theirs).count();
+            .zip(&own)
+            .filter(|((o, _, _), _)| o != t)
+            .map(|((o, theirs, o_secs), theirs_own)| {
                 let slower = (secs, t) > (o_secs, o);
-                let within = both == mine.len() && (mine.len() < theirs.len() || slower);
-                // Lines that only overlap: the pair is named once, by its slower test.
-                let overlap = both < mine.len() && both < theirs.len() && slower;
-                (o, both as f64 / mine.union(theirs).count() as f64, within, overlap)
+                let within = mine.is_subset(theirs) && (mine.len() < theirs.len() || slower);
+                // Own lines that only overlap: the pair is named once, by its slower test.
+                let both = mine_own.intersection(theirs_own).count();
+                let overlap = both < mine_own.len() && both < theirs_own.len() && slower;
+                let union = mine_own.union(theirs_own).count();
+                (o, if union == 0 { 0.0 } else { both as f64 / union as f64 }, within, overlap)
             })
             .filter(|(_, share, within, overlap)| *within || (*overlap && *share >= MERGE_OVERLAP))
             .map(|(o, share, within, _)| (o, share, within))
@@ -226,7 +243,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                 summary: if within {
                     format!("{other} runs every line {t} runs ({} lines)", mine.len())
                 } else {
-                    format!("{t} shares {:.0}% of its lines with {other}", share * 100.0)
+                    format!("{t} shares {:.0}% of its lines past the suite's shared setup with {other}", share * 100.0)
                 },
                 files: [at(t), at(other)].into_iter().flatten().filter_map(|rt| Some(rt.source.as_ref()?.file.clone())).collect::<BTreeSet<_>>().into_iter().collect(),
                 evidence: json!({ "test": t, "seconds": secs, "lines": mine.len(), "other_test": other }),
@@ -352,24 +369,16 @@ mod t {
         assert_eq!((n("b", TaskKind::Uncovered), n("b", TaskKind::Deepen)), (5, 3));
     }
 
-    /// A test whose lines another runs too is proposed (of two that run the
-    /// same lines, the slower); a test overlapping another by at least
-    /// MERGE_OVERLAP is proposed for a merge; one apart from the rest, or
-    /// overlapping less, is not; without per-test coverage, none is.
-    #[test]
-    fn redundant_tests_are_proposed_from_per_test_lines() {
-        let tests = [("wide", 0.1, 1..=10), ("inside", 0.3, 2..=4), ("twin", 0.2, 1..=10), ("near", 0.1, 20..=29)];
-        let tests =
-            tests.into_iter().chain([("near2", 0.5, 21..=30), ("apart", 0.1, 40..=45), ("loose", 0.1, 41..=50)]);
+    fn suite(tests: impl IntoIterator<Item = (&'static str, f64, Vec<u32>)>) -> SuiteMeasurement {
         let mut reach = crate::model::Reach { lines: Some(vec![]), ..Default::default() };
         let mut cases = Vec::new();
         for (name, secs, lines) in tests {
             let source = crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into() };
             reach.tests.push(ReachTest { binary: "t".into(), name: name.into(), source: Some(source) });
-            reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.collect())].into());
+            reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.into_iter().collect())].into());
             cases.push(TestCase { id: format!("t::{name}"), seconds: secs, passed: true, start: None });
         }
-        let s = SuiteMeasurement {
+        SuiteMeasurement {
             suite: "s".into(),
             metrics: Metrics::default(),
             tests: cases,
@@ -379,18 +388,33 @@ mod t {
             mutated: None,
             command_seconds: 0.0,
             load_slowdown: 1.0,
-        };
-        let got = |kept: &[Kept]| {
-            redundant(&s, kept)
-                .into_iter()
-                .map(|t| {
-                    (
-                        t.evidence["test"].as_str().unwrap().to_string(),
-                        t.evidence["other_test"].as_str().unwrap().to_string(),
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
+        }
+    }
+
+    /// Each proposed test with the other test it names.
+    fn pairs(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<(String, String)> {
+        redundant(s, kept)
+            .into_iter()
+            .map(|t| {
+                (
+                    t.evidence["test"].as_str().unwrap().to_string(),
+                    t.evidence["other_test"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// A test whose lines another runs too is proposed (of two that run the
+    /// same lines, the slower); a test overlapping another by at least
+    /// MERGE_OVERLAP is proposed for a merge; one apart from the rest, or
+    /// overlapping less, is not; without per-test coverage, none is.
+    #[test]
+    fn redundant_tests_are_proposed_from_per_test_lines() {
+        let tests = [("wide", 0.1, 1..=10), ("inside", 0.3, 2..=4), ("twin", 0.2, 1..=10), ("near", 0.1, 20..=29)];
+        let tests =
+            tests.into_iter().chain([("near2", 0.5, 21..=30), ("apart", 0.1, 40..=45), ("loose", 0.1, 41..=50)]);
+        let s = suite(tests.map(|(n, secs, ls)| (n, secs, ls.collect())));
+        let got = |kept: &[Kept]| pairs(&s, kept);
         let want = [("near2", "near"), ("inside", "twin"), ("twin", "wide")];
         assert_eq!(got(&[]), want.map(|(a, b)| (format!("t::{a}"), format!("t::{b}"))));
         assert_eq!(redundant(&s, &[])[0].files, ["tests/near.rs", "tests/near2.rs"]);
@@ -406,5 +430,23 @@ mod t {
         assert_eq!(got(&[keep("other suite", "h")]).len(), 3);
         let functions_only = crate::model::Reach { lines: None, ..s.reach.clone().unwrap() };
         assert!(redundant(&SuiteMeasurement { reach: Some(functions_only), ..s }, &[]).is_empty());
+    }
+
+    /// The lines more than COMMON_LINES of the tests run (their shared
+    /// setup) make no overlap: tests that share only them are not proposed;
+    /// two that run the same lines past the setup are.
+    #[test]
+    fn lines_most_tests_run_are_left_out_of_overlap() {
+        let with_setup = |own: std::ops::RangeInclusive<u32>| (100..=190).chain(own).collect::<Vec<_>>();
+        let tests = [
+            ("a", 0.1, with_setup(1..=5)),
+            ("b", 0.1, with_setup(11..=15)),
+            ("c", 0.1, with_setup(21..=25)),
+            ("same", 0.2, with_setup(31..=35)),
+            ("same2", 0.1, with_setup(31..=35)),
+        ];
+        let s = suite(tests);
+        assert_eq!(pairs(&s, &[]), [("t::same".to_string(), "t::same2".to_string())]);
+        assert_eq!(redundant(&s, &[])[0].evidence["lines"], 96);
     }
 }

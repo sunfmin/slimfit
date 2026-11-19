@@ -137,17 +137,10 @@ pub fn head(repo: &Path) -> Result<Head> {
     Ok(Head { commit, index, scratch })
 }
 
-/// Where the current branch forks from its upstream: `None` without an
-/// upstream, or before the first commit.
-pub fn merge_base_with_upstream(repo: &Path) -> Option<String> {
-    run(repo, &["merge-base", "HEAD", "@{upstream}"]).ok().map(|s| s.trim().to_string())
-}
-
-/// The files that differ between two trees, outside `.slimfit/` (deleted
-/// ones too).
-pub fn changed_files(repo: &Path, from: &str, to: &str) -> Result<Vec<String>> {
-    let diff = run(repo, &["diff", "--no-renames", "--name-only", "-z", from, to, "--", ".", ":(exclude).slimfit"])?;
-    Ok(diff.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
+/// Where HEAD forks from `target`: `None` when the repository has no such
+/// ref, they share no commit, or before the first commit.
+pub fn merge_base(repo: &Path, target: &str) -> Option<String> {
+    run(repo, &["merge-base", "HEAD", target]).ok().map(|s| s.trim().to_string())
 }
 
 /// The unified diff from `from` to `to` of `files` (repository relative),

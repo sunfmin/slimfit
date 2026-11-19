@@ -100,6 +100,10 @@ pub struct Mutated {
     /// The mutants in the change's lines, by outcome: survivors here are the
     /// change's own, and `check --mutants` holds them at 0.
     pub change: MutantCounts,
+    /// The lines the run measured, by the hash of their text: what `ratchet`
+    /// records in `.slimfit/mutants/` (ADR 0008).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub lines: crate::landing::Hashes,
 }
 
 /// A run of uncovered lines in one file.
@@ -187,24 +191,11 @@ pub struct Measurement {
     /// Identifies the working tree measured: HEAD plus a hash of local changes.
     pub tree: String,
     pub with_mutants: bool,
-    /// With mutants: the tree measured, which `ratchet` records as the
-    /// baseline's `mutants_at`.
+    /// With mutants: the commit the change was taken from, HEAD's merge base
+    /// with the branch it lands on (ADR 0008).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot: Option<Snapshot>,
-    /// With mutants: the baseline's `mutants_at` the change was taken from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<Snapshot>,
+    pub since: Option<String>,
     pub suites: Vec<SuiteMeasurement>,
-}
-
-/// A working tree named by git: HEAD, and the tree object its files
-/// (untracked ones included) were written to. The tree is unreachable, so
-/// another clone, or `git gc` after a while, loses it; the commit stays.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Snapshot {
-    pub commit: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree: Option<String>,
 }
 
 #[cfg(test)]

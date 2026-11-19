@@ -27,11 +27,15 @@ pub struct CheckConfig {
     /// Lines by which `uncovered_lines` may move either way and still count
     /// as unchanged: coverage that depends on timing flaps (docs/adr/0001).
     pub coverage_slack: u64,
+    /// The branch changes land on: a change's lines are those added since
+    /// HEAD's merge base with it (`landing::DEFAULT_TARGET` when unset).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl Default for CheckConfig {
     fn default() -> Self {
-        Self { time_tolerance: 0.2, time_slack: 1.0, coverage_slack: 1 }
+        Self { time_tolerance: 0.2, time_slack: 1.0, coverage_slack: 1, target: None }
     }
 }
 
@@ -156,6 +160,14 @@ pub struct Suite {
     /// are told apart by line.
     pub mutants_file_flag: String,
     pub mutants_tests: MutantTests,
+}
+
+impl Suite {
+    /// Whether its mutation tool can be limited to a change: no other runs
+    /// mutants (ADR 0006).
+    pub fn mutates(&self) -> bool {
+        !self.mutants_diff_flag.is_empty() || !self.mutants_file_flag.is_empty()
+    }
 }
 
 impl SuiteConfig {
