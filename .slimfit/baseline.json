@@ -5,7 +5,7 @@
       "test_lines": 2139,
       "tests": 62,
       "failures": 0,
-      "test_seconds": 5.362,
+      "test_seconds": 7.896,
       "covered_lines": 2171,
       "uncovered_lines": 70
     }
@@ -31,6 +31,13 @@
       "from": 1.899,
       "to": 7.5,
       "reason": "slimfit#22: the stand-in tests run the real binary through every preset's tools, faults included (5 tests, ~0.4s each alone, ~1s each in parallel on a loaded host); they replace the real-toolchain Rust e2e the slow gate ran (33s, 268s with mutants)"
+    },
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 5.362,
+      "to": 7.896,
+      "reason": "slimfit#31 ratcheted test_seconds 7.5 -> 5.362 before slimfit#29/#32 added 9 tests (62 -> 71; the stand-in test every_preset_through_its_standins alone runs 3.8-4.2s), so proving b6b83c0 measured 7.758s against the limit 7.434 with no change. Median of 3 slimfit check --fresh runs of slimfit#34's tree under worker exclusive, 2026-11-19, no quiet host within 15 min: 8.301s (1-min load 17.7-18.9), 7.896s (20.3-20.8), 7.733s (22.8-21.5). time_slack unchanged. slimfit#34"
     }
   ],
   "mutants_at": {
