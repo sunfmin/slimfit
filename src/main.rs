@@ -12,6 +12,7 @@ mod measure;
 mod model;
 mod ratchet;
 mod report;
+mod rust_source;
 mod select;
 mod tasks;
 mod tools;

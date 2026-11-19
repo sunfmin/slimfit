@@ -99,7 +99,7 @@ pub fn plan(
             .map(|f| f.range(start..=end).map(|(_, t)| t).collect())
             .unwrap_or_default();
         let source = std::fs::read_to_string(root.join(file)).unwrap_or_default();
-        let tests = if ran.is_empty() || is_const(&source, start, end) {
+        let tests = if ran.is_empty() || crate::rust_source::is_const(&source, start, end) {
             None
         } else {
             Some(ran.into_iter().flatten().copied().collect::<BTreeSet<u32>>().into_iter().collect())
@@ -107,20 +107,6 @@ pub fn plan(
         functions.push(PlanFunction { file: file.into(), start, end, tests });
     }
     Ok(Plan { root: root.into(), tests: plan_tests, functions })
-}
-
-/// Whether the function in lines `start..=end` is a `const fn`: one
-/// evaluated while compiling, which no test's profile shows running.
-fn is_const(source: &str, start: u32, end: u32) -> bool {
-    let lines = source.lines().skip(start.saturating_sub(1) as usize).take((end + 1).saturating_sub(start) as usize);
-    let code: String = lines
-        .map(str::trim_start)
-        .filter(|l| !l.starts_with("//") && !l.starts_with("#["))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let signature = code.split('{').next().unwrap_or("");
-    let words: Vec<&str> = signature.split_whitespace().collect();
-    words.windows(2).any(|w| w[0] == "const" && ["fn", "unsafe", "extern", "async"].contains(&w[1]))
 }
 
 /// The tests to run in build directory `dir`, and why: `None` runs every
@@ -339,12 +325,5 @@ mod tests {
         );
         let all: toml::Table = timeouts(&plan, None).parse().unwrap();
         assert_eq!(all["profile"]["default"]["overrides"].as_array().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn a_const_fn_is_known_by_its_signature() {
-        let src = "/// a const fn\n#[inline]\npub const fn a() -> u8 {\n    1\n}\nfn b() { const fn c() {} }\n";
-        assert!(is_const(src, 1, 5));
-        assert!(!is_const(src, 6, 6));
     }
 }
