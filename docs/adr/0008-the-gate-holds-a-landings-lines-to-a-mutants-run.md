@@ -72,6 +72,25 @@ only checks that a measurement covers the change.
   in this change, so it starts at the tip (b6b83c0): the 4023 unmeasured
   lines before it are not charged to the next landing. This change's own
   lines were measured and recorded like any other's (Measured, below).
+- **Code from before the rule is not charged** (slimfit#37). The starting
+  point above held only where the target had reached b6b83c0. In
+  factorium's promotion clone `origin/HEAD` is `origin/main` = f333d68,
+  slimfit's first commit, never promoted since: the landing there was
+  f333d68..proving, and the gate failed with `unmeasured_mutants` 2128 on
+  lines added before this rule. So the baseline holds the cut:
+  `mutants_from` in `.slimfit/baseline.json`, a commit set by hand once
+  (slimfit: 5cb0e99, where this rule landed on proving; not b6b83c0,
+  where its branch forked, since #34 landed between the two without a
+  record), kept by every ratchet. When
+  it is on HEAD's history and the merge base with the target is it or one
+  of its ancestors, the landing is taken from it instead; once the target
+  passes it, or when it is not a commit HEAD holds, it moves nothing. A line
+  added after it is held as ever. Not chosen: measuring the backlog once.
+  At the measured rate (321 lines in 1470s, below) the 2128 lines are about
+  2.7 hours of a shared host, and every survivor in 5000 lines of code would
+  need a kill or a reasoned loosen before `ratchet` writes the record; the
+  cut costs nothing to run and leaves those lines' mutants to their next
+  change, which is when ADR 0006 measures them anyway.
 
 ## Consequences
 
@@ -86,6 +105,9 @@ only checks that a measurement covers the change.
   measured. A line with no mutants (`}`) costs nothing either way.
 - A comment-only change needs no run; a change to a doc comment (`///`)
   does not either, as it starts with `//`.
+- A clone whose target lags behind `mutants_from` holds the same lines as
+  one whose target reached it: the cut is a floor, not a target, so it
+  never conflicts on a merge (it is set once) and never needs moving.
 - In a proving branch that collects several workers' landings, the change
   against `origin/HEAD` holds all of them, each covered by its own record.
 - Without `origin/HEAD` (a repository whose remote was added by hand) the
@@ -114,3 +136,28 @@ The first run's survivors: the FNV-1a hash's `^=` (no test pinned its
 value; one does now), `added_lines`' count of a hunk's old side (dead: it
 is gone), and the file-flag half of the "can its tool be limited" test in
 `doctor` (now one `Suite::mutates`, covered where `--mutants` refuses).
+
+### The cut (slimfit#37)
+
+In a clone whose `origin/HEAD` is f333d68 (the promotion clone's), a plain
+`check` of proving 7a2ec0c failed with `unmeasured_mutants` 2128, the first
+at build.rs:3. A cut at b6b83c0 left 20 of slimfit#34's lines unmeasured
+(the first at main.rs:433), so the cut is at 5cb0e99.
+
+This change's own lines were measured twice, because which lines a diff
+adds depends on its base. Against f81ae24 (this worktree's `origin/HEAD`),
+2026-11-19, load 4-5, under `factorium worker exclusive --background --
+slimfit check --mutants` after a `check --fresh`: 4 files, 79 mutants, 70
+caught, 9 unviable, 0 missed, 487s. Against the cut, git's diff counts 5
+more lines as added: a `}` and four lines of slimfit#35's re-indented call
+that the diff from f81ae24 aligned as context. Their run in the f333d68
+clone, the same way: 2 files, 10 mutants, 9 caught, 1 unviable, 0 missed,
+64s. After it the clone's plain `check` holds 50 lines from 5cb0e99, all
+measured. A landing measured against one base and gated against
+another can be short like this by a few lines; measure from the base the
+gate uses.
+
+(A first run without the plain check before it ran the tests at background
+priority: test_seconds 31.1 against a limit of 10.5. Its mutants came out
+the same, 542s, but the ratchet refused it. Run `check` first, then
+`--mutants`, which reuses that test run.)
