@@ -1057,7 +1057,10 @@ pub(crate) mod t {
         assert_eq!(ran(), 2);
         assert!(!timed.suites[0].untimed && timed.with_mutants && timed.since == m.since);
         assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
-        let v = crate::ratchet::check(&base, &timed, &held);
+        // Held, on a host quiet enough for it (ADR 0003): this one may not be.
+        let mut quiet = timed.clone();
+        quiet.suites[0].host_load = 0.0;
+        let v = crate::ratchet::check(&base, &quiet, &held);
         assert!(v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
         // Cached now, timed: nothing runs again, `--mutants` included.
         assert_eq!((measure(true), run(repo, &cfg).1, ran()), (timed, None, 2));
