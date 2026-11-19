@@ -1,0 +1,32 @@
+{
+  "tree": "0b02aef3d15341a3709e317fcf2b0785cb99316b+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/sample.rs:115:37: delete ! in draw",
+        "why": "a name a record picked must never be drawn",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/sample.rs:100:9: replace SplitMix::next -> u64 with 0",
+        "why": "the tip's seed alone must decide the draw: another tip, another set",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/sample.rs:153:5: replace picked_since -> Result<BTreeSet<String>> with Ok(BTreeSet::new())",
+        "why": "the names picked come from the records the window added",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/sample.rs:223:47: replace + with - in run",
+        "why": "a sample counts only viable mutants toward N",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:376:52: replace == with != in sampled",
+        "why": "only sampled survivors become surviving-mutant tasks",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
