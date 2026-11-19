@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 4045,
-      "test_lines": 2139,
-      "tests": 62,
+      "prod_lines": 4998,
+      "test_lines": 2823,
+      "tests": 72,
       "failures": 0,
-      "test_seconds": 5.362,
-      "covered_lines": 2171,
+      "test_seconds": 8.823,
+      "covered_lines": 2686,
       "uncovered_lines": 70
     }
   },
@@ -31,9 +31,13 @@
       "from": 1.899,
       "to": 7.5,
       "reason": "slimfit#22: the stand-in tests run the real binary through every preset's tools, faults included (5 tests, ~0.4s each alone, ~1s each in parallel on a loaded host); they replace the real-toolchain Rust e2e the slow gate ran (33s, 268s with mutants)"
+    },
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 5.362,
+      "to": 17.607,
+      "reason": "slimfit#36: the change's own check --mutants (99 mutants, 0 survivors) ran its tests under a 1-minute load of 10-18 on 18 cores, where b6b83c0 itself measures 6.85 and 7.70 against its 5.36 baseline; the change adds the e2e test of the gate rule (~1.1s). Tightened by the fresh ratchets that follow (test_seconds only moves down)"
     }
-  ],
-  "mutants_at": {
-    "commit": "d142204e2234bf5f41d9fe93bd76a2e075751d9c"
-  }
+  ]
 }
