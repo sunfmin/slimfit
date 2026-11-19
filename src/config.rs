@@ -214,11 +214,13 @@ const RUST_TEST: &str = include_str!("presets/rust-test.sh");
 /// the build goes to the test run's own target directory: a target at the
 /// same path, built the same way, keeps every crate but the mutated ones
 /// fresh (9-11s; ADR 0007). Without that environment (show-env failed) it
-/// builds cold, as before. Each mutant's test processes write their
-/// profiles in the copy, which cargo-mutants deletes.
-const RUST_MUTANTS: &str = "eval \"$(cargo llvm-cov show-env --sh 2>/dev/null)\"; \
+/// builds cold, as before. show-env's `LLVM_PROFILE_FILE` (the test run's
+/// target directory) is left out: a mutant's test processes keep the one
+/// they had, unset in an agent's shell, so they write their profiles in
+/// the copy, which cargo-mutants deletes.
+const RUST_MUTANTS: &str = "eval \"$(cargo llvm-cov show-env --sh 2>/dev/null | sed '/^export LLVM_PROFILE_FILE=/d')\"; \
     if [ -n \"${CARGO_LLVM_COV_TARGET_DIR:-}\" ]; then \
-    export CARGO_TARGET_DIR=\"$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target\" LLVM_PROFILE_FILE=mutant-%p-%m.profraw; fi; \
+    export CARGO_TARGET_DIR=\"$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target\"; fi; \
     cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --baseline skip \
     --output \"$SLIMFIT_OUT\"";
 

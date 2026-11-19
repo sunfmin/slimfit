@@ -179,9 +179,12 @@ every test, below).
   builds into `$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target`, the directory
   `cargo llvm-cov nextest` built the test run in, at the same path and
   with the same flags: only the workspace crates the mutant's copy names
-  anew compile. Each mutant's tests write their profiles into the copy
-  (`LLVM_PROFILE_FILE` relative), which cargo-mutants deletes. When
-  `show-env` gives nothing, the build is cold, as before.
+  anew compile. show-env's `LLVM_PROFILE_FILE` (the test run's target
+  directory) is left out: each mutant's tests keep the one they had
+  (unset in an agent's shell, so their profiles land in the copy, which
+  cargo-mutants deletes; in slimfit's own tests, the test's, so the
+  shim's coverage still counts). When `show-env` gives nothing, the
+  build is cold, as before.
 - **What it costs.** The mutants' builds leave the test run's directory
   holding the workspace crates of the copy: the next test run recompiles
   them (35s at background priority on factorium) and measures the same
