@@ -8,11 +8,15 @@ use std::collections::BTreeMap;
 pub struct TestCase {
     /// `classname::name` when the report has a class, else `name`.
     pub id: String,
+    /// Its duration as the report gives it: wall time, which a busy host
+    /// stretches. A mutant's timeout for the test is set from it (ADR 0007).
     pub seconds: f64,
     pub passed: bool,
-    /// When it started, in seconds since the Unix epoch, when the report says.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<f64>,
+    /// The CPU time (user + sys) its own processes spent: what
+    /// `test_seconds` and slow-test tasks count (ADR 0009). 0 as a report
+    /// is read; the measurement sets it.
+    #[serde(default)]
+    pub cpu: f64,
 }
 
 /// Line hits per file, plus the functions the report names (some formats
@@ -61,8 +65,8 @@ pub struct Metrics {
     pub test_lines: u64,
     pub tests: u64,
     pub failures: u64,
-    /// Sum of the tests' own durations: independent of build time and of
-    /// how many run in parallel.
+    /// The tests' CPU time: what it counts is the `test_seconds` bound's
+    /// help (`ratchet::Bound`), its one home.
     pub test_seconds: f64,
     pub covered_lines: u64,
     pub uncovered_lines: u64,
@@ -134,26 +138,12 @@ pub struct SuiteMeasurement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutated: Option<Mutated>,
     pub command_seconds: f64,
-    /// How much the host's load slowed the test command: the tests'
-    /// durations are divided by it (ADR 0003).
-    pub load_slowdown: f64,
-    /// The host's 1-minute load per core as the test command started. Above
-    /// `load::BUSY` a `test_seconds` over its bound is unchecked (ADR 0003).
-    #[serde(default)]
-    pub host_load: f64,
     /// The test run ran inside a `--mutants` run, at background priority by
     /// the rule: its `test_seconds` is not what a gate measures, so it is
     /// neither checked nor ratcheted. A plain `check` of the tree runs the
     /// tests again and keeps the mutants.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub untimed: bool,
-}
-
-impl SuiteMeasurement {
-    /// The host was too busy for the load correction to hold (ADR 0003).
-    pub fn busy(&self) -> bool {
-        self.host_load > crate::load::BUSY
-    }
 }
 
 /// Which tests ran which functions, from a test run that gives every test a

@@ -1,5 +1,8 @@
 # 3. test_seconds is normalised by the host's load, measured by a probe
 
+Superseded by `0009-test-seconds-is-cpu-time.md`: `test_seconds` is the
+tests' CPU time, and the probe is gone.
+
 ## Context
 
 `slimfit check` holds `test_seconds` (the sum of the tests' durations as the

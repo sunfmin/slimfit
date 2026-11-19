@@ -1,6 +1,0 @@
-# The CPU-hog test loads every core for as long as it runs. Beside other
-# tests it slowed them by half, by more than the load probe corrects
-# (slimfit#16), and they slowed its own unloaded run. It runs alone.
-[[profile.default.overrides]]
-filter = 'test(a_cpu_hog_leaves_the_normalised_time_within_tolerance)'
-threads-required = 'num-test-threads'

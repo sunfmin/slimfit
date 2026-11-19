@@ -65,7 +65,7 @@ the same verdicts, 5 caught, 12 unviable, 0 missed:
 - **Each test under its own timeout.** The shim gives each test it runs
   nextest's `slow-timeout = { period = T, terminate-after = 1 }`, T =
   `TIMEOUT_FLOOR` 5s + `TIMEOUT_FACTOR` 5 × its duration in the test run
-  (JUnit `time`, the load taken out, ADR 0003). nextest ends a test that
+  (JUnit `time`: wall time, as the timeout is). nextest ends a test that
   runs past it and reports it failed (`TIMEOUT`), so the mutant is caught,
   as cargo-mutants counts its own timeout.
 - **No baseline run.** The preset passes `--baseline skip`: slimfit's own

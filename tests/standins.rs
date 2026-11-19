@@ -19,6 +19,8 @@ use std::process::Command;
 struct Lang {
     name: &'static str,
     test_tools: &'static [&'static str],
+    /// The build command's steps, run before the test command's.
+    build_steps: &'static [&'static str],
     test_steps: &'static [&'static str],
     /// Steps after the test run that read each test's own profile, sorted:
     /// their report is optional (without it every mutant runs every test).
@@ -31,6 +33,7 @@ struct Lang {
 const RUST: Lang = Lang {
     name: "rust",
     test_tools: &["cargo"],
+    build_steps: &[],
     test_steps: &["cargo llvm-cov"],
     reach_steps: &[
         "llvm-cov export",
@@ -49,6 +52,7 @@ const RUST: Lang = Lang {
 const GO: Lang = Lang {
     name: "go",
     test_tools: &["go"],
+    build_steps: &["go test"],
     test_steps: &["go test"],
     reach_steps: &[],
     mutants_tool: "gremlins",
@@ -58,6 +62,7 @@ const GO: Lang = Lang {
 const TYPESCRIPT: Lang = Lang {
     name: "typescript",
     test_tools: &["npx"],
+    build_steps: &[],
     test_steps: &["npx vitest"],
     reach_steps: &[],
     mutants_tool: "npx",
@@ -67,6 +72,7 @@ const TYPESCRIPT: Lang = Lang {
 const KOTLIN: Lang = Lang {
     name: "kotlin",
     test_tools: &["gradlew"],
+    build_steps: &["gradlew test"],
     test_steps: &["gradlew test"],
     reach_steps: &[],
     mutants_tool: "gradlew",
@@ -76,6 +82,7 @@ const KOTLIN: Lang = Lang {
 const SWIFT: Lang = Lang {
     name: "swift",
     test_tools: &["swift", "xcrun"],
+    build_steps: &["swift build"],
     test_steps: &["swift test", "xcrun llvm-cov"],
     reach_steps: &[],
     mutants_tool: "muter",
@@ -357,12 +364,16 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let init = s.ok(&["init"]);
     // The test run's steps in order; its tests' profiles are read in parallel, in any order.
     let mut steps = s.steps();
-    steps[lang.test_steps.len()..].sort();
-    assert_eq!(steps, [lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
+    steps[lang.build_steps.len() + lang.test_steps.len()..].sort();
+    assert_eq!(steps, [lang.build_steps, lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
+    // Rust's runner records each test's CPU time, as many as it ran; the
+    // others' test commands record none.
+    let records = std::fs::read_dir(s.repo.join(".slimfit/out").join(lang.name).join("test-cpu")).unwrap().count();
+    assert_eq!(records, if lang.name == "rust" { 4 } else { 0 }, "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
-        // What the dry run said it would write, but for `test_seconds` (the
-        // host's load moves it).
+        // What the dry run said it would write, but for `test_seconds` (CPU
+        // time differs from run to run).
         let would = &dry["would_write"];
         for f in [".gitignore", "slimfit.toml"] {
             assert_eq!(s.read(f), would[f], "{}: {f}", lang.name);
