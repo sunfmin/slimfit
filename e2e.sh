@@ -69,6 +69,10 @@ for lang in $langs; do
     continue
   fi
   dir="$work/$lang"
+  # What slimfit answers goes outside the sample: a file in its tree would
+  # change the tree, and so miss the measurement cached for it.
+  out="$work/$lang.out"
+  mkdir "$out"
   cp -R "testdata/$lang" "$dir"
   (
     cd "$dir"
@@ -76,22 +80,22 @@ for lang in $langs; do
     [ "$lang" = typescript ] && npm ci --silent >/dev/null 2>&1
     git init -q && git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm sample
     start=$(date +%s)
-    "$bin" init >/dev/null 2>init.log || { tail -20 init.log; exit 1; }
+    "$bin" init >/dev/null 2>"$out/init.log" || { tail -20 "$out/init.log"; exit 1; }
     git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit
     "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
     "$bin" check >/dev/null 2>&1
     inject "$lang"
-    if "$bin" check >check.json 2>/dev/null; then
+    if "$bin" check >"$out/check.json" 2>/dev/null; then
       echo "e2e $lang: check passed with an untested function added" >&2
       exit 1
     fi
-    json '[v["metric"] for v in d["verdict"]["violations"]]' <check.json | grep -q uncovered_lines
+    json '[v["metric"] for v in d["verdict"]["violations"]]' <"$out/check.json" | grep -q uncovered_lines
     if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
-      "$bin" check --mutants >change.json 2>change.log && { echo "check --mutants passed the untested function" >&2; exit 1; }
-      json 'd["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <change.json \
-        | grep -qx "\['src/lib.rs'\] True" || { cat change.json; tail -20 change.log; exit 1; }
+      "$bin" check --mutants >"$out/change.json" 2>"$out/change.log" && { echo "check --mutants passed the untested function" >&2; exit 1; }
+      json 'd["mutated"]["rust"]["files"], d["mutated"]["rust"]["change"]["survived"] > 0' <"$out/change.json" \
+        | grep -qx "\['src/lib.rs'\] True" || { cat "$out/change.json"; tail -20 "$out/change.log"; exit 1; }
       grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
-        || { echo "the untested function's mutants ran tests" >&2; tail -20 change.log; exit 1; }
+        || { echo "the untested function's mutants ran tests" >&2; tail -20 "$out/change.log"; exit 1; }
       "$bin" next --all 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
         | grep -q "src/lib.rs" || { echo "no surviving-mutant task in src/lib.rs" >&2; exit 1; }
     fi
