@@ -1,4 +1,0 @@
-# The CPU-hog test asserts timings against the host's load. Under mutants on a
-# busy host it can fail for no mutant's sake and count a kill that is not one
-# (slimfit#15). load.rs's other tests still run.
-additional_cargo_test_args = ["--", "--skip", "a_cpu_hog_leaves_the_normalised_time_within_tolerance"]

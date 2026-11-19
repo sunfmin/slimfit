@@ -6,7 +6,6 @@ mod fixtures;
 mod formats;
 mod git;
 mod landing;
-mod load;
 mod loc;
 mod measure;
 mod model;
@@ -117,7 +116,7 @@ enum Cmd {
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_pick_flag` (the flag that runs one mutant by name; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `build_command` (run first, so the tests' CPU time leaves the build out; empty when the test command builds for itself), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_pick_flag` (the flag that runs one mutant by name; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
@@ -130,7 +129,6 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
-    /// - On a busy host its `test_seconds` comes out high, and the baseline holds it from then on: run it on a quiet host (see [host load](help:host-load)).
     /// - Run again, it keeps `.slimfit/mutants/`: the records there stay.
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init {
@@ -215,7 +213,7 @@ enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held: their tests ran inside `--mutants`, or over the bound on a busy host (see [host load](help:host-load)).
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held: their tests ran inside `--mutants` (see [host load](help:host-load)).
     /// - `landing`: the change the gate holds to a record of its mutants (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `picks` (the picked mutants it ran, {const:PICK}) and `change` (the picks by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
@@ -232,7 +230,6 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
-    /// - `test_seconds` swells on a busy host. slimfit corrects for load, but a violation on a loaded host is worth one `--fresh` run on a quiet one before you chase it (see [host load](help:host-load)).
     /// - A change that only deletes code or tests adds no line: it lists no mutant and needs no record; what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
     /// - A pick's name holds its line and column: an edit above it renames it, and the old name is refused. List again after editing.
     /// - {const:CACHE_PITFALL}
@@ -280,7 +277,6 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
     /// - It runs no mutant, and takes no `--mutants`: mutants run one way, `slimfit check --mutants` at background priority, and `ratchet` reuses that measurement while the tree is unchanged. A second path would run them at the agent's own priority.
     /// - A `ratchet` of a measurement without picks, and without `--no-mutants`, writes no record: the gate's `check` fails on a change that adds source lines until one is committed.
     /// - {const:CACHE_PITFALL}
@@ -451,7 +447,7 @@ fn help() -> Help {
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
-        .constant("BUSY_LOAD", load::BUSY)
+        .constant("BUSY_LOAD", doctor::BUSY)
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)

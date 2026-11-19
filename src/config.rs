@@ -91,6 +91,8 @@ pub struct Overrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excludes: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub test_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests_report: Option<Report<TestsFormat>>,
@@ -142,6 +144,10 @@ pub struct Suite {
     pub excludes: Vec<String>,
     /// Rust keeps unit tests in `#[cfg(test)] mod` blocks inside source files.
     pub inline_tests: bool,
+    /// Builds what `test_command` runs, before it, so the test command's CPU
+    /// time is the tests' (ADR 0010). Empty: the test command builds, or
+    /// records each test's CPU time itself (the Rust preset).
+    pub build_command: String,
     pub test_command: String,
     pub tests_report: Report<TestsFormat>,
     pub coverage_report: Report<CoverageFormat>,
@@ -184,6 +190,9 @@ impl SuiteConfig {
         }
         if let Some(v) = o.excludes {
             s.excludes = v
+        }
+        if let Some(v) = o.build_command {
+            s.build_command = v
         }
         if let Some(v) = o.test_command {
             s.test_command = v
@@ -263,6 +272,7 @@ pub fn preset(p: Preset) -> Suite {
             "**/dist/**",
         ]),
         inline_tests: false,
+        build_command: String::new(),
         test_command: String::new(),
         tests_report: report(TestsFormat::Junit, ""),
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
@@ -276,7 +286,10 @@ pub fn preset(p: Preset) -> Suite {
     match p {
         Preset::Rust => Suite {
             inline_tests: true,
-            test_command: RUST_TEST.replace("{NEXTEST_JUNIT}", NEXTEST_JUNIT).replace("{REACH}", REACH),
+            test_command: RUST_TEST
+                .replace("{NEXTEST_JUNIT}", NEXTEST_JUNIT)
+                .replace("{REACH}", REACH)
+                .replace("{TEST_CPU}", TEST_CPU),
             tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
             reach_report: report(ReachFormat::Lcov, &format!("$SLIMFIT_OUT/{REACH}")),
             // nextest stops a mutant's tests at its first failure: only whether a
@@ -292,7 +305,10 @@ pub fn preset(p: Preset) -> Suite {
             ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
         },
         Preset::Go => Suite {
-            test_command: "go test -json -coverprofile=\"$SLIMFIT_OUT/cover.out\" ./... > \"$SLIMFIT_OUT/test.json\"".into(),
+            // Builds the test binaries as the test run does (coverage on), and
+            // runs none of their tests. `-count=1`: a cached result spent no CPU.
+            build_command: "go test -cover -run '^$' ./... > /dev/null".into(),
+            test_command: "go test -count=1 -json -coverprofile=\"$SLIMFIT_OUT/cover.out\" ./... > \"$SLIMFIT_OUT/test.json\"".into(),
             tests_report: report(TestsFormat::GoTestJson, "$SLIMFIT_OUT/test.json"),
             coverage_report: report(CoverageFormat::GoCover, "$SLIMFIT_OUT/cover.out"),
             mutants_command: "gremlins unleash --timeout-coefficient 10 --output \"$SLIMFIT_OUT/gremlins.json\"".into(),
@@ -300,6 +316,7 @@ pub fn preset(p: Preset) -> Suite {
             ..base(&["**/*.go"], &["**/*_test.go", "**/testdata/**"])
         },
         Preset::Swift => Suite {
+            build_command: "swift build --build-tests --enable-code-coverage".into(),
             // XCTest writes xunit only with --parallel; one worker keeps per-test times.
             // .build/debug is a symlink, so find needs the trailing slash.
             test_command: format!(
@@ -314,7 +331,10 @@ pub fn preset(p: Preset) -> Suite {
             ..base(&["Sources/**/*.swift"], &["Tests/**"])
         },
         Preset::Kotlin => Suite {
-            test_command: "./gradlew --quiet test koverXmlReport --continue".into(),
+            // No daemon: the tests then run in this command's process tree,
+            // where their CPU time is counted (ADR 0010).
+            build_command: "./gradlew --quiet --no-daemon testClasses".into(),
+            test_command: "./gradlew --quiet --no-daemon test koverXmlReport --continue".into(),
             tests_report: report(TestsFormat::Junit, &format!("**/{GRADLE_TEST_RESULTS}/*.xml")),
             coverage_report: report(CoverageFormat::Jacoco, &format!("**/{KOVER_XML}")),
             mutants_command: "./gradlew --quiet pitest".into(),

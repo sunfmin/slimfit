@@ -25,7 +25,7 @@ pub enum Kind {
     WholeCodebaseMutants,
     /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change to a record of its mutants, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
     NoTarget,
-    /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what is measured now runs slow and its wall times are skewed. Fix: measure when the host is quiet, or at `nice -n 19`.
+    /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what runs now runs slow, so wall times measured now (a gate's, a mutants run's) are high. `test_seconds` is CPU time and barely moves. Fix: time costs when the host is quiet.
     HostBusy,
     /// A tool a suite's commands run is not installed on this host: the command that needs it fails. Fix: install it as the finding says.
     ToolMissing,
@@ -62,9 +62,20 @@ pub struct Host {
     pub jdk: bool,
 }
 
+/// The 1-minute load per core above which the host is busy.
+pub const BUSY: f64 = 0.5;
+
+/// The host's 1-minute load average, and its core count.
+fn load() -> (f64, usize) {
+    let mut load = [0f64; 3];
+    // SAFETY: `load` has room for the 3 samples asked for.
+    let n = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+    (if n >= 1 { load[0] } else { 0.0 }, std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+
 impl Host {
     pub fn current() -> Host {
-        let (load, cores) = crate::load::host();
+        let (load, cores) = load();
         let path = tool_path();
         let jdk = jdk(&path);
         Host { load, cores, path, jdk }
@@ -211,15 +222,13 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
             )),
         }
     }
-    let busy = host.cores as f64 * crate::load::BUSY;
+    let busy = host.cores as f64 * BUSY;
     if host.load > busy {
         out.push(finding(
             Kind::HostBusy,
             None,
-            format!("the 1-minute load is {:.1} on {} cores: anything measured now runs slow", host.load, host.cores),
-            format!(
-                "measure when `uptime`'s load is below {busy}; meanwhile run slimfit at `nice -n 19` and don't ratchet test_seconds from it"
-            ),
+            format!("the 1-minute load is {:.1} on {} cores: anything run now runs slow", host.load, host.cores),
+            format!("time a gate or a mutants run when `uptime`'s load is below {busy}"),
         ));
     }
     out.extend(tools(&suites, host));
@@ -332,7 +341,12 @@ fn tools(suites: &[Suite], host: &Host) -> Vec<Finding> {
     let mut out = Vec::new();
     for s in suites {
         let mut seen = Vec::new();
-        for (command, what) in [(&s.test_command, "test command"), (&s.mutants_command, "mutants command")] {
+        let commands = [
+            (&s.build_command, "build command"),
+            (&s.test_command, "test command"),
+            (&s.mutants_command, "mutants command"),
+        ];
+        for (command, what) in commands {
             for t in TOOLS.iter().filter(|t| command.contains(t.needle)) {
                 let name = t.exe.unwrap_or("a JDK");
                 let found = t.exe.map_or(host.jdk, |e| host.has(e));

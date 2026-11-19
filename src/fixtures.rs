@@ -72,6 +72,8 @@ fn measure_with_coverage(
     // The Rust sample's test run also records which functions each test ran.
     let reach =
         (p == Preset::Rust).then(|| formats::read_reach(ReachFormat::Lcov, &here(read(lang, &["reach.txt"]))).unwrap());
+    // The tests' CPU time as their wall time: the sample's reports hold no other.
+    let tree_cpu = t.iter().map(|t| t.seconds).sum();
     reduce(
         &suite,
         &totals,
@@ -80,7 +82,7 @@ fn measure_with_coverage(
         c,
         reach,
         Some(m.into()),
-        Timing { command_seconds: 0.0, slowdown: 1.0, host_load: 0.0, started: 0.0 },
+        Timing { command_seconds: 0.0, tree_cpu, test_cpu: Default::default() },
     )
 }
 
@@ -96,7 +98,7 @@ fn assert_the_five_situations(s: &SuiteMeasurement, source: &str, adult_line: u3
     assert!(kinds.contains(&TaskKind::Uncovered));
 
     let slow = s.tests.iter().find(|t| t.id.to_lowercase().contains("slow")).expect("slow test");
-    assert!(slow.seconds >= 0.5, "{}: slow test timed: {slow:?}", s.suite);
+    assert!(slow.cpu >= 0.5, "{}: slow test timed: {slow:?}", s.suite);
     assert!(tasks.iter().any(|t| t.kind == TaskKind::SlowTest && t.summary.contains(&slow.id)));
 
     let adult_survivor =

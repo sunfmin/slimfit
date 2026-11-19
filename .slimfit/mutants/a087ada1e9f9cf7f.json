@@ -1,0 +1,32 @@
+{
+  "tree": "1edf7ec384e38deb875929d7731c5a8387aa3dba+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure.rs:339:35: replace - with + in measure_suite",
+        "why": "the tree's CPU time leaves out what ran before the test command (the build)",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:331:8: delete ! in measure_suite",
+        "why": "a suite's build_command runs, before the tests, only when set",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:380:51: replace += with -= in read_test_cpu",
+        "why": "a retried test spent the sum of its runs' CPU",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:749:47: replace > with >= in reduce",
+        "why": "tests with no wall time share the tree's CPU evenly, not as 0/0",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:316:61: replace >= with < in slow",
+        "why": "slow-test tasks are the tests over 0.5s of CPU",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
