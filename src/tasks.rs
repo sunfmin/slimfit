@@ -41,10 +41,9 @@ pub enum TaskKind {
 impl TaskKind {
     /// The command that must pass after a task of this kind is done.
     pub fn accept(self) -> &'static str {
-        match self {
-            TaskKind::SurvivingMutant => "slimfit check --mutants <its picks> --why <why>...",
-            _ => "slimfit check",
-        }
+        // Every kind's: the change it makes then picks its own mutants, as
+        // any change that adds source lines does (a pick-mutants task).
+        "slimfit check"
     }
 
     /// Every accept command, each once, in the order of the kinds.
@@ -352,18 +351,9 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
                     If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
                     The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
                 .into(),
-            accept: accept_picks(s),
+            accept: TaskKind::SurvivingMutant.accept().into(),
         })
         .collect()
-}
-
-/// The command that runs the suite's picks again, as they were picked.
-fn accept_picks(s: &SuiteMeasurement) -> String {
-    let quoted = |t: &str| format!("'{}'", t.replace('\'', "'\\''"));
-    let picks = s.mutated.as_ref().map(|m| m.picks.as_slice()).unwrap_or_default();
-    let names: Vec<String> = picks.iter().map(|p| quoted(&p.name)).collect();
-    let whys: Vec<String> = picks.iter().map(|p| quoted(&p.why)).collect();
-    format!("slimfit check --mutants {} --why {}", names.join(" "), whys.join(" "))
 }
 
 /// Source files that keep changing and are big: where a deeper module pays
