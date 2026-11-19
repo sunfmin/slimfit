@@ -12,15 +12,15 @@ use std::path::PathBuf;
 /// You (the agent) change code; slimfit measures each change and ratchets the result. Never argue with a number: change the code until `slimfit check` passes. Run `slimfit <command> --help` before a command's first run. Your judgment calls are yours; slimfit checks that you made them, not that they were right. What matters most, first:
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
-/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: you, the agent that made the change, pick the few worth running. `slimfit check --mutants` lists the change's mutants (nothing builds); read your change and pick at most {const:PICKS_MAX}, on the decisions it makes; run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet` records the picks, why, and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When nothing in it is worth a mutant, `slimfit ratchet --no-mutants "<why>"` records that instead. The guarantee is your picks, not every mutant: the gate holds only that a record exists, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no record (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
+/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker picks at most {const:PICKS_MAX}; you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
 /// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike.
 ///
 /// ## The loop
 ///
 /// 1. `slimfit next`: one task, with its kind, evidence, files, steps and accept command.
 /// 2. Do exactly that task, nothing else.
-/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}). When the change adds source lines, also pick and run its mutants, at background priority (rule 2; `slimfit next` gives that as a `pick-mutants` task).
-/// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json` (and, after `--mutants <name>...` or with `--no-mutants "<why>"`, write the change's record in `.slimfit/mutants/`: the gate's `check` fails without it, see [what the gate holds](help:mutants-scope)).
+/// 3. Run the task's accept command ({const:ACCEPT_COMMANDS}). When the change adds source lines, also have a second agent pick its mutants, and run them at background priority (rule 2; `slimfit next` gives that as a `pick-mutants` task).
+/// 4. `slimfit ratchet`: lock the gain into `.slimfit/baseline.json` (and, after `--mutants <name>...` or with `--no-mutants "<why>"`, with `--picker` and `--author`, write the change's record in `.slimfit/mutants/`: the gate's `check` fails without it, see [what the gate holds](help:mutants-scope)).
 /// 5. Commit the code and `.slimfit/` together (one task, one commit); back to 1.
 ///
 /// When setting up slimfit on a repo or a host, run `slimfit doctor` first and do each finding's `fix`. Before adopting slimfit on a repo, read [costs](help:costs) and [setting up in factorium](help:factorium).
@@ -146,7 +146,7 @@ pub(crate) enum Cmd {
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
     /// - `redundant-test`: `test`, its `seconds`, `lines` (how many source lines it runs) and `other_test`, the test whose lines it overlaps most: one that runs every one of them too, when there is one.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
-    /// - `surviving-mutant`: `source`, who chose the mutants (`author`: picks of the change; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
+    /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
     /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
     ///
@@ -183,7 +183,7 @@ pub(crate) enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change: first with no name, to list the mutants to pick from; then with the picks, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that the change adds a record of them: `unrecorded_mutants` (see [what the gate holds](help:mutants-scope)).
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change: first with no name, to list the mutants a second agent picks from (see [the picker](help:picker)); then with its picks, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that the change adds a record of them: `unrecorded_mutants` (see [what the gate holds](help:mutants-scope)).
     ///
     /// ## What it reads and writes
     ///
@@ -237,11 +237,11 @@ pub(crate) enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). On a change that adds source lines, run your picks of its mutants first, `slimfit check --mutants <name>... --why <why>...` at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants ...`): never in a gate, not as idle work. After it passes, it reuses that measurement and writes the change's record in a file of its own in `.slimfit/mutants/`: commit it with the change, or the gate's `check` fails (see [what the gate holds](help:mutants-scope)). When nothing in the change is worth a mutant, `--no-mutants "<why>"` writes a record of that instead. A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
+    /// After a task's `accept` command passes, then commit `.slimfit/baseline.json` with the change it records (one task, one commit). On a change that adds source lines, run a second agent's picks of its mutants first (see [the picker](help:picker)), `slimfit check --mutants <name>... --why <why>...` at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants ...`): never in a gate, not as idle work. After it passes, it reuses that measurement and writes the change's record in a file of its own in `.slimfit/mutants/`: commit it with the change, or the gate's `check` fails (see [what the gate holds](help:mutants-scope)). When the picker finds nothing worth a mutant, `--no-mutants "<its why>"` writes a record of that instead. Either record names who picked and who made the change (`--picker`, `--author`). A survivor that changes nothing observable is accepted with `--loosen survived_mutants --reason "<why>"`.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement ran picked mutants, or with `--no-mutants`, it also writes `.slimfit/mutants/<hash>.json`, the change's record: the tree it was made of, and per suite the picks ({const:PICK}), or `none`, the reason none was picked; named by its contents (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement ran picked mutants, or with `--no-mutants`, it also writes `.slimfit/mutants/<hash>.json`, the change's record: the tree it was made of, `picker` and `author` (the ids given), and per suite the picks ({const:PICK}), or `none`, the reason none was picked; named by its contents (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -259,6 +259,7 @@ pub(crate) enum Cmd {
     /// - A bound got worse: `failures` and `unrecorded_mutants` always; any other unless `--loosen` names it.
     /// - `--loosen` without `--reason`; `--loosen failures` (make them pass instead) and `--loosen unrecorded_mutants` (pick and record the mutants instead).
     /// - `--no-mutants` without a one-line reason, or of a measurement that ran picks (their record is the one).
+    /// - A record without `--picker` and `--author` (one line each), or with the two equal: a second agent picks (see [the picker](help:picker)); and either flag with no record to write.
     /// - {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
@@ -282,9 +283,15 @@ pub(crate) enum Cmd {
         /// Measure, and answer what it would write in `would_write`; write nothing (see [dry runs](help:dry-run)).
         #[arg(long, verbatim_doc_comment)]
         dry_run: bool,
-        /// Record that nothing in the change is worth a mutant, and why (one line): the record of a change that picks none. No mutant runs.
+        /// Record that nothing in the change is worth a mutant, and why (one line): the picker's answer when it picks none. No mutant runs.
         #[arg(long, value_name = "WHY", verbatim_doc_comment)]
         no_mutants: Option<String>,
+        /// Who picked the mutants this record holds (or said none is worth one): the second agent, by an id its caller gives, such as its session id with harness and model; kept in the record (see [the picker](help:picker)).
+        #[arg(long, value_name = "ID", verbatim_doc_comment)]
+        picker: Option<String>,
+        /// Who made the change, by an id given as `--picker`'s is; kept in the record. It must differ from `--picker`.
+        #[arg(long, value_name = "ID", verbatim_doc_comment)]
+        author: Option<String>,
     },
     /// Records that a candidate is kept as it is: a redundant test, or a file a deepen task proposed. It is not proposed again until it changes as below.
     ///
@@ -346,8 +353,8 @@ pub(crate) enum Cmd {
     /// - `current`: per suite, the metrics measured now: {const:METRICS}.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below) and `mutants_survival` (per source of the mutants that ran by then, `author` for the picks in records and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
-    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is an `author` rate far below the `sampled` one in `mutants_survival`.
+    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
+    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is a `picker` rate far below the `sampled` one in `mutants_survival`.
     /// - `next`: `slimfit next`.
     ///
     /// ## What it may refuse
@@ -399,6 +406,11 @@ struct HostLoad;
 #[topic(name = "mutants-scope")]
 struct MutantsScope;
 
+#[doc = include_str!("help/picker.md")]
+#[derive(Topic)]
+#[topic(name = "picker")]
+struct PickerTopic;
+
 #[doc = include_str!("help/sample.md")]
 #[derive(Topic)]
 #[topic(name = "sample")]
@@ -421,6 +433,7 @@ fn help() -> Help {
         .topic::<Costs>()
         .topic::<HostLoad>()
         .topic::<MutantsScope>()
+        .topic::<PickerTopic>()
         .topic::<SampleTopic>()
         .topic::<DryRun>()
         .topic::<Factorium>()

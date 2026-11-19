@@ -137,12 +137,15 @@ pub struct Mutated {
     pub change: MutantCounts,
 }
 
-/// Who chose a mutant that ran: the agent that made the change (`author`),
-/// or the random draw of a sample (`sampled`). A task carries it in
-/// `evidence.source`, and `report` tallies survival by it.
+/// Who chose a mutant that ran: a second agent given the change (`picker`,
+/// slimfit#58), the agent that made the change (`author`: records from
+/// before a second agent picked), or the random draw of a sample
+/// (`sampled`). A task carries it in `evidence.source`, and `report`
+/// tallies survival by it.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
+    Picker,
     Author,
     Sampled,
 }
@@ -151,6 +154,7 @@ impl Source {
     /// Its name, as the output writes it.
     pub fn name(self) -> &'static str {
         match self {
+            Source::Picker => "picker",
             Source::Author => "author",
             Source::Sampled => "sampled",
         }

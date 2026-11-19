@@ -644,7 +644,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     assert_eq!(mutants.args.iter().filter(|a| *a == "-F").count(), 3, "{:?}", mutants.args);
-    let ratchet = run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
+    let ratchet =
+        run("ratchet", &["--loosen", "survived_mutants", "--reason", "test", "--picker", "p", "--author", "a"], 0);
     let record = ratchet["record"].as_str().unwrap();
     assert!(record.starts_with(".slimfit/mutants/") && s.repo.join(record).exists(), "{ratchet:#}");
     run("report", &["--points", "1"], 0);

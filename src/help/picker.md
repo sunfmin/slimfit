@@ -1,0 +1,18 @@
+Who picks a change's mutants, and the goal the picker is given. A second agent picks, never the agent that made the change: an author picks what its own tests already hold.
+
+## The goal, as the picker reads it
+
+You are given a change's diff and its mutants, as `slimfit check --mutants` lists them (`candidates`, each with `name`, `file`, `line`, `function` and `replacement`). You did not write the change, and you are given nothing of its author's reasoning. Pick at most {const:PICKS_MAX} of the candidates you think most likely to survive the change's tests: those on the decisions the change makes, such as comparisons, boolean logic, guards, and return values that matter. Skip those that cannot build, such as a body replaced by `Default::default()` for a type with no default. Give one line of why for each pick. Or, when no mutant of the change is worth running, say so, with one line of why. Answer the picks by their exact `name`, each with its why; nothing else.
+
+## How the author asks
+
+1. `slimfit check --mutants` lists the candidates; its `landing.from` (in a plain `slimfit check`'s answer) is where the change starts: `git diff <from>` is its diff.
+2. Hand a second agent exactly three things: this goal (`slimfit help picker`), the diff and the candidates. Not your summary, plan or tests: what it should not see is your reasoning. Name it by an id its caller can give: its session id, with harness and model, e.g. `claude-code:<session>:<model>`. In factorium the worker asks factorium for it (see [setting up in factorium](help:factorium)).
+3. Run its picks as given: `slimfit check --mutants <name>... --why <why>...` at background priority (see [mutants scope](help:mutants-scope)).
+4. `slimfit ratchet --picker <its id> --author <yours>` writes the record, both ids in it; when it picked none, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>`.
+
+A pick that survives fails as `survived_mutants`: the author kills it, with a fast test through the interface or simpler code, before landing; or loosens it with a reason when it changes nothing observable.
+
+## What slimfit holds of it
+
+`ratchet` refuses a record without `--picker` and `--author`, or with the two equal. The gate's plain `check` holds that the change adds a record naming a picker other than its author (see [what the gate holds](help:mutants-scope)). Both ids are the caller's word: slimfit compares them as given, and never re-decides a pick. `slimfit report` tallies the picks' survival by who picked (`picker`, or `author` for records from before a second agent picked) beside the sample's, so a picker that picks only what the tests hold shows as a trend.

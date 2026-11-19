@@ -2,10 +2,10 @@
 
 ## Context
 
-The agent that writes a change also picks its mutants (ADR 0008), so its
-picks may lean toward what its tests already hold: in the first day of
-picks, 110 across four repositories, 0 survived, where the full runs before
-ADR 0008 found survivors. ADR 0009 says where a check of verdicts belongs:
+Picks made by the agent that wrote a change lean toward what its tests
+already hold: of 110 such picks across four repositories, 0 survived,
+where runs of every mutant found survivors (ADR 0008). Even a second
+agent's picks (ADR 0008) are a judgment, and need a measure beside them. ADR 0009 says where a check of verdicts belongs:
 outside the loop, in what `report` shows over time. The owner asked for
 one (slimfit#55).
 
@@ -35,9 +35,10 @@ one (slimfit#55).
   verdict is re-decided (ADR 0006, 0008, 0009 stand).
 - **The tally.** Each `report` history point has `mutants_survival`, a
   map from the source that chose the mutants to `{ran, survived, rate,
-  unviable}`, over the records and samples committed by then. Today the
-  sources are `author` (picks in records) and `sampled`. Another source
-  (slimfit#58's second picker) adds a key; the shape stays the same.
+  unviable}`, over the records and samples committed by then. The
+  sources are `picker` (picks in records that name a picker other than
+  their author, ADR 0008), `author` (picks in records that name no other
+  picker) and `sampled`.
 
 ## Consequences
 

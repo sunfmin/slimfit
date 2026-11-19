@@ -57,16 +57,18 @@ impl Rate {
     }
 }
 
-/// Survival by source over a commit's records (the author's picks) and
-/// samples: each source with a mutant that ran, or `None` when none did.
+/// Survival by source over a commit's records (a second agent's picks, or
+/// the author's, in records naming no other picker) and samples: each
+/// source with a mutant that ran, or `None` when none did.
 fn survival<'a>(files: impl Iterator<Item = (&'a str, &'a str)>) -> Option<BTreeMap<Source, Rate>> {
     let (records, samples) = (format!("{}/", landing::DIR), format!("{}/", sample::DIR));
     let mut out: BTreeMap<Source, Rate> = BTreeMap::new();
     for (p, text) in files.filter(|(p, _)| p.ends_with(".json")) {
         if p.starts_with(&records) {
             let Ok(r) = serde_json::from_str::<Record>(text) else { continue };
+            let by = if r.picked_by_another() { Source::Picker } else { Source::Author };
             for pick in r.picks.values().flatten() {
-                out.entry(Source::Author).or_default().add(pick.outcome);
+                out.entry(by).or_default().add(pick.outcome);
             }
         } else if p.starts_with(&samples) {
             let Ok(s) = serde_json::from_str::<sample::Sample>(text) else { continue };
@@ -196,12 +198,14 @@ mod t {
         };
         commit(&[(ratchet::FILE, r#"{"suites":{"rust":{"tests":3,"uncovered_lines":9}}}"#)]);
         let picked = r#"{"picks":{"rust":[{"name":"m","why":"w","outcome":"killed"}]}}"#;
+        let second = r#"{"picker":"p","author":"a","picks":{"rust":[{"name":"n","why":"w","outcome":"survived"}]}}"#;
         commit(&[
             (
                 ratchet::FILE,
                 r#"{"suites":{"rust":{"tests":2,"test_seconds":1.5,"uncovered_lines":4}},"kept":[{"suite":"rust"},{"suite":"go"}],"kept_files":[{"suite":"rust"},{"suite":"rust"}]}"#,
             ),
             (".slimfit/mutants/a.json", picked),
+            (".slimfit/mutants/e.json", second),
             (".slimfit/mutants/b.json", r#"{"none":"docs only"}"#),
             (".slimfit/mutants/c.json", r#"{"tree":"t"}"#),
             (".slimfit/mutants/d.json", "not a record"),
@@ -223,10 +227,11 @@ mod t {
         );
         assert!(rust.iter().all(|l| l.prod > 0), "{rust:?}");
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
-        assert_eq!(records, [None, None, Some(&Records { with_picks: 1, without_picks: 1, older: 1 })]);
-        // Survival by who chose the mutants, side by side: the author's picks and the sample.
+        assert_eq!(records, [None, None, Some(&Records { with_picks: 2, without_picks: 1, older: 1 })]);
+        // Survival by who chose the mutants, side by side: a second agent's picks, the author's and the sample.
         let survival = serde_json::to_value(&h[2].mutants_survival).unwrap();
         let want = serde_json::json!({
+            "picker": { "ran": 1, "survived": 1, "rate": 1.0, "unviable": 0 },
             "author": { "ran": 1, "survived": 0, "rate": 0.0, "unviable": 0 },
             "sampled": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 1 },
         });

@@ -18,7 +18,7 @@ pub enum TaskKind {
     /// A test fails. Fix it first; nothing else is measured honestly.
     #[value(verbatim_doc_comment)]
     FailingTest,
-    /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Read your change, pick at most {const:PICKS_MAX} of the listed mutants on the decisions it makes, run them, and ratchet; or record why none is worth one.
+    /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
     #[value(verbatim_doc_comment)]
     PickMutants,
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
@@ -30,7 +30,7 @@ pub enum TaskKind {
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
-    /// A mutant no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Its `evidence.source` says who chose it: `author`, a pick of the change, from a `slimfit check --mutants <name>...` of this tree; `sampled`, drawn by `slimfit next --sample` from changes already landed (see [the sample](help:sample)).
+    /// A mutant no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Its `evidence.source` says who chose it: `picker`, a second agent's pick of the change, from a `slimfit check --mutants <name>...` of this tree; `sampled`, drawn by `slimfit next --sample` from changes already landed (see [the sample](help:sample)).
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
     /// A sample's record to commit: `slimfit next --sample` ran it where nothing is committed (idle work), and `slimfit report` reads it only from git. Write `evidence.text` to the file in `files` and commit it, nothing else (see [the sample](help:sample)).
@@ -165,7 +165,7 @@ fn pick_mutants(repo: &Path, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
             Task {
                 kind: TaskKind::PickMutants,
                 summary: format!(
-                    "the change adds {} source line(s) and no record of its mutants: pick the few worth running, of {}",
+                    "the change adds {} source line(s) and no record of its mutants: have a second agent pick the few worth running, of {}",
                     v.current,
                     listed.len()
                 ),
@@ -173,15 +173,17 @@ fn pick_mutants(repo: &Path, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
                 files: files.into_iter().collect(),
                 evidence: json!({ "lines": v.current, "candidates": listed }),
                 steps: format!(
-                    "Read your change. Of `candidates` (what `slimfit check --mutants` lists), pick at most {} on the \
-                     decisions it makes: comparisons, boolean logic, match guards, a function whose return value \
-                     matters. Skip those that cannot build, such as a body replaced by `Default::default()` for a \
-                     type with no default. Run them at background priority: `factorium worker exclusive --background \
-                     -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit \
-                     check ...`), one one-line `--why` per pick. A survivor: assert what it changes with a fast test, \
-                     or, if it changes nothing observable, `slimfit ratchet --loosen survived_mutants --reason \
-                     \"<why>\"`. Then `slimfit ratchet` writes the record. If nothing in the change is worth a mutant, \
-                     `slimfit ratchet --no-mutants \"<why>\"` records that instead. Commit .slimfit/ with the change.",
+                    "Do not pick yourself: you wrote the change, so you would pick what your tests already hold. \
+                     Ask a second agent, giving it only the goal (`slimfit help picker`), the change's diff and \
+                     `candidates` (what `slimfit check --mutants` lists); in factorium, as `slimfit help factorium` \
+                     says. It answers at most {} picks, each with a why, or why none is worth one. Run its picks at \
+                     background priority: `factorium worker exclusive --background -- slimfit check --mutants \
+                     <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit check ...`). A survivor: assert \
+                     what it changes with a fast test through the interface, or simplify the code; if it changes \
+                     nothing observable, `slimfit ratchet --loosen survived_mutants --reason \"<why>\"`. Then \
+                     `slimfit ratchet --picker <its id> --author <yours>` writes the record; when it picked none, \
+                     `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`. Commit \
+                     .slimfit/ with the change.",
                     crate::measure::PICKS_MAX
                 ),
                 accept: TaskKind::PickMutants.accept().into(),
@@ -341,7 +343,7 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
     for m in s.mutants.iter().filter(|m| m.status == MutantStatus::Survived) {
         by_file.entry(&m.file).or_default().push(json!({ "line": m.line, "mutant": m.description }));
     }
-    survivors(&s.suite, by_file, Source::Author)
+    survivors(&s.suite, by_file, Source::Picker)
 }
 
 /// The surviving-mutant tasks of `by_file`'s survivors (each with its
