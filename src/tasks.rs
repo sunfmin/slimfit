@@ -21,13 +21,13 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test that runs no source line another test does not run too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
-    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs `--mutants`.
+    /// A change to the code no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Needs a `slimfit check --mutants` of this tree first.
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
     /// A big file that keeps changing. Load the codebase-design and improve-codebase-architecture skills; design the deeper interface first, then move to it one passing step at a time.
@@ -241,7 +241,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                 kind: TaskKind::RedundantTest,
                 suite: s.suite.clone(),
                 summary: if within {
-                    format!("{t} runs no line {other} does not run too ({} lines)", mine.len())
+                    format!("{other} runs every line {t} runs ({} lines)", mine.len())
                 } else {
                     format!("{t} shares {:.0}% of its lines past the suite's shared setup with {other}", share * 100.0)
                 },

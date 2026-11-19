@@ -8,7 +8,7 @@ Which mutants `--mutants` runs, which survivors it holds, and what the gate hold
 - One that changes nothing observable is accepted with `slimfit ratchet --loosen survived_mutants --reason "<why>"`.
 - Surviving-mutant tasks come only from these runs: survivors of the change, never of the whole suite.
 
-A change that only deletes code or tests adds no line, so it runs no mutant: what a deleted test killed in unchanged code is not seen. A test changed outside source files likewise.
+A change that only deletes code or tests adds no line, so it runs no mutant: what a deleted test killed in unchanged code is not seen. Likewise a change to a test file alone: it adds no source line, so it runs no mutant, and what the changed test now catches or misses is not measured.
 
 The output's `mutated` says, per suite, the source files that hold changed lines (`files`) and the changed lines' mutants by outcome (`change`).
 

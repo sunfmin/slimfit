@@ -172,8 +172,8 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - Without `--mutants` there are no surviving-mutant tasks: `notes` says so. `--mutants` costs what [costs](help:costs) says: run it on your own change at background priority, never in a gate, not as idle work.
-    /// - `--mutants` runs only the mutants of the changed lines, so surviving-mutant tasks name only the survivors there; nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants` of this same tree, the one way mutants run (on your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
+    /// - Surviving-mutant tasks name only survivors in the changed lines: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
     /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
@@ -186,9 +186,6 @@ enum Cmd {
         /// Only tasks of this kind.
         #[arg(long, value_enum, verbatim_doc_comment)]
         kind: Option<tasks::TaskKind>,
-        /// Measure the mutants of the changed lines too: tasks from what they show (see [mutants scope](help:mutants-scope)).
-        #[arg(long, verbatim_doc_comment)]
-        mutants: bool,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -272,7 +269,8 @@ enum Cmd {
     /// ## What trips you up
     ///
     /// - `test_seconds` only moves down, so a baseline set on a quiet host holds; but `--loosen test_seconds` on a busy host loosens it to the busy number. Loosen time only from a `--fresh` run on a quiet host (see [host load](help:host-load)).
-    /// - A plain `ratchet` records no measured line: the change stays to be measured by `--mutants`, and the gate's `check` fails until it is.
+    /// - It runs no mutant, and takes no `--mutants`: mutants run one way, `slimfit check --mutants` at background priority, and `ratchet` reuses that measurement while the tree is unchanged. A second path would run them at the agent's own priority.
+    /// - A `ratchet` of a measurement without mutants records no measured line: the change stays to be measured by `slimfit check --mutants`, and the gate's `check` fails until it is.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Ratchet {
@@ -284,9 +282,6 @@ enum Cmd {
         /// Why the bound may rise, kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
-        /// Measure the mutants of the changed lines first, as `slimfit check --mutants` does.
-        #[arg(long, verbatim_doc_comment)]
-        mutants: bool,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -492,7 +487,19 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
     if args.iter().any(|a| a == "--all-mutants") {
         return Err(fault::fault(
             "`--all-mutants` is gone: slimfit never mutates the whole codebase",
-            "measure the change's mutants instead: `slimfit check --mutants` (`slimfit next --mutants` for its tasks)",
+            "measure the change's mutants instead: `slimfit check --mutants` (then `slimfit next` for its tasks)",
+        ));
+    }
+    if let Some(cmd) = args.iter().skip(1).find(|a| *a == "next" || *a == "ratchet")
+        && args.iter().any(|a| a == "--mutants")
+    {
+        return Err(fault::fault(
+            format!("`{}` takes no `--mutants`: mutants run one way, `slimfit check --mutants`", cmd.display()),
+            format!(
+                "run `slimfit check --mutants` on your change at background priority; `slimfit {}` then reuses \
+                 that measurement of the same tree",
+                cmd.display()
+            ),
         ));
     }
     // `--help`, `-h` and `help` too: clap prints the manual's answer, on stdout.
@@ -574,10 +581,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Next { all, kind, mutants, fresh, .. } => {
+        Cmd::Next { all, kind, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
-            let m =
-                measure::current(&repo, &cfg, &measure::Options { mutants: scope(mutants), fresh, dry_run: false })?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false },
+            )?;
             let mut list = tasks::all(&repo, &cfg, &m, &base.kept)?;
             if let Some(k) = kind {
                 list.retain(|t| t.kind == k);
@@ -590,8 +600,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut notes = Vec::new();
             if !m.with_mutants {
                 notes.push(
-                    "mutants not measured: surviving-mutant tasks need `slimfit next --mutants`, which runs the \
-                     change's mutants"
+                    "mutants not measured: surviving-mutant tasks need `slimfit check --mutants` of this tree first \
+                     (at background priority); `slimfit next` then reads its survivors"
                         .to_string(),
                 );
             }
@@ -605,7 +615,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 if m.with_mutants {
                     "nothing left to do: the codebase is at its fittest by these measures"
                 } else {
-                    "slimfit next --mutants"
+                    "slimfit check --mutants (at background priority), then `slimfit next`"
                 }
             } else {
                 "do the task, then run its accept command, then `slimfit ratchet` and commit"
@@ -640,9 +650,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 code,
             ))
         }
-        Cmd::Ratchet { loosen, reason, mutants, fresh, dry_run, .. } => {
+        Cmd::Ratchet { loosen, reason, fresh, dry_run, .. } => {
             let (cfg, old) = loaded(&repo)?;
-            let m = measure::current(&repo, &cfg, &measure::Options { mutants: scope(mutants), fresh, dry_run })?;
+            let m =
+                measure::current(&repo, &cfg, &measure::Options { mutants: measure::Mutants::None, fresh, dry_run })?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             // The lines a mutants run measured, recorded apart from the baseline.
             let mut measured = landing::Hashes::new();
@@ -1056,7 +1067,9 @@ mod answer_tests {
             std::fs::write(p, old + text).unwrap();
         };
         let measure = |branch: &str| {
-            let (out, code) = slimfit(repo, "ratchet --mutants --loosen survived_mutants --reason equivalent").unwrap();
+            // Mutants run one way, `check --mutants`; `ratchet` reuses it.
+            slimfit(repo, "check --mutants").unwrap();
+            let (out, code) = slimfit(repo, "ratchet --loosen survived_mutants --reason equivalent").unwrap();
             assert!(code == 0 && out["measured"].as_str().unwrap().starts_with(".slimfit/mutants/"), "{out:#}");
             git(repo, &["add", "-A"]);
             git(repo, &["commit", "-qm", branch]);

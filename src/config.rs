@@ -219,6 +219,22 @@ impl SuiteConfig {
 /// The Rust preset's test command: a profile per test beside the merged
 /// coverage, and which functions each test ran (ADR 0007).
 const RUST_TEST: &str = include_str!("presets/rust-test.sh");
+/// The Rust preset's mutants command. cargo-mutants builds each mutant in a
+/// copy of the tree with no `target`, so its first build compiled every
+/// dependency (94-115s on factorium). `cargo llvm-cov show-env` gives the
+/// environment the test run built with (its rustc wrapper and flags), and
+/// the build goes to the test run's own target directory: a target at the
+/// same path, built the same way, keeps every crate but the mutated ones
+/// fresh (9-11s; ADR 0007). Without that environment (show-env failed) it
+/// builds cold, as before. show-env's `LLVM_PROFILE_FILE` (the test run's
+/// target directory) is left out: a mutant's test processes keep the one
+/// they had, unset in an agent's shell, so they write their profiles in
+/// the copy, which cargo-mutants deletes.
+const RUST_MUTANTS: &str = "eval \"$(cargo llvm-cov show-env --sh 2>/dev/null | sed '/^export LLVM_PROFILE_FILE=/d')\"; \
+    if [ -n \"${CARGO_LLVM_COV_TARGET_DIR:-}\" ]; then \
+    export CARGO_TARGET_DIR=\"$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target\"; fi; \
+    cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --baseline skip \
+    --output \"$SLIMFIT_OUT\"";
 
 fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -265,10 +281,10 @@ pub fn preset(p: Preset) -> Suite {
             reach_report: report(ReachFormat::Lcov, &format!("$SLIMFIT_OUT/{REACH}")),
             // nextest stops a mutant's tests at its first failure: only whether a
             // mutant is caught is read (ADR 0006). No baseline: the test run
-            // already showed the tree green (ADR 0007).
-            mutants_command: "cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest \
-                --baseline skip --output \"$SLIMFIT_OUT\""
-                .into(),
+            // already showed the tree green (ADR 0007). Each mutant builds as the
+            // test run built, into its target directory, so only the mutated
+            // crates compile: no cold first build (ADR 0007, slimfit#35).
+            mutants_command: RUST_MUTANTS.into(),
             mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{CARGO_MUTANTS_OUTCOMES}")),
             mutants_diff_flag: "--in-diff".into(),
             mutants_tests: MutantTests::Reached,

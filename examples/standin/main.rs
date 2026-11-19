@@ -49,7 +49,8 @@ fn main() {
         "gradlew" => "gradlew test".to_string(),
         _ => format!("{tool} {sub}"),
     };
-    state.calls.push(Call { step: step.clone(), args: args.to_vec(), dir: dir.clone() });
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+    state.calls.push(Call { step: step.clone(), args: args.to_vec(), dir: dir.clone(), target_dir });
     state.save(&path);
     drop(lock);
     let fault = state.faults.get(&step).copied().unwrap_or_default();
@@ -136,12 +137,17 @@ fn sub_is(sub: &str, want: &str) -> Result<(), Refusal> {
     if sub == want { Ok(()) } else { Err(format!("no subcommand {sub:?}")) }
 }
 
-/// `cargo llvm-cov nextest` and `cargo mutants`.
+/// `cargo llvm-cov nextest`, `cargo llvm-cov show-env` and `cargo mutants`.
 fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
     match sub {
+        // The environment the test run builds with, as the mutants command reads it.
+        "llvm-cov" if args.get(1).map(String::as_str) == Some("show-env") => {
+            has(args, "--sh")?;
+            Ok(Work { stdout: Some("show-env.sh".into()), ..Work::default() })
+        }
         "llvm-cov" => {
             if args.get(1).map(String::as_str) != Some("nextest") {
-                return Err("only `llvm-cov nextest` stands in".into());
+                return Err("only `llvm-cov nextest` and `llvm-cov show-env` stand in".into());
             }
             has(args, "--lcov")?;
             let lcov = need(args, "--output-path")?;

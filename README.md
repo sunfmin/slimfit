@@ -30,7 +30,7 @@ Mutants run only on a change: `--mutants` runs the mutants of the lines a branch
 
 - `./gate.sh`: the fast gate (fmt, clippy, slimfit checking itself). Its tests run every preset end to end against stand-ins for the tools (`tests/standins.rs`, `examples/standin/`), so they need no toolchain but Rust.
 - `./slow.sh`: the fast gate. `E2E_LANGS="rust go" ./slow.sh` also runs those languages' real toolchains end to end; `E2E_LANGS=all ./slow.sh` every language whose toolchain is present; `E2E_MUTANTS=1` adds the Rust sample's mutants of a change.
-- No gate and no commit runs mutation testing on slimfit itself (mutants are never in a gate), and nothing runs every mutant of it. `slimfit check --mutants` measures a change's mutants on request; `slimfit next --mutants` gives the surviving-mutant tasks of a change.
+- No gate and no commit runs mutation testing on slimfit itself (mutants are never in a gate), and nothing runs every mutant of it. `slimfit check --mutants` measures a change's mutants on request; `slimfit next` then gives that change's surviving-mutant tasks from the same measurement.
 - `./e2e.sh [rust|go|typescript|kotlin|swift]...`: the real toolchains end to end on their own; no arguments means every language.
 
 The design decisions are in `docs/adr/`.

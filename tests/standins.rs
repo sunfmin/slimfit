@@ -382,7 +382,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let tasks = next["tasks"].as_array().unwrap();
     assert!(tasks.iter().any(|t| t["kind"] == "uncovered" && t["files"][0] == lang.source), "{}: {next:#}", lang.name);
     if lang.name != "rust" {
-        s.error(&["next", "--mutants"], &["cannot be limited to a change", "never mutates the whole codebase"]);
+        s.error(&["check", "--mutants"], &["cannot be limited to a change", "never mutates the whole codebase"]);
     }
     let check = s.ok(&["check"]);
     if dry {
@@ -440,7 +440,7 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
         if !tools.contains(&lang.mutants_tool) {
             tools.push(lang.mutants_tool);
         }
-        &["next", "--mutants", "--fresh"]
+        &["check", "--mutants", "--fresh"]
     } else {
         &["next", "--fresh"]
     };
@@ -517,6 +517,10 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
     assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
+    // One way to run mutants: `next` and `ratchet` reuse `check --mutants`.
+    for cmd in ["next", "ratchet"] {
+        s.error(&[cmd, "--mutants"], &["takes no `--mutants`", "fix: run `slimfit check --mutants`"]);
+    }
     run("report", &["--points", "1"], 0);
     // Better than the baseline: improved.
     edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
@@ -538,7 +542,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert_eq!((&v["metric"], &held["landing"]["unmeasured"]), (&"unmeasured_mutants".into(), &3.into()), "{held:#}");
     // No nextest to hand on to: every mutant runs every test, and stderr says why.
     s.take();
-    let (_, _, stderr) = s.slimfit(&["next", "--mutants"]);
+    let (_, _, stderr) = s.slimfit(&["check", "--mutants"]);
     assert!(
         stderr.contains("no cargo-nextest on PATH or in cargo's bin directory: every mutant runs every test"),
         "{stderr}"
@@ -565,7 +569,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
         "{plan:#}"
     );
     assert!(s.repo.join(".slimfit/out/rust/shim/cargo-nextest").exists());
-    let next = run("next", &["--all", "--mutants"], 0);
+    // `next` reads the survivors from that cached `check --mutants`: no mutant runs again.
+    let next = run("next", &["--all"], 0);
     assert!(next["tasks"].as_array().unwrap().iter().any(|t| t["kind"] == "surviving-mutant"), "{next:#}");
     assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
     assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
@@ -594,6 +599,10 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let adult = "(binary_id(=calc) & test(=tests::adult))";
     assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
+    // Each mutant builds as the test run built, into its target directory:
+    // no cold first build (ADR 0007).
+    assert!(calls.iter().any(|c| c.step == "cargo llvm-cov" && c.args[1] == "show-env"), "{calls:#?}");
+    assert_eq!(mutants.target_dir, Some(mutants.dir.join("target/llvm-cov-target")), "{mutants:?}");
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     let ratchet = run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
