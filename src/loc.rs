@@ -1,11 +1,14 @@
 //! Which files of a suite are source and which are test, and how many
 //! non-blank lines each side has. Rust's `#[cfg(test)] mod` blocks count as
-//! test lines even though they sit in source files.
+//! test lines even though they sit in source files, and so does every file
+//! of a workspace crate that other members reach only through
+//! `[dev-dependencies]` (`workspace::test_crates`).
 
-use crate::config::Suite;
+use crate::config::{Preset, Suite};
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 pub struct Classifier {
     root: String,
@@ -45,11 +48,16 @@ fn set(globs: &[String]) -> Result<GlobSet> {
 }
 
 impl Classifier {
-    pub fn new(suite: &Suite) -> Result<Self> {
+    /// `repo` is where a Rust suite's Cargo manifests are read.
+    pub fn new(suite: &Suite, repo: &Path) -> Result<Self> {
+        let mut tests = suite.tests.clone();
+        if suite.preset == Preset::Rust {
+            tests.extend(crate::workspace::test_crates(&repo.join(&suite.root)).iter().map(|d| format!("{d}/**")));
+        }
         Ok(Self {
             root: suite.root.trim_end_matches('/').to_string(),
             sources: set(&suite.sources)?,
-            tests: set(&suite.tests)?,
+            tests: set(&tests)?,
             excludes: set(&suite.excludes)?,
             inline_tests: suite.inline_tests,
         })
@@ -217,19 +225,36 @@ mod t {
     use crate::config::{Preset, preset};
 
     fn rust() -> Classifier {
-        Classifier::new(&preset(Preset::Rust)).unwrap()
+        Classifier::new(&preset(Preset::Rust), Path::new(".")).unwrap()
     }
 
     #[test]
     fn classifies_by_globs_and_root() {
         let mut s = preset(Preset::Go);
         s.root = "svc".into();
-        let c = Classifier::new(&s).unwrap();
+        let c = Classifier::new(&s, Path::new(".")).unwrap();
         assert_eq!(c.kind("svc/a.go"), Some(Kind::Source));
         assert_eq!(c.kind("svc/a_test.go"), Some(Kind::Test));
         assert_eq!(c.kind("svc/vendor/x/a.go"), None);
         assert_eq!(c.kind("other/a.go"), None);
         assert_eq!(c.kind("svc/README.md"), None);
+    }
+
+    /// A crate other members reach only through `[dev-dependencies]` is test
+    /// code, as `tests/**` is; one that is also a build-dependency stays prod.
+    #[test]
+    fn a_dev_only_workspace_crate_is_test_code() {
+        let d = tempfile::tempdir().unwrap();
+        crate::workspace::t::workspace(&d.path().join("ws"));
+        let mut s = preset(Preset::Rust);
+        s.root = "ws".into();
+        let c = Classifier::new(&s, d.path()).unwrap();
+        let files: Vec<String> =
+            ["ws/app/src/lib.rs", "ws/crates/support/src/lib.rs", "ws/crates/both/src/lib.rs"].map(String::from).into();
+        let t = c.count(&files, |_| Some("fn a() {}\n\nfn b() {}\n".into()));
+        let kind = |f: &str| t.files[f].0;
+        assert_eq!(files.iter().map(|f| kind(f)).collect::<Vec<_>>(), [Kind::Source, Kind::Test, Kind::Source]);
+        assert_eq!((t.prod, t.test), (4, 2));
     }
 
     #[test]

@@ -14,6 +14,7 @@ mod report;
 mod select;
 mod tasks;
 mod tools;
+mod workspace;
 // build.rs runs it to stamp the version; compiled here too, for its tests and mutants.
 #[cfg_attr(not(test), allow(dead_code))]
 mod version;
@@ -111,7 +112,7 @@ enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. Code already on the branch changes land on is never charged to a mutants run: only the source lines a change adds after it are (see [what the gate holds](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
+    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). A Rust suite counts as test code, besides its `tests` globs and its `#[cfg(test)]` code, every file of a workspace crate that other members of the workspace at the suite's root reach only through `[dev-dependencies]` (none through `[dependencies]` or `[build-dependencies]`): read from the Cargo manifests, never declared again in `slimfit.toml`; for a layout this misses, add globs to the suite's `tests`. It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the loosenings already recorded there. Code already on the branch changes land on is never charged to a mutants run: only the source lines a change adds after it are (see [what the gate holds](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -370,7 +371,7 @@ enum Cmd {
     ///
     /// ## What trips you up
     ///
-    /// - `history` counts lines with today's `slimfit.toml`: a commit from before a suite existed counts it as it is configured now.
+    /// - `history` counts lines with today's `slimfit.toml` (and a Rust suite's test crates by today's Cargo manifests): a commit from before a suite existed counts it as it is configured now.
     /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are the bounds the baseline held at that commit, not a measurement of it; `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]

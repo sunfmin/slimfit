@@ -300,7 +300,7 @@ fn measure_suite(
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
     let out = scratch.join(&suite.name);
-    let classifier = Classifier::new(suite)?;
+    let classifier = Classifier::new(suite, repo)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
     // The tests of this tree already ran: only the mutants are new. Without
@@ -1228,7 +1228,8 @@ pub(crate) mod t {
     fn reach_keys_each_source_function_by_its_first_line() {
         let repo = tempfile::tempdir().unwrap();
         let mut totals = Totals::default();
-        let classifier = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
+        let classifier =
+            Classifier::new(&crate::config::preset(crate::config::Preset::Rust), std::path::Path::new(".")).unwrap();
         let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {\n        a();\n    }\n}\n";
         std::fs::create_dir(repo.path().join("src")).unwrap();
         std::fs::write(repo.path().join("src/a.rs"), text).unwrap();

@@ -116,7 +116,7 @@ pub fn all(repo: &Path, cfg: &Config, m: &Measurement, base: &Baseline) -> Resul
     let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
-        out.extend(deepen(repo, &Classifier::new(&sc.resolve())?, &s.suite, &base.kept_files)?);
+        out.extend(deepen(repo, &Classifier::new(&sc.resolve(), repo)?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -363,7 +363,7 @@ pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(Str
         return Ok(None);
     }
     for sc in &cfg.suites {
-        let c = Classifier::new(&sc.resolve())?;
+        let c = Classifier::new(&sc.resolve(), repo)?;
         if c.kind(path) == Some(Kind::Source) {
             return Ok(Some((sc.name.clone(), c)));
         }
@@ -473,7 +473,8 @@ mod t {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path();
         git(repo, &["init", "-q"]);
-        let c = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
+        let c =
+            Classifier::new(&crate::config::preset(crate::config::Preset::Rust), std::path::Path::new(".")).unwrap();
         let commit = |lines: usize, note: &str| {
             let body: String = (0..lines).map(|i| format!("pub const C{i}: u8 = {};\n", note.len())).collect();
             std::fs::create_dir_all(repo.join("src")).unwrap();
