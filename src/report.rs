@@ -92,7 +92,7 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
     picked.dedup();
     picked.reverse();
     let classifiers: Vec<(String, Classifier)> =
-        cfg.suites.iter().map(|s| Ok((s.name.clone(), Classifier::new(&s.resolve())?))).collect::<Result<_>>()?;
+        cfg.suites.iter().map(|s| Ok((s.name.clone(), Classifier::new(&s.resolve(), repo)?))).collect::<Result<_>>()?;
     let mut out = Vec::new();
     for (commit, date) in picked {
         let ours = |p: &str| p == ratchet::FILE || p.starts_with(landing::DIR);

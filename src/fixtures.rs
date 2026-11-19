@@ -57,7 +57,7 @@ fn measure_with_coverage(
     files_under(&dir, &dir, &mut files);
     let mut suite = preset(p);
     suite.name = lang.into();
-    let totals = Classifier::new(&suite).unwrap().count(&files, |f| std::fs::read_to_string(dir.join(f)).ok());
+    let totals = Classifier::new(&suite, &dir).unwrap().count(&files, |f| std::fs::read_to_string(dir.join(f)).ok());
     // The reports' `/REPO` is the sample's directory, where its files are read.
     let resolver = Resolver::new(&dir, &totals);
     let here = |texts: Vec<String>| -> Vec<String> {

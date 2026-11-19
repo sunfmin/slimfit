@@ -146,7 +146,7 @@ pub fn required(repo: &Path, cfg: &Config, added: &Lines) -> Result<BTreeMap<Str
         if !s.mutates() {
             continue;
         }
-        let totals = Classifier::new(&s)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
+        let totals = Classifier::new(&s, repo)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
         let mut lines = Lines::new();
         for (f, (_, l)) in totals.files.iter().filter(|(_, (k, _))| *k == Kind::Source) {
             let wanted = added[f].iter().filter(|(n, text)| {
@@ -275,5 +275,22 @@ mod t {
             [("sub/a.rs".into(), l(&[(2, "++ z"), (10, "new"), (11, "more")])), ("sub/n.rs".into(), l(&[(1, "n")]))]
                 .into();
         assert_eq!(got, want);
+    }
+
+    /// Lines added to a crate reached only through `[dev-dependencies]` are
+    /// test lines: no mutant is owed for them; a prod crate's lines are.
+    #[test]
+    fn a_test_crate_owes_no_mutants() {
+        let d = tempfile::tempdir().unwrap();
+        crate::workspace::t::workspace(d.path());
+        let added: Lines = ["crates/support/src/lib.rs", "crates/core/src/lib.rs"]
+            .map(|f| {
+                crate::workspace::t::write(d.path(), &[(f, "fn a() {}\n")]);
+                (f.to_string(), [(1, "fn a() {}".to_string())].into())
+            })
+            .into();
+        let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
+        let got = required(d.path(), &cfg, &added).unwrap();
+        assert_eq!(got["rust"].keys().collect::<Vec<_>>(), ["crates/core/src/lib.rs"]);
     }
 }
