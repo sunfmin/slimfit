@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 5004,
-      "test_lines": 2824,
-      "tests": 72,
+      "prod_lines": 5021,
+      "test_lines": 2846,
+      "tests": 73,
       "failures": 0,
-      "test_seconds": 8.823,
-      "covered_lines": 2689,
+      "test_seconds": 7.896,
+      "covered_lines": 2697,
       "uncovered_lines": 70
     }
   },
@@ -36,8 +36,8 @@
       "suite": "rust",
       "metric": "test_seconds",
       "from": 5.362,
-      "to": 17.607,
-      "reason": "slimfit#36: the change's own check --mutants (99 mutants, 0 survivors) ran its tests under a 1-minute load of 10-18 on 18 cores, where b6b83c0 itself measures 6.85 and 7.70 against its 5.36 baseline; the change adds the e2e test of the gate rule (~1.1s). Tightened by the fresh ratchets that follow (test_seconds only moves down)"
+      "to": 7.896,
+      "reason": "slimfit#31 ratcheted test_seconds 7.5 -> 5.362 before slimfit#29/#32 added 9 tests (62 -> 71; the stand-in test every_preset_through_its_standins alone runs 3.8-4.2s), so proving b6b83c0 measured 7.758s against the limit 7.434 with no change. Median of 3 slimfit check --fresh runs of slimfit#34's tree under worker exclusive, 2026-11-19, no quiet host within 15 min: 8.301s (1-min load 17.7-18.9), 7.896s (20.3-20.8), 7.733s (22.8-21.5). time_slack unchanged. slimfit#34"
     }
   ]
 }

@@ -435,6 +435,7 @@ fn help() -> Help {
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
         .constant("DEEPEN_DAYS", tasks::DEEPEN_DAYS)
+        .constant("COMMON_LINES", format!("{:.0}%", tasks::COMMON_LINES * 100.0))
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("LANDING", landing::HELD_HELP)
