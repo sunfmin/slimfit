@@ -46,6 +46,10 @@ pub struct Options {
     /// Write nothing in the repo: the commands write their reports to a
     /// directory of their own outside it, and the measurement is not cached.
     pub dry_run: bool,
+    /// `test_seconds` must come from a test run of the caller's own
+    /// priority, as a gate's `check` times it: a cached test run made inside
+    /// `--mutants` (`untimed`) runs again, and its mutants are kept.
+    pub timed: bool,
 }
 
 /// The measurement of the tree as it is now: from the cache when it was
@@ -64,9 +68,12 @@ pub fn current(repo: &Path, cfg: &Config, opts: &Options) -> Result<Measurement>
         .filter(|m| !opts.fresh && m.tree == tree)
         .filter(|m| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name)));
     let fresh_mutants = |m: &Measurement| m.with_mutants && m.since == since(repo, cfg);
-    if let Some(m) = tested.as_ref().filter(|m| !with_mutants || fresh_mutants(m)) {
+    let timed = |m: &Measurement| !opts.timed || m.suites.iter().all(|s| !s.untimed);
+    if let Some(m) = tested.as_ref().filter(|m| (!with_mutants || fresh_mutants(m)) && timed(m)) {
         return Ok(m.clone());
     }
+    // Only the test run is measured again: the cached mutants of this tree stand.
+    let kept = tested.as_ref().filter(|m| !with_mutants && m.with_mutants).map(|m| m.since.clone());
     let scratch = Scratch::new(repo, opts.dry_run)?;
     let mut tested = tested.map(|m| m.suites.into_iter()).into_iter().flatten();
     // Nothing runs every mutant: a suite whose tool cannot be limited to a
@@ -104,7 +111,10 @@ pub fn current(repo: &Path, cfg: &Config, opts: &Options) -> Result<Measurement>
     }
     // Every suite is measured, so one that fails does not hide another's faults.
     let suites = fault::all(suites)?;
-    let m = Measurement { tree, with_mutants, since: change.change.and(since(repo, cfg)), suites };
+    let m = match kept {
+        Some(since) => Measurement { tree, with_mutants: true, since, suites },
+        None => Measurement { tree, with_mutants, since: change.change.and(since(repo, cfg)), suites },
+    };
     if !opts.dry_run {
         std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
     }
@@ -234,15 +244,17 @@ fn measure_suite(
     let classifier = Classifier::new(suite)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
-    // The tests of this tree already ran: only the mutants are new.
-    let mutants = match (tested, mutants) {
+    // The tests of this tree already ran: only the mutants are new. Without
+    // mutants a cached run is passed here only to be timed again (`untimed`),
+    // keeping its mutants.
+    let (mutants, kept) = match (tested, mutants) {
         (Some(mut s), Some(change)) => {
             std::fs::create_dir_all(&out)?;
             let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, &s)?;
             (s.mutants, s.mutated) = (m.mutants, Some(m.mutated));
             return Ok(s);
         }
-        (_, mutants) => mutants,
+        (tested, mutants) => (mutants, tested),
     };
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
@@ -270,6 +282,10 @@ fn measure_suite(
     if let Some(change) = mutants {
         let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, &s)?;
         (s.mutants, s.mutated) = (m.mutants, Some(m.mutated));
+        // At the priority mutants run at, not a gate's: see `untimed`.
+        s.untimed = true;
+    } else if let Some(k) = kept {
+        (s.mutants, s.mutated) = (k.mutants, k.mutated);
     }
     Ok(s)
 }
@@ -681,6 +697,7 @@ pub(crate) fn reduce(
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
         load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
+        untimed: false,
     }
 }
 
@@ -873,7 +890,8 @@ pub(crate) mod t {
     fn run(repo: &Path, cfg: &Config) -> (Measurement, Option<String>) {
         let args = repo.join(OUT).join("rust/args");
         let _ = std::fs::remove_file(&args);
-        let m = current(repo, cfg, &Options { mutants: Mutants::Change, fresh: false, dry_run: false }).unwrap();
+        let m = current(repo, cfg, &Options { mutants: Mutants::Change, fresh: false, dry_run: false, timed: false })
+            .unwrap();
         (m, std::fs::read_to_string(args).ok())
     }
 
@@ -885,7 +903,15 @@ pub(crate) mod t {
     /// measured lines written as `slimfit ratchet` writes it.
     fn ratchet_recorded(repo: &Path, m: &Measurement) {
         let loosen = [Bound::SurvivedMutants];
-        crate::ratchet::ratchet(&Baseline::default(), m, &Default::default(), &loosen, Some("t")).unwrap();
+        let suites = m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect();
+        crate::ratchet::ratchet(
+            &Baseline { suites, ..Baseline::default() },
+            m,
+            &Default::default(),
+            &loosen,
+            Some("t"),
+        )
+        .unwrap();
         let (path, text) = landing::record(&mutated(m).lines).unwrap();
         std::fs::create_dir_all(repo.join(landing::DIR)).unwrap();
         std::fs::write(repo.join(path), text).unwrap();
@@ -907,7 +933,8 @@ pub(crate) mod t {
         let repo = dir.path();
         let refused = |cfg: &Config| {
             let _ = std::fs::remove_file(repo.join(OUT).join("rust/args"));
-            let e = current(repo, cfg, &Options { mutants: Mutants::Change, fresh: false, dry_run: false });
+            let e =
+                current(repo, cfg, &Options { mutants: Mutants::Change, fresh: false, dry_run: false, timed: false });
             let faults = crate::fault::of(e.unwrap_err());
             assert!(!repo.join(OUT).join("rust/args").exists(), "a mutant ran");
             faults.into_iter().map(|f| f.fault).collect::<Vec<_>>().join("\n")
@@ -984,6 +1011,52 @@ pub(crate) mod t {
         assert!(!m.suites[0].mutants.is_empty() && args.unwrap().starts_with("--in-diff "));
         let patch = std::fs::read_to_string(repo.join(OUT).join("rust/change.diff")).unwrap();
         assert!(patch.contains("+++ b/src/lib.rs"), "{patch}");
+    }
+
+    /// `--mutants` with no cached test run of the tree runs the tests at its
+    /// own (background) priority: that run is `untimed`, and holds no
+    /// `test_seconds`. A plain, timed measurement of the same tree runs the
+    /// tests again and keeps the mutants; then the time is held.
+    #[test]
+    fn a_test_run_inside_mutants_is_timed_again_by_a_plain_check() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        git(repo, &["branch", "base"]);
+        cfg.check.target = Some("base".into());
+        cfg.suites[0].overrides.mutants_tests = Some(MutantTests::All);
+        let counter = tempfile::tempdir().unwrap();
+        let runs = counter.path().join("test-runs");
+        let test = format!("echo run >> '{}'; {}", runs.display(), cfg.suites[0].resolve().test_command);
+        cfg.suites[0].overrides.test_command = Some(test);
+        std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().count());
+        let measure = |timed| {
+            current(repo, &cfg, &Options { mutants: Mutants::None, fresh: false, dry_run: false, timed }).unwrap()
+        };
+
+        let (m, args) = run(repo, &cfg);
+        assert!(args.is_some() && m.suites[0].untimed && ran() == 1);
+        // A baseline it would exceed: no violation, and the ratchet keeps it.
+        let held = crate::config::CheckConfig { time_slack: 0.0, ..Default::default() };
+        let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
+        let base = Baseline { suites: [("rust".to_string(), tight)].into(), ..Baseline::default() };
+        let v = crate::ratchet::check(&base, &m, &held);
+        assert!(!v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
+        let loosen = [Bound::SurvivedMutants];
+        let next = crate::ratchet::ratchet(&base, &m, &held, &loosen, Some("t")).unwrap();
+        assert_eq!(next.suites["rust"].test_seconds, 0.001);
+        // Measurements that take no time from it reuse it as it is.
+        assert_eq!((measure(false), ran()), (m.clone(), 1));
+
+        // A plain check times the tests again, and keeps the mutants.
+        let timed = measure(true);
+        assert_eq!(ran(), 2);
+        assert!(!timed.suites[0].untimed && timed.with_mutants && timed.since == m.since);
+        assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
+        let v = crate::ratchet::check(&base, &timed, &held);
+        assert!(v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
+        // Cached now, timed: nothing runs again, `--mutants` included.
+        assert_eq!((measure(true), run(repo, &cfg).1, ran()), (timed, None, 2));
     }
 
     #[test]
@@ -1160,7 +1233,7 @@ mod faults {
         )
         .unwrap();
         cfg.suites.extend(bad.suites);
-        let opts = Options { mutants: Mutants::None, fresh: true, dry_run: false };
+        let opts = Options { mutants: Mutants::None, fresh: true, dry_run: false, timed: false };
         let faults = crate::fault::of(current(dir.path(), &cfg, &opts).unwrap_err());
         let got: Vec<(&str, &str)> =
             faults.iter().map(|f| (f.fault.split(':').next().unwrap(), f.fix.as_str())).collect();

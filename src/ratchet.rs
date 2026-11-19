@@ -132,6 +132,9 @@ pub struct Verdict {
     pub new_suites: Vec<String>,
     /// Mutants were not measured, so their bound was not checked.
     pub mutants_unchecked: bool,
+    /// Suites whose tests ran inside `--mutants`, so their `test_seconds`
+    /// was not checked (see [`SuiteMeasurement::untimed`]).
+    pub time_unchecked: Vec<String>,
 }
 
 pub fn load(repo: &Path) -> Result<Baseline> {
@@ -213,6 +216,10 @@ pub const MEASURE_THE_CHANGE: &str = "measure the change's mutants at background
      `factorium worker exclusive --background -- slimfit check --mutants` (outside factorium, `nice -n 19 slimfit \
      check --mutants`), then `slimfit ratchet`, then commit .slimfit/mutants/ with the change";
 
+/// What times a tree's tests after `--mutants` ran them (`untimed`).
+pub const TIME_THE_TESTS: &str =
+    "run a plain `slimfit check` (not at background priority): it runs the tests again and keeps the mutants";
+
 pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
     let mut v = Verdict {
         ok: true,
@@ -220,6 +227,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         improved: vec![],
         new_suites: vec![],
         mutants_unchecked: !m.with_mutants,
+        time_unchecked: m.suites.iter().filter(|s| s.untimed).map(|s| s.suite.clone()).collect(),
     };
     for s in &m.suites {
         if let Some(n) = survivors(s).filter(|n| *n > 0.0) {
@@ -248,6 +256,9 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         };
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
             let (Some(base_v), Some(cur)) = (value(b, bound), value(&s.metrics, bound)) else { continue };
+            if bound == Bound::TestSeconds && s.untimed {
+                continue;
+            }
             let lim = if bound == Bound::Failures { 0.0 } else { limit(cfg, bound, base_v) };
             if cur > lim + 1e-9 {
                 v.violations.push(Violation {
@@ -304,6 +315,18 @@ pub fn ratchet(
             ),
         });
     }
+    // `test_seconds` is set only from a test run at a gate's priority.
+    for s in m.suites.iter().filter(|s| s.untimed) {
+        if loosen.contains(&Bound::TestSeconds) || !base.suites.contains_key(&s.suite) {
+            faults.push(Fault {
+                fault: format!(
+                    "{}: its tests ran inside `--mutants`, at background priority: its test_seconds is no bound",
+                    s.suite
+                ),
+                fix: format!("{TIME_THE_TESTS}, then `slimfit ratchet` again"),
+            });
+        }
+    }
     if !loosen.is_empty() && reason.is_none_or(|r| r.trim().is_empty()) {
         faults.push(Fault {
             fault: "--loosen without --reason".into(),
@@ -358,7 +381,9 @@ pub fn ratchet(
                     });
                 }
             }
-            if !loosen.contains(&Bound::TestSeconds) {
+            if s.untimed {
+                metrics.test_seconds = old.test_seconds;
+            } else if !loosen.contains(&Bound::TestSeconds) {
                 metrics.test_seconds = metrics.test_seconds.min(old.test_seconds);
             }
             if !loosen.contains(&Bound::UncoveredLines)
@@ -394,6 +419,7 @@ mod t {
             }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
+            untimed: false,
         }
     }
 
@@ -487,6 +513,33 @@ mod t {
         let f = &crate::fault::of(load(dir.path()).unwrap_err())[0];
         assert!(f.fault.starts_with(".slimfit/baseline.json is not a baseline"), "{f:?}");
         assert!(f.fix.starts_with("restore it: `git checkout -- .slimfit/baseline.json`"), "{f:?}");
+    }
+
+    /// A test run inside `--mutants` holds no `test_seconds`: not checked,
+    /// not ratcheted, not loosened, and no new suite's bound is set from it.
+    #[test]
+    fn a_test_run_inside_mutants_neither_checks_nor_moves_test_seconds() {
+        let cfg = CheckConfig::default();
+        let mut slow = measurement(m(10, 31.1), Some(0));
+        slow.suites[0].untimed = true;
+        let v = check(&base(m(10, 10.0)), &slow, &cfg);
+        assert!(v.ok && v.improved.is_empty(), "{v:?}");
+        assert_eq!(v.time_unchecked, ["s"]);
+        let mut fast = slow.clone();
+        fast.suites[0].metrics.test_seconds = 1.0;
+        for cur in [&slow, &fast] {
+            assert_eq!(ratchet(&base(m(10, 10.0)), cur, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
+        }
+        let refused = |b: &Baseline, loosen: &[Bound]| {
+            let f = crate::fault::of(ratchet(b, &slow, &cfg, loosen, Some("busy")).unwrap_err());
+            assert!(
+                f[0].fault.contains("ran inside `--mutants`") && f[0].fix.contains("plain `slimfit check`"),
+                "{f:?}"
+            );
+        };
+        refused(&base(m(10, 10.0)), &[Bound::TestSeconds]);
+        refused(&Baseline::default(), &[]);
+        assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg).time_unchecked.is_empty());
     }
 
     #[test]
