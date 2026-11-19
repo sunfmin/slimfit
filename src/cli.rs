@@ -146,7 +146,8 @@ pub(crate) enum Cmd {
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
     /// - `redundant-test`: `test`, its `seconds`, `lines` (how many source lines it runs) and `other_test`, the test whose lines it overlaps most: one that runs every one of them too, when there is one.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
-    /// - `surviving-mutant`: `survivors`, each picked mutant that survived, with its `line` and `mutant` (the change it makes).
+    /// - `surviving-mutant`: `source`, who chose the mutants (`author`: picks of the change; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
+    /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
     ///
     /// ## What it may refuse
@@ -157,7 +158,8 @@ pub(crate) enum Cmd {
     ///
     /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants <name>...` of this same tree, the one way mutants run (your picks of your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
     /// - A pick-mutants task lists the change's mutants as the mutation tool does (`slimfit check --mutants`): that runs the tool's listing, a few seconds, and builds nothing.
-    /// - Surviving-mutant tasks name only picks that survived: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - Surviving-mutant tasks name only picks that survived, and with `--sample` the sample's survivors: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
+    /// - `--sample` runs mutants, unlike the rest of `next`: put it on the idle tasks line only, never in the loop or a gate. No `check` reads what it finds (see [the sample](help:sample)).
     /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
@@ -170,6 +172,9 @@ pub(crate) enum Cmd {
         /// Only tasks of this kind.
         #[arg(long, value_enum, verbatim_doc_comment)]
         kind: Option<tasks::TaskKind>,
+        /// Also draw and run an unbiased sample of N mutants of the changes landed since the last sample, out of the loop: on factorium's idle tasks line, never in a gate or a worker's loop (see [the sample](help:sample)).
+        #[arg(long, value_name = "N", verbatim_doc_comment)]
+        sample: Option<usize>,
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
@@ -334,15 +339,15 @@ pub(crate) enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the records in `.slimfit/mutants/`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the records in `.slimfit/mutants/`, the samples in `.slimfit/samples/`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
     ///
     /// ## What it answers
     ///
     /// - `current`: per suite, the metrics measured now: {const:METRICS}.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}) and `mutants_records` (the records `.slimfit/mutants/` held then, counted as below). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
-    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only.
+    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below) and `mutants_survival` (per source of the mutants that ran by then, `author` for the picks in records and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
+    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is an `author` rate far below the `sampled` one in `mutants_survival`.
     /// - `next`: `slimfit next`.
     ///
     /// ## What it may refuse
@@ -394,6 +399,11 @@ struct HostLoad;
 #[topic(name = "mutants-scope")]
 struct MutantsScope;
 
+#[doc = include_str!("help/sample.md")]
+#[derive(Topic)]
+#[topic(name = "sample")]
+struct SampleTopic;
+
 #[doc = include_str!("help/dry-run.md")]
 #[derive(Topic)]
 #[topic(name = "dry-run")]
@@ -411,6 +421,7 @@ fn help() -> Help {
         .topic::<Costs>()
         .topic::<HostLoad>()
         .topic::<MutantsScope>()
+        .topic::<SampleTopic>()
         .topic::<DryRun>()
         .topic::<Factorium>()
         .table::<ratchet::Bound>("bound")
@@ -439,6 +450,11 @@ fn help() -> Help {
         .constant("LANDING", landing::HELD_HELP)
         .constant("RECORDS", landing::RECORDS_HELP)
         .constant("HISTORY_SUITE", report::LINES_HELP)
+        .constant("RATE", report::RATE_HELP)
+        .constant("SAMPLE", measure::sample::SAMPLE_HELP)
+        .constant("SAMPLE_DAYS", measure::sample::SAMPLE_DAYS)
+        .constant("SAMPLE_ROUNDS", measure::sample::ROUNDS)
+        .constant("SAMPLE_COST", measure::sample::COST)
         .constant("CANDIDATE", model::CANDIDATE_HELP)
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
@@ -594,6 +610,11 @@ mod tests {
         let held = crate::landing::Held { target: String::new(), from: String::new(), lines: 0, records: vec![] };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
+        assert_eq!(named(crate::report::RATE_HELP)[..4], keys(&crate::report::Rate::default())[..]);
+        assert_eq!(
+            named(crate::measure::sample::SAMPLE_HELP)[..4],
+            keys(&crate::measure::sample::Sample::default())[..]
+        );
         let candidate = model::Candidate {
             name: String::new(),
             file: String::new(),

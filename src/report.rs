@@ -7,6 +7,8 @@ use crate::config::Config;
 use crate::git;
 use crate::landing::{self, Record, Records};
 use crate::loc::Classifier;
+use crate::measure::sample;
+use crate::model::{MutantStatus, Source};
 use crate::ratchet;
 use anyhow::Result;
 use serde::Serialize;
@@ -23,6 +25,57 @@ pub struct Point {
     /// held none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_records: Option<Records>,
+    /// The survival of the mutants that ran, by who chose them, over the
+    /// records and samples committed by then; absent when there were none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutants_survival: Option<BTreeMap<Source, Rate>>,
+}
+
+/// How the mutants one source chose came out: `ran` built and ran (killed
+/// or survived), `survived` of those, `rate` = survived / ran (`None` when
+/// none ran), and `unviable` (did not build, or no outcome).
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct Rate {
+    pub ran: u64,
+    pub survived: u64,
+    pub rate: Option<f64>,
+    pub unviable: u64,
+}
+
+/// What a [`Rate`] prints, as the command pages name it.
+pub const RATE_HELP: &str = "`ran` (built and ran: killed or survived), `survived` (of those), `rate` (survived / \
+     ran, or null when none ran) and `unviable` (did not build, or reported no outcome)";
+
+impl Rate {
+    fn add(&mut self, outcome: Option<MutantStatus>) {
+        match outcome {
+            Some(MutantStatus::Killed) => self.ran += 1,
+            Some(MutantStatus::Survived) => (self.ran, self.survived) = (self.ran + 1, self.survived + 1),
+            Some(MutantStatus::Unviable) | None => self.unviable += 1,
+        }
+        self.rate = (self.ran > 0).then(|| self.survived as f64 / self.ran as f64);
+    }
+}
+
+/// Survival by source over a commit's records (the author's picks) and
+/// samples: each source with a mutant that ran, or `None` when none did.
+fn survival<'a>(files: impl Iterator<Item = (&'a str, &'a str)>) -> Option<BTreeMap<Source, Rate>> {
+    let (records, samples) = (format!("{}/", landing::DIR), format!("{}/", sample::DIR));
+    let mut out: BTreeMap<Source, Rate> = BTreeMap::new();
+    for (p, text) in files.filter(|(p, _)| p.ends_with(".json")) {
+        if p.starts_with(&records) {
+            let Ok(r) = serde_json::from_str::<Record>(text) else { continue };
+            for pick in r.picks.values().flatten() {
+                out.entry(Source::Author).or_default().add(pick.outcome);
+            }
+        } else if p.starts_with(&samples) {
+            let Ok(s) = serde_json::from_str::<sample::Sample>(text) else { continue };
+            for d in s.drawn.values().flatten() {
+                out.entry(Source::Sampled).or_default().add(d.outcome);
+            }
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// A suite at a commit: its lines counted, and what the committed baseline
@@ -98,7 +151,7 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
         resolved.iter().map(|s| Classifier::new(s, repo, &[], |_| None)).collect::<Result<_>>()?;
     let mut out = Vec::new();
     for (commit, date) in picked {
-        let ours = |p: &str| p == ratchet::FILE || p.starts_with(landing::DIR);
+        let ours = |p: &str| p == ratchet::FILE || p.starts_with(landing::DIR) || p.starts_with(sample::DIR);
         let blobs = git::tree_blobs(repo, commit, |p| ours(p) || claims.iter().any(|c| c.kind(p).is_some()))?;
         let texts: BTreeMap<&str, &str> = blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let baseline: Option<Value> = texts.get(ratchet::FILE).and_then(|t| serde_json::from_str(t).ok());
@@ -112,7 +165,9 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
             suites.insert(s.name.clone(), lines);
         }
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
-        out.push(Point { commit: commit[..12].to_string(), date: date.to_string(), suites, mutants_records });
+        let mutants_survival = survival(texts.iter().map(|(p, t)| (*p, *t)));
+        let commit = commit[..12].to_string();
+        out.push(Point { commit, date: date.to_string(), suites, mutants_records, mutants_survival });
     }
     Ok(out)
 }
@@ -124,7 +179,8 @@ mod t {
 
     /// Each point reads the baseline and records committed at it: a commit
     /// with no baseline shows none of its numbers, one written before a
-    /// field shows that field absent, and records count by kind.
+    /// field shows that field absent, records count by kind, and the
+    /// mutants that ran tally by who chose them.
     #[test]
     fn history_reads_what_each_commit_committed() {
         let (dir, cfg) = sample_repo();
@@ -149,6 +205,10 @@ mod t {
             (".slimfit/mutants/b.json", r#"{"none":"docs only"}"#),
             (".slimfit/mutants/c.json", r#"{"tree":"t"}"#),
             (".slimfit/mutants/d.json", "not a record"),
+            (
+                ".slimfit/samples/t.json",
+                r#"{"tip":"t","from":"f","pool":9,"drawn":{"rust":[{"name":"a","outcome":"survived"},{"name":"b","outcome":"killed"},{"name":"c","outcome":"unviable"}]}}"#,
+            ),
         ]);
         let h = history(repo, &cfg, 10, 10).unwrap();
         let rust: Vec<&Lines> = h.iter().map(|p| &p.suites["rust"]).collect();
@@ -164,5 +224,12 @@ mod t {
         assert!(rust.iter().all(|l| l.prod > 0), "{rust:?}");
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
         assert_eq!(records, [None, None, Some(&Records { with_picks: 1, without_picks: 1, older: 1 })]);
+        // Survival by who chose the mutants, side by side: the author's picks and the sample.
+        let survival = serde_json::to_value(&h[2].mutants_survival).unwrap();
+        let want = serde_json::json!({
+            "author": { "ran": 1, "survived": 0, "rate": 0.0, "unviable": 0 },
+            "sampled": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 1 },
+        });
+        assert_eq!((survival, h[1].mutants_survival.is_none()), (want, true));
     }
 }

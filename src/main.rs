@@ -96,7 +96,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Next { all, kind, fresh, .. } => {
+        Cmd::Next { all, kind, fresh, sample, .. } => {
             let (cfg, base) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
@@ -104,6 +104,19 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
             let mut list = tasks::all(&repo, &cfg, &m, &base)?;
+            let mut notes = Vec::new();
+            if let Some(n) = sample {
+                measure::refuse_unpickable(&cfg)?;
+                let s = measure::sample::sample(&repo, &cfg, &m, n)?;
+                let c = s.sample.counts();
+                notes.push(format!(
+                    "sampled at {} from the changes since {}: {} killed, {} survived, {} unviable, of {} mutants no \
+                     record picked; out of the loop: no `check` reads it",
+                    s.sample.tip, s.sample.from, c.killed, c.survived, c.unviable, s.sample.pool
+                ));
+                list.extend(tasks::sampled(&s)?);
+                list.sort_by_key(|t| t.kind);
+            }
             if let Some(k) = kind {
                 list.retain(|t| t.kind == k);
             }
@@ -112,7 +125,6 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 *counts.entry(serde_json::to_value(t.kind)?.as_str().unwrap_or("").to_string()).or_insert(0) += 1;
             }
             let list = tasks::cap(list);
-            let mut notes = Vec::new();
             if !m.with_mutants {
                 notes.push(
                     "mutants not measured: surviving-mutant tasks need `slimfit check --mutants <name>...` of this \
@@ -682,6 +694,94 @@ mod answer_tests {
             cut(&elsewhere);
             assert_eq!(held(crate::EXIT_VIOLATION), (target.clone(), 6));
         }
+    }
+
+    /// A sample of a landed change's mutants, out of the loop: no name the
+    /// change's record picked is drawn, a sampled survivor answers as a
+    /// `sampled` surviving-mutant task, the sample's record as a task to
+    /// commit, and `check` stays green with both outstanding. The same tip
+    /// draws the same; `report` tallies the sample beside the picks once
+    /// its record is committed, and the next sample starts from it.
+    #[test]
+    fn a_sampled_survivor_is_a_task_and_never_a_bound() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        let p = repo.join("src/lib.rs");
+        std::fs::write(&p, std::fs::read_to_string(&p).unwrap() + "\npub fn a_one() -> u8 {\n    1\n}\n").unwrap();
+        let killed = "src/lib.rs:12:9: replace >= with < in is_adult";
+        slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "a, recorded"]);
+        // Landed: the target is where the change now is.
+        git(repo, &["branch", "-f", "target"]);
+        // Code from before picks is not drawn from: the baseline's cut bounds the window.
+        let adopt =
+            std::process::Command::new("git").arg("-C").arg(repo).args(["rev-parse", "HEAD~1"]).output().unwrap();
+        let adopt = String::from_utf8(adopt.stdout).unwrap().trim().to_string();
+        let b = repo.join(crate::ratchet::FILE);
+        let mut base: Value = serde_json::from_str(&std::fs::read_to_string(&b).unwrap()).unwrap();
+        base["mutants_from"] = adopt.clone().into();
+        std::fs::write(&b, base.to_string()).unwrap();
+        git(repo, &["commit", "-qam", "cut"]);
+        git(repo, &["branch", "-f", "target"]);
+
+        let (out, code) = slimfit(repo, "next --all --sample 20").unwrap();
+        assert_eq!(code, 0, "{out:#}");
+        let tasks = out["tasks"].as_array().unwrap();
+        let of = |kind: &str| tasks.iter().filter(|t| t["kind"] == kind).collect::<Vec<_>>();
+        let survivors = of("surviving-mutant");
+        assert!(!survivors.is_empty() && survivors.iter().all(|t| t["evidence"]["source"] == "sampled"), "{out:#}");
+        let named = |t: &Value| {
+            t["evidence"]["survivors"].as_array().unwrap().iter().map(|m| m["name"].clone()).collect::<Vec<_>>()
+        };
+        assert!(
+            survivors.iter().flat_map(|t| named(t)).any(|n| n == "src/lib.rs:12:5: replace is_adult -> bool with true")
+        );
+        let record = of("record-sample");
+        assert_eq!(record.len(), 1, "{out:#}");
+        let text = record[0]["evidence"]["text"].as_str().unwrap();
+        let sample: crate::measure::sample::Sample = serde_json::from_str(text).unwrap();
+        let drawn: Vec<&str> = sample.drawn["rust"].iter().map(|d| d.name.as_str()).collect();
+        assert_eq!((drawn.len(), sample.pool), (16, 16), "{text}");
+        assert_eq!(sample.from, adopt, "{text}");
+        assert!(!drawn.contains(&killed), "{drawn:?}");
+        // Every viable one ran in the first round: none is unviable in the fixture.
+        assert_eq!(sample.counts().unviable, 0);
+        // The same tip draws the same, from the cache or not.
+        let (again, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        assert_eq!(again["tasks"], out["tasks"]);
+        std::fs::remove_file(repo.join(".slimfit/out/sample.json")).unwrap();
+        let (fresh, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        assert_eq!(fresh["tasks"], out["tasks"]);
+        // Never a bound: `check` passes with the sampled survivors outstanding.
+        let (held, code) = slimfit(repo, "check").unwrap();
+        assert_eq!((code, held["verdict"]["ok"].as_bool()), (0, Some(true)), "{held:#}");
+
+        // The record committed: report sets the sample beside the picks, and
+        // the next sample draws from what landed since, here nothing.
+        let path = record[0]["evidence"]["path"].as_str().unwrap();
+        std::fs::create_dir_all(repo.join(crate::measure::sample::DIR)).unwrap();
+        std::fs::write(repo.join(path), text).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "record the sample"]);
+        let (held, code) = slimfit(repo, "check").unwrap();
+        assert_eq!(code, 0, "{held:#}");
+        let (report, _) = slimfit(repo, "report --points 1").unwrap();
+        let survival = &report["history"][0]["mutants_survival"];
+        assert_eq!((survival["author"]["ran"].as_u64(), survival["author"]["survived"].as_u64()), (Some(1), Some(0)));
+        assert_eq!(survival["sampled"]["ran"].as_u64(), Some(16), "{survival:#}");
+        let (next, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        assert!(next["tasks"].as_array().unwrap().iter().all(|t| t["evidence"]["source"] != "sampled"), "{next:#}");
+        assert!(next["notes"][0].as_str().unwrap().contains("of 0 mutants"), "{next:#}");
     }
 
     /// No task left of a kind, and nothing to ratchet, are answers: exit 0.
