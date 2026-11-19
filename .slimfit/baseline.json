@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 4045,
-      "test_lines": 2139,
-      "tests": 62,
+      "prod_lines": 4828,
+      "test_lines": 2728,
+      "tests": 70,
       "failures": 0,
-      "test_seconds": 5.362,
-      "covered_lines": 2171,
+      "test_seconds": 7.231,
+      "covered_lines": 2593,
       "uncovered_lines": 70
     }
   },
@@ -31,6 +31,13 @@
       "from": 1.899,
       "to": 7.5,
       "reason": "slimfit#22: the stand-in tests run the real binary through every preset's tools, faults included (5 tests, ~0.4s each alone, ~1s each in parallel on a loaded host); they replace the real-toolchain Rust e2e the slow gate ran (33s, 268s with mutants)"
+    },
+    {
+      "suite": "rust",
+      "metric": "test_seconds",
+      "from": 5.362,
+      "to": 7.231,
+      "reason": "slimfit#35: the base it was branched from (proving b6b83c0) already measures 7.67-7.81s against the 7.43s limit at 1-min load ~5 on 18 cores, this branch 7.45-7.63s; re-baselined from a --fresh run"
     }
   ],
   "mutants_at": {
