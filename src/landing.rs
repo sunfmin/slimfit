@@ -114,7 +114,7 @@ pub fn required(repo: &Path, cfg: &Config, added: &Lines) -> Result<BTreeMap<Str
     let files: Vec<String> = added.keys().cloned().collect();
     let mut out = BTreeMap::new();
     for s in cfg.suites.iter().map(|s| s.resolve()) {
-        if s.mutants_diff_flag.is_empty() && s.mutants_file_flag.is_empty() {
+        if !s.mutates() {
             continue;
         }
         let totals = Classifier::new(&s)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
@@ -213,17 +213,16 @@ pub fn hold(repo: &Path, cfg: &Config, m: &Measurement) -> Result<(Option<Held>,
 pub fn added_lines(patch: &str, prefix: &str) -> Lines {
     let mut out = Lines::new();
     // "" while in a deleted file, which adds no line.
-    let (mut file, mut line, mut old_left, mut new_left) = (String::new(), 0u32, 0u32, 0u32);
+    // Once a hunk's new side is read, what is left of it are removals, which
+    // neither a `+++ ` nor an `@@ -` header can start with.
+    let (mut file, mut line, mut new_left) = (String::new(), 0u32, 0u32);
     for l in patch.lines() {
-        if old_left > 0 || new_left > 0 {
+        if new_left > 0 {
             match l.as_bytes().first() {
-                Some(b' ') => {
-                    (old_left, new_left, line) = (old_left.saturating_sub(1), new_left.saturating_sub(1), line + 1)
-                }
-                Some(b'-') => old_left = old_left.saturating_sub(1),
+                Some(b' ') => (new_left, line) = (new_left - 1, line + 1),
                 Some(b'+') => {
                     out.entry(file.clone()).or_default().insert(line, l[1..].to_string());
-                    (new_left, line) = (new_left.saturating_sub(1), line + 1);
+                    (new_left, line) = (new_left - 1, line + 1);
                 }
                 _ => {}
             }
@@ -234,10 +233,8 @@ pub fn added_lines(patch: &str, prefix: &str) -> Lines {
                 let (a, n) = r.split_once(',').unwrap_or((r, "1"));
                 (a.parse().unwrap_or(0), n.parse().unwrap_or(0))
             };
-            let mut parts = h.split(' ');
-            let (_, o) = count(parts.next().unwrap_or(""));
-            let (start, n) = count(parts.next().unwrap_or("").trim_start_matches('+'));
-            (line, old_left, new_left) = (start, o, n);
+            let (start, n) = count(h.split(' ').nth(1).unwrap_or("").trim_start_matches('+'));
+            (line, new_left) = (start, n);
         }
     }
     out.remove("");
@@ -250,6 +247,12 @@ mod t {
 
     /// The lines a unified diff adds, counted through context, removals
     /// that look like headers, and several hunks and files.
+    /// FNV-1a 64, as published: a record written by one build is read by the next.
+    #[test]
+    fn a_line_hashes_as_fnv_1a() {
+        assert_eq!((hash(""), hash("a")), ("cbf29ce484222325".into(), "af63dc4c8601ec8c".into()));
+    }
+
     #[test]
     fn added_lines_follow_the_hunks() {
         let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,4 +1,4 @@\n x\n--- y\n+++ z\n w\n \n\

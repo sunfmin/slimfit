@@ -314,11 +314,7 @@ fn mutation(lines: &[(String, String)], how: &str) -> Vec<Finding> {
 
 /// A finding when a suite runs mutants but no branch to land on is found.
 fn no_target(repo: &Path, cfg: &config::Config) -> Vec<Finding> {
-    let mutates = cfg
-        .suites
-        .iter()
-        .map(|s| s.resolve())
-        .any(|s| !s.mutants_diff_flag.is_empty() || !s.mutants_file_flag.is_empty());
+    let mutates = cfg.suites.iter().any(|s| s.resolve().mutates());
     let target = cfg.check.target.as_deref().unwrap_or(crate::landing::DEFAULT_TARGET);
     // Outside git (a bare directory) there is no branch to ask about.
     if !mutates || !repo.join(".git").exists() || crate::git::merge_base(repo, target).is_some() {

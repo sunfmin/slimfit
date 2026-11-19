@@ -162,6 +162,14 @@ pub struct Suite {
     pub mutants_tests: MutantTests,
 }
 
+impl Suite {
+    /// Whether its mutation tool can be limited to a change: no other runs
+    /// mutants (ADR 0006).
+    pub fn mutates(&self) -> bool {
+        !self.mutants_diff_flag.is_empty() || !self.mutants_file_flag.is_empty()
+    }
+}
+
 impl SuiteConfig {
     pub fn resolve(&self) -> Suite {
         let mut s = preset(self.preset);

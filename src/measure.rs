@@ -73,7 +73,7 @@ pub fn current(repo: &Path, cfg: &Config, opts: &Options) -> Result<Measurement>
     // change refuses `--mutants` before anything runs.
     if with_mutants {
         fault::all(cfg.suites.iter().map(|s| s.resolve()).map(|s| {
-            if s.mutants_diff_flag.is_empty() && s.mutants_file_flag.is_empty() {
+            if !s.mutates() {
                 Err(fault(
                     format!(
                         "suite {}: its mutation tool cannot be limited to a change, so `--mutants` would run every mutant",
