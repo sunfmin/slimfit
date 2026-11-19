@@ -27,7 +27,7 @@ pub enum TaskKind {
     /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
-    /// One test holds a large share of the suite's time. Make it cheaper without testing less, or merge it into faster ones.
+    /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
     /// A picked mutant of the change no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Comes from a `slimfit check --mutants <name>...` of this tree.
@@ -234,9 +234,9 @@ pub const COMMON_LINES: f64 = 0.5;
 /// is not proposed.
 fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     let Some((reach, per_test)) = s.reach.as_ref().and_then(|r| Some((r, r.lines.as_ref()?))) else { return vec![] };
-    let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.seconds);
+    let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.cpu);
     let ids: Vec<String> = reach.tests.iter().map(ReachTest::id).collect();
-    // Each test, the (file, line)s it runs, and its seconds.
+    // Each test, the (file, line)s it runs, and its CPU seconds.
     let lines: Vec<_> = ids
         .iter()
         .zip(per_test)
@@ -313,16 +313,16 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
 
 fn slow(s: &SuiteMeasurement) -> Vec<Task> {
     let total = s.metrics.test_seconds;
-    let mut tests: Vec<_> = s.tests.iter().filter(|t| t.seconds >= 0.5 && t.seconds >= total * 0.05).collect();
-    tests.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
+    let mut tests: Vec<_> = s.tests.iter().filter(|t| t.cpu >= 0.5 && t.cpu >= total * 0.05).collect();
+    tests.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
     tests
         .into_iter()
         .map(|t| Task {
             kind: TaskKind::SlowTest,
             suite: s.suite.clone(),
-            summary: format!("{} takes {:.2}s of {:.2}s", t.id, t.seconds, total),
+            summary: format!("{} takes {:.2}s of CPU of {:.2}s", t.id, t.cpu, total),
             files: vec![],
-            evidence: json!({ "test": t.id, "seconds": t.seconds, "suite_seconds": total }),
+            evidence: json!({ "test": t.id, "seconds": t.cpu, "suite_seconds": total }),
             steps: "Find where the time goes (sleeps, real network or disk, process spawns, large fixtures, repeated setup). \
                     Make it cheaper without testing less: shrink the input, share setup, replace a slow dependency with an in-memory adapter at an existing seam. \
                     If it overlaps faster tests, merge or delete it."
@@ -449,7 +449,7 @@ mod t {
             let source = crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into() };
             reach.tests.push(ReachTest { binary: "t".into(), name: name.into(), source: Some(source) });
             reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.into_iter().collect())].into());
-            cases.push(TestCase { id: format!("t::{name}"), seconds: secs, passed: true, start: None });
+            cases.push(TestCase { id: format!("t::{name}"), seconds: 0.0, passed: true, cpu: secs });
         }
         SuiteMeasurement {
             suite: "s".into(),
@@ -460,8 +460,6 @@ mod t {
             reach: Some(reach),
             mutated: None,
             command_seconds: 0.0,
-            load_slowdown: 1.0,
-            host_load: 0.0,
             untimed: false,
         }
     }

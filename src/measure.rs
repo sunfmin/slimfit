@@ -7,7 +7,6 @@ use crate::fault::{self, Faults, fault};
 use crate::formats;
 use crate::git;
 use crate::landing;
-use crate::load;
 use crate::loc::{Classifier, Kind, Totals};
 use crate::model::*;
 use anyhow::{Context, Result};
@@ -27,7 +26,7 @@ pub fn refusals_help() -> String {
 }
 
 /// The cache's pitfall, as the command pages say it.
-pub const CACHE_HELP: &str = "The measurement is cached in `.slimfit/out/` and reused while HEAD and the contents of every file git does not ignore are unchanged. A change outside them is not seen: a tool's new version, the host's load, an environment variable, a flaky test. `--fresh` measures again.";
+pub const CACHE_HELP: &str = "The measurement is cached in `.slimfit/out/` and reused while HEAD and the contents of every file git does not ignore are unchanged. A change outside them is not seen: a tool's new version, an environment variable, a flaky test. `--fresh` measures again.";
 
 /// How much mutation testing a measurement runs.
 #[derive(Debug, Clone, PartialEq)]
@@ -327,18 +326,23 @@ fn measure_suite(
     )?) {
         std::fs::remove_file(old)?;
     }
+    // The build runs first, on its own: the test command's CPU time is then
+    // the tests', not the compiler's (ADR 0010).
+    if !suite.build_command.trim().is_empty() {
+        shell(&root, &out, &suite.build_command, "build", &[])?;
+    }
+    // Where the test command records each test's CPU time, if it does.
+    std::fs::create_dir_all(out.join(crate::tools::TEST_CPU))?;
     let started = Instant::now();
-    let since_epoch =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let host_load = load::per_core();
-    let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test", &[]));
-    let (log, _) = run?;
+    let before = children_cpu();
+    let (log, _) = shell(&root, &out, &suite.test_command, "test", &[])?;
+    let tree_cpu = children_cpu() - before;
     let command_seconds = started.elapsed().as_secs_f64();
     let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
     let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
     let reach = read_reach(&root, &out, suite)?;
 
-    let timing = Timing { command_seconds, slowdown, host_load, started: since_epoch };
+    let timing = Timing { command_seconds, tree_cpu, test_cpu: read_test_cpu(&out.join(crate::tools::TEST_CPU)) };
     let mut s = reduce(suite, &totals, &resolver, tests, coverage, reach, None, timing);
     if let Some((listed, picks)) = mutants {
         let m = mutate_picks(&root, &out, suite, &resolver, &listed, &picks, &s)?;
@@ -349,6 +353,39 @@ fn measure_suite(
         (s.mutants, s.mutated) = (k.mutants, k.mutated);
     }
     Ok(s)
+}
+
+/// The CPU time (user + sys) of this process's children that have ended
+/// and been waited for, with theirs: a command's whole tree, as `sh` waits
+/// for what it starts.
+fn children_cpu() -> f64 {
+    // SAFETY: an all-zero rusage is valid, and getrusage only writes it.
+    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `u` is a valid rusage for the call to write.
+    unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut u) };
+    let secs = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+    secs(u.ru_utime) + secs(u.ru_stime)
+}
+
+/// Each test's CPU seconds, by id, from the files a test command wrote in
+/// `dir` (see `tools::TEST_CPU`); empty when it wrote none. A test that ran
+/// more than once (a retry) spent the sum.
+fn read_test_cpu(dir: &Path) -> BTreeMap<String, f64> {
+    let mut cpu = BTreeMap::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+        let mut lines = text.lines();
+        let (Some(id), Some(children)) = (lines.next(), lines.nth(1)) else { continue };
+        let Some(secs) = children.split_whitespace().map(times_seconds).sum::<Option<f64>>() else { continue };
+        *cpu.entry(id.to_string()).or_insert(0.0) += secs;
+    }
+    cpu
+}
+
+/// One of `times`' figures, `1m2.345s`, in seconds.
+fn times_seconds(t: &str) -> Option<f64> {
+    let (m, s) = t.strip_suffix('s')?.split_once('m')?;
+    Some(m.parse::<f64>().ok()? * 60.0 + s.parse::<f64>().ok()?)
 }
 
 /// Which functions each test ran, when the suite's test run records it. A
@@ -681,14 +718,15 @@ impl Resolver {
     }
 }
 
-/// How long the test command took, how much the host's load slowed it,
-/// how loaded the host was, and when it started (seconds since the Unix epoch).
+/// How long the test command took, and the CPU time its tests spent
+/// (ADR 0010).
 pub(crate) struct Timing {
     pub command_seconds: f64,
-    pub slowdown: f64,
-    /// The host's 1-minute load per core as the command started.
-    pub host_load: f64,
-    pub started: f64,
+    /// The CPU time of the test command's whole process tree.
+    pub tree_cpu: f64,
+    /// Each test's own CPU time, by id, where the test command records it
+    /// (the Rust preset's runner); empty where it does not.
+    pub test_cpu: BTreeMap<String, f64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -702,14 +740,26 @@ pub(crate) fn reduce(
     mutation: Option<Mutation>,
     timing: Timing,
 ) -> SuiteMeasurement {
-    // A test's duration as the runner timed it, less what the host's load
-    // added to it (ADR 0003). A test whose report says it started before
-    // the command (a report the command did not write) ran under a load
-    // the probe never saw: it stays as reported.
-    for t in &mut tests {
-        // Report timestamps are rounded to the millisecond.
-        if t.start.is_none_or(|s| s >= timing.started - 0.01) {
-            t.seconds /= timing.slowdown;
+    // Each test's CPU time (ADR 0010): its own where the test command
+    // recorded it; otherwise the command tree's, shared by wall time.
+    if timing.test_cpu.is_empty() {
+        let wall: f64 = tests.iter().map(|t| t.seconds).sum();
+        let n = tests.len() as f64;
+        for t in &mut tests {
+            t.cpu = timing.tree_cpu * if wall > 0.0 { t.seconds / wall } else { 1.0 / n };
+        }
+    } else {
+        let missing: Vec<&str> =
+            tests.iter().filter(|t| !timing.test_cpu.contains_key(&t.id)).map(|t| t.id.as_str()).collect();
+        if !missing.is_empty() {
+            eprintln!(
+                "slimfit: {}: no CPU time recorded for {} test(s), counted as 0: {missing:?}",
+                suite.name,
+                missing.len()
+            );
+        }
+        for t in &mut tests {
+            t.cpu = timing.test_cpu.get(&t.id).copied().unwrap_or(0.0);
         }
     }
     // Coverage of prod lines only: test files and inline test blocks are out.
@@ -749,7 +799,7 @@ pub(crate) fn reduce(
         test_lines: totals.test,
         tests: tests.len() as u64,
         failures: tests.iter().filter(|t| !t.passed).count() as u64,
-        test_seconds: (tests.iter().map(|t| t.seconds).sum::<f64>() * 1000.0).round() / 1000.0,
+        test_seconds: (tests.iter().map(|t| t.cpu).sum::<f64>() * 1000.0).round() / 1000.0,
         covered_lines: covered,
         uncovered_lines: uncovered_total,
     };
@@ -762,8 +812,6 @@ pub(crate) fn reduce(
         reach,
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
-        load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
-        host_load: (timing.host_load * 1000.0).round() / 1000.0,
         untimed: false,
     }
 }
@@ -943,7 +991,7 @@ pub(crate) mod t {
             [[suite]]
             name = "rust"
             preset = "rust"
-            test_command = "cp {r}/junit.xml {r}/lcov.info \"$SLIMFIT_OUT\""
+            test_command = "cp {r}/junit.xml {r}/lcov.info \"$SLIMFIT_OUT\" && printf 'calc::tests::slow\\n0m0.001s 0m0.001s\\n0m0.600s 0m0.025s\\n' > \"$SLIMFIT_OUT/test-cpu/slow\""
             tests_report = {{ format = "junit", path = "$SLIMFIT_OUT/junit.xml" }}
             mutants_command = "f() {{ case \" $* \" in *\" --list \"*) echo \"$@\" > \"$SLIMFIT_OUT/list-args\"; cat {r}/mutants.list.json;; *) echo \"$@\" > \"$SLIMFIT_OUT/args\"; mkdir -p \"$SLIMFIT_OUT/mutants.out\"; cp {r}/outcomes.json \"$SLIMFIT_OUT/mutants.out\";; esac; }}; f"
             "#
@@ -1092,14 +1140,20 @@ pub(crate) mod t {
         let runs = counter.path().join("test-runs");
         let test = format!("echo run >> '{}'; {}", runs.display(), cfg.suites[0].resolve().test_command);
         cfg.suites[0].overrides.test_command = Some(test);
+        // A build of its own, before the tests: its CPU time is not theirs.
+        let build = format!("echo build >> '{}'; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done", runs.display());
+        cfg.suites[0].overrides.build_command = Some(build);
         std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
-        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().count());
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().filter(|l| *l == "run").count());
         let measure = |timed| {
             current(repo, &cfg, &Options { mutants: Mutants::None, fresh: false, dry_run: false, timed }).unwrap()
         };
 
         let (m, args) = run(repo, &cfg, &[KILLED]).unwrap();
         assert!(args.is_some() && m.suites[0].untimed && ran() == 1);
+        // The sample's test command records the slow test's CPU time.
+        assert_eq!(m.suites[0].metrics.test_seconds, 0.625);
+        assert_eq!(std::fs::read_to_string(&runs).unwrap(), "build\nrun\n");
         // A baseline it would exceed: no violation, and the ratchet keeps it.
         let held = crate::config::CheckConfig { time_slack: 0.0, ..Default::default() };
         let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
@@ -1117,43 +1171,53 @@ pub(crate) mod t {
         assert_eq!(ran(), 2);
         assert!(!timed.suites[0].untimed && timed.with_mutants);
         assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
-        // Held, on a host quiet enough for it (ADR 0003): this one may not be.
-        let mut quiet = timed.clone();
-        quiet.suites[0].host_load = 0.0;
-        let v = crate::ratchet::check(&base, &quiet, &held);
+        let v = crate::ratchet::check(&base, &timed, &held);
         assert!(v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
         // Cached now, timed: nothing runs again, `--mutants` included.
         assert_eq!((measure(true), run(repo, &cfg, &[KILLED]).unwrap().1, ran()), (timed, None, 2));
     }
 
+    /// Each test's CPU time is its own where the test command recorded it
+    /// (0 for a test it has no record of); otherwise the command tree's,
+    /// shared by the tests' wall times. `test_seconds` is their sum.
     #[test]
-    /// A test whose report says it started before the command, as reported.
-    fn the_tests_durations_are_divided_by_the_hosts_slowdown() {
+    fn each_tests_cpu_time_is_its_own_or_its_share_of_the_trees() {
         let totals = Totals::default();
-        let tests = vec![
-            TestCase { id: "a".into(), seconds: 3.0, passed: true, start: None },
-            TestCase { id: "b".into(), seconds: 1.5, passed: true, start: Some(102.0) },
-            TestCase { id: "c".into(), seconds: 2.0, passed: true, start: Some(50.0) },
-        ];
-        let timing = Timing { command_seconds: 9.87654, slowdown: 1.23456, host_load: 0.25, started: 100.0 };
-        let m = reduce(
-            &crate::config::preset(crate::config::Preset::Rust),
-            &totals,
-            &Resolver::new(Path::new("/r"), &totals),
-            tests,
-            Coverage::default(),
-            None,
-            None,
-            timing,
-        );
-        assert_eq!(
-            m.tests.iter().map(|t| (t.seconds * 1e6).round()).collect::<Vec<_>>(),
-            [2_430_016.0, 1_215_008.0, 2_000_000.0]
-        );
-        assert_eq!(
-            (m.metrics.test_seconds, m.load_slowdown, m.command_seconds, m.host_load),
-            (5.645, 1.235, 9.877, 0.25)
-        );
+        let case = |id: &str, seconds| TestCase { id: id.into(), seconds, passed: true, cpu: 0.0 };
+        let measure = |tests, test_cpu| {
+            let timing = Timing { command_seconds: 9.87654, tree_cpu: 12.0, test_cpu };
+            reduce(
+                &crate::config::preset(crate::config::Preset::Rust),
+                &totals,
+                &Resolver::new(Path::new("/r"), &totals),
+                tests,
+                Coverage::default(),
+                None,
+                None,
+                timing,
+            )
+        };
+        let own = measure(vec![case("a", 3.0), case("b", 1.0)], [("a".to_string(), 0.25)].into());
+        assert_eq!(own.tests.iter().map(|t| t.cpu).collect::<Vec<_>>(), [0.25, 0.0]);
+        assert_eq!((own.metrics.test_seconds, own.command_seconds), (0.25, 9.877));
+        let tree = measure(vec![case("a", 3.0), case("b", 1.0)], BTreeMap::new());
+        assert_eq!(tree.tests.iter().map(|t| t.cpu).collect::<Vec<_>>(), [9.0, 3.0]);
+        let untimed = measure(vec![case("a", 0.0), case("b", 0.0)], BTreeMap::new());
+        assert_eq!(untimed.tests.iter().map(|t| t.cpu).collect::<Vec<_>>(), [6.0, 6.0]);
+    }
+
+    /// A record per test process: the id, then `times`; a retried test
+    /// spent the sum, and a record without the children's line is skipped.
+    #[test]
+    fn test_cpu_records_read_times_children_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |f: &str, text: &str| std::fs::write(dir.path().join(f), text).unwrap();
+        write("1", "b::t\n0m0.001s 0m0.002s\n0m1.5s 0m0.25s\n");
+        write("2", "b::t\n0m0.001s 0m0.002s\n1m0.000s 0m0.000s\n");
+        write("3", "b::u\n0m0.001s 0m0.002s\n");
+        write("4", "b::v\n0m0.001s 0m0.002s\n0m1.5 0m0.25s\n");
+        assert_eq!(read_test_cpu(dir.path()), [("b::t".to_string(), 61.75)].into());
+        assert!(read_test_cpu(&dir.path().join("none")).is_empty());
     }
 
     /// Every function of a source file's coverage is keyed by its first
@@ -1192,7 +1256,7 @@ pub(crate) mod t {
             t("y", None, &[]),
             t("z", Some(&["_Rgone"]), &[2]),
         ];
-        let timing = Timing { command_seconds: 0.0, slowdown: 1.0, host_load: 0.0, started: 0.0 };
+        let timing = Timing { command_seconds: 0.0, tree_cpu: 0.0, test_cpu: BTreeMap::new() };
         let suite = crate::config::preset(crate::config::Preset::Rust);
         let resolver = Resolver::new(repo.path(), &totals);
         let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);

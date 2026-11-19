@@ -283,7 +283,7 @@ mod tests {
         let lib = std::fs::read_to_string(sample.join("src/lib.rs")).unwrap();
         std::fs::write(dir.path().join("src/lib.rs"), lib.replace("pub fn is_adult", "pub const fn is_adult")).unwrap();
         let listed = std::fs::read_to_string(sample.join("reports/mutants.list.json")).unwrap();
-        let tests = vec![TestCase { id: "calc::tests::slow".into(), seconds: 0.62, passed: true, start: None }];
+        let tests = vec![TestCase { id: "calc::tests::slow".into(), seconds: 0.62, passed: true, cpu: 0.0 }];
         let p = plan(dir.path(), &listed, |f| format!("sub/{f}"), &reach(), &tests).unwrap();
         let got: Vec<(u32, u32, Option<Vec<u32>>)> =
             p.functions.iter().map(|f| (f.start, f.end, f.tests.clone())).collect();

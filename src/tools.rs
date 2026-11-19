@@ -27,3 +27,8 @@ pub const SWIFT_PROFDATA: &str = ".build/debug/codecov/default.profdata";
 /// The Rust preset's report of which functions each test ran, under
 /// `$SLIMFIT_OUT`.
 pub const REACH: &str = "reach.txt";
+/// The directory where a test command records each test's CPU time, under
+/// `$SLIMFIT_OUT`, made before it runs (ADR 0010): a file per test process, its first line the test's id as the
+/// tests report gives it, then what the shell's `times` printed after the
+/// test exited (its second line: the CPU time of the shell's children).
+pub const TEST_CPU: &str = "test-cpu";

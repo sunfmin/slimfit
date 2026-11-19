@@ -389,9 +389,13 @@ fn llvm_cov(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal>
     Ok(Work::default())
 }
 
-/// `go test -json -coverprofile=<file>`: the JSON on stdout.
+/// `go test -json -coverprofile=<file>`: the JSON on stdout. With
+/// `-run '^$'` (the build): no test runs, and nothing is written.
 fn go(sub: &str, args: &[String]) -> Result<Work, Refusal> {
     sub_is(sub, "test")?;
+    if value(args, "-run").as_deref() == Some("^$") {
+        return Ok(Work::default());
+    }
     has(args, "-json")?;
     let cover = need(args, "-coverprofile")?;
     Ok(Work { copies: vec![("cover.out".into(), cover.into())], stdout: Some("test.json".into()), ..Work::default() })
@@ -405,7 +409,12 @@ fn gremlins(sub: &str, args: &[String]) -> Result<Work, Refusal> {
 /// `swift test`: XCTest's xunit at the path given, swift-testing's beside
 /// it, and the build a coverage export reads: the test bundle and the
 /// profile, under `.build/debug`, a symlink as SwiftPM makes it.
+/// `swift build --build-tests` (the build) writes nothing.
 fn swift(sub: &str, args: &[String], dir: &Path) -> Result<Work, Refusal> {
+    if sub == "build" {
+        has(args, "--build-tests")?;
+        return Ok(Work::default());
+    }
     sub_is(sub, "test")?;
     has(args, "--enable-code-coverage")?;
     has(args, "--parallel")?;
@@ -472,6 +481,7 @@ fn gradlew(args: &[String]) -> Result<Work, Refusal> {
             )),
             "koverXmlReport" => copies.push(("kover.xml".into(), KOVER_XML.into())),
             "pitest" => copies.push(("mutations.xml".into(), PITEST_XML.into())),
+            "testClasses" => {}
             _ => return Err(format!("Task '{task}' not found in root project")),
         }
     }
