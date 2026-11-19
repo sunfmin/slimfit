@@ -388,6 +388,7 @@ mod t {
             mutated: None,
             command_seconds: 0.0,
             load_slowdown: 1.0,
+            untimed: false,
         }
     }
 

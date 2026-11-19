@@ -158,6 +158,6 @@ another can be short like this by a few lines; measure from the base the
 gate uses.
 
 (A first run without the plain check before it ran the tests at background
-priority: test_seconds 31.1 against a limit of 10.5. Its mutants came out
-the same, 542s, but the ratchet refused it. Run `check` first, then
-`--mutants`, which reuses that test run.)
+priority: test_seconds 31.1 against a limit of 10.5, and the ratchet refused
+it. Since slimfit#39 such a test run's `test_seconds` is neither checked nor
+ratcheted: see `slimfit help host-load`.)

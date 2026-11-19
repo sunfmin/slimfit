@@ -210,7 +210,7 @@ enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; and `mutants_unchecked`, true when mutants were not measured.
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held because their tests ran inside `--mutants` (see [host load](help:host-load)).
     /// - `landing`: the change the gate holds to a mutants measurement (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `files` (the source files that hold changed lines) and `change` (their mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
@@ -563,7 +563,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = measure::current(
                 &repo,
                 &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run },
+                &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run, timed: false },
             )?;
             let base = ratchet::Baseline {
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
@@ -587,7 +587,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = measure::current(
                 &repo,
                 &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false },
+                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
             let mut list = tasks::all(&repo, &cfg, &m, &base.kept)?;
             if let Some(k) = kind {
@@ -632,8 +632,11 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Check { mutants, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
-            let m =
-                measure::current(&repo, &cfg, &measure::Options { mutants: scope(mutants), fresh, dry_run: false })?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &measure::Options { mutants: scope(mutants), fresh, dry_run: false, timed: !mutants },
+            )?;
             let mut v = ratchet::check(&base, &m, &cfg.check);
             let (landing, unmeasured) = landing::hold(&repo, &cfg, &m)?;
             v.violations.extend(unmeasured);
@@ -653,8 +656,11 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Ratchet { loosen, reason, fresh, dry_run, .. } => {
             let (cfg, old) = loaded(&repo)?;
-            let m =
-                measure::current(&repo, &cfg, &measure::Options { mutants: measure::Mutants::None, fresh, dry_run })?;
+            let m = measure::current(
+                &repo,
+                &cfg,
+                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
+            )?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
             // The lines a mutants run measured, recorded apart from the baseline.
             let mut measured = landing::Hashes::new();
@@ -704,7 +710,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = measure::current(
                 &repo,
                 &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false },
+                &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false, timed: false },
             )?;
             let found = m.suites.iter().find_map(|s| {
                 let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == test)?;
@@ -739,7 +745,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = measure::current(
                 &repo,
                 &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false },
+                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
             let history = report::history(&repo, &cfg, commits, points)?;
             Ok((
