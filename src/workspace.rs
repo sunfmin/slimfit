@@ -144,15 +144,16 @@ pub mod t {
                 (
                     "Cargo.toml",
                     "[workspace]\nmembers = [\"crates/*\", \"app\"]\nexclude = [\"crates/old\"]\n\
-                     [workspace.dependencies]\nsupport = { path = \"crates/support\" }\n",
+                     [workspace.dependencies]\nsupport = { path = \"crates/support\" }\n\
+                     both = { path = \"crates/both\" }\n",
                 ),
                 (
                     "app/Cargo.toml",
                     "[package]\nname = \"app\"\n[dependencies]\ncore = { path = \"../crates/core\" }\n\
                      serde = \"1\"\n[dev-dependencies]\nsupport = { workspace = true }\n\
-                     [target.'cfg(unix)'.dev-dependencies]\nboth = { path = \"../crates/both\" }\n",
+                     [target.'cfg(unix)'.dev-dependencies]\nboth = { workspace = true }\n",
                 ),
-                // `both` is a dev-dependency of app and a build-dependency of core: prod.
+                // `both` is a dev-dependency of app and, through `../`, a build-dependency of core: prod.
                 (
                     "crates/core/Cargo.toml",
                     "[package]\nname = \"core\"\n[build-dependencies]\nboth = { path = \"../both\" }\n",
