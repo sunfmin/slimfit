@@ -1,0 +1,27 @@
+{
+  "tree": "d8ba8d38c5f6bfcca9663d6b690768f9d0e0b4ae+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/mutants.rs:146:9: replace Change::pick -> Result<Self> with Ok(Default::default())",
+        "why": "Change::pick is the new seam's entry: it must refuse and choose, not hand back no picks",
+        "outcome": "unviable"
+      },
+      {
+        "name": "src/measure/mutants.rs:152:9: replace Change::take -> Picked with Default::default()",
+        "why": "take hands each suite its own picks from the change",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:204:9: replace Picked::run -> Result<()> with Ok(())",
+        "why": "run is the one call measuring makes into the module: the picks must actually run",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:351:9: replace Mutation::record with ()",
+        "why": "record is the one place a run lands in the suite's measurement, now also for reduce",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
