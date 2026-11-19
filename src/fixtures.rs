@@ -148,7 +148,6 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
     let run = |lcov: String| Measurement {
         tree: "t".into(),
         with_mutants: false,
-        snapshot: None,
         since: None,
         suites: vec![measure_with_coverage(
             "rust",

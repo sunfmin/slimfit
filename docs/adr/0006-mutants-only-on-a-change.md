@@ -4,6 +4,8 @@ Supersedes `0004-rust-kill-matrix.md`, and what `0001`, `0002` and `0005`
 still said about runs over every mutant (`--all-mutants`, `init --mutants`,
 pieces, the kill matrix).
 
+**Amended by ADR 0008** (`0008-the-gate-holds-a-landings-lines-to-a-mutants-run.md`): the change is the landing's diff against its target, `mutants_at` is gone, and the gate's plain `check` holds every added source line to a ratcheted mutants run, recorded per run in `.slimfit/mutants/`.
+
 ## Context
 
 On factorium#93 (2026-11-19 02:13) a worker's `slimfit check --mutants`
