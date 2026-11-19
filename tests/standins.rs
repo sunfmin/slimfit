@@ -569,6 +569,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert!(next["tasks"].as_array().unwrap().iter().any(|t| t["kind"] == "surviving-mutant"), "{next:#}");
     assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
     assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
+    assert!(check["mutated"]["rust"].get("lines").is_none(), "{check:#}");
     let calls = s.take();
     let listed = calls.iter().filter(|c| c.step == "cargo mutants" && c.args.contains(&"--list".to_string())).count();
     assert_eq!(listed, 1, "{calls:?}");

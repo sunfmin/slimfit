@@ -797,7 +797,13 @@ fn mutated_of(m: &model::Measurement) -> serde_json::Value {
     if !m.with_mutants {
         return serde_json::Value::Null;
     }
-    m.suites.iter().map(|s| (s.suite.clone(), json!(s.mutated))).collect::<serde_json::Map<_, _>>().into()
+    // The lines' hashes are for the record `ratchet` writes, not for reading.
+    let shown = |m: &model::Mutated| json!({ "files": m.files, "change": m.change });
+    m.suites
+        .iter()
+        .map(|s| (s.suite.clone(), s.mutated.as_ref().map(shown).into()))
+        .collect::<serde_json::Map<_, _>>()
+        .into()
 }
 
 /// The files a command writes, by path in the repo: written at once, or in
