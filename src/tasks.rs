@@ -114,9 +114,10 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
 
 pub fn all(repo: &Path, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
     let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
+    let files = git::files(repo)?;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
-        out.extend(deepen(repo, &Classifier::new(&sc.resolve(), repo)?, &s.suite, &base.kept_files)?);
+        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, &files)?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -357,15 +358,14 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
 }
 
 /// The suite that counts `path` (relative to the repo) as an existing
-/// source file, with its classifier: where a deepen task's file belongs.
-pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(String, Classifier)>> {
-    if !repo.join(path).is_file() {
-        return Ok(None);
-    }
+/// source file, with its prod lines: where a deepen task's file belongs.
+pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
+    let Ok(text) = std::fs::read_to_string(repo.join(path)) else { return Ok(None) };
+    let files = git::files(repo)?;
     for sc in &cfg.suites {
-        let c = Classifier::new(&sc.resolve(), repo)?;
-        if c.kind(path) == Some(Kind::Source) {
-            return Ok(Some((sc.name.clone(), c)));
+        let c = Classifier::of_worktree(&sc.resolve(), repo, &files)?;
+        if let Some((Kind::Source, l)) = c.file(path, &text) {
+            return Ok(Some((sc.name.clone(), l.prod)));
         }
     }
     Ok(None)
@@ -396,7 +396,8 @@ fn deepen(repo: &Path, classifier: &Classifier, suite: &str, kept: &[KeptFile]) 
     let mut hot = Vec::new();
     for (f, n) in changes.into_iter().filter(|(_, n)| *n >= 5) {
         let Ok(text) = std::fs::read_to_string(repo.join(f)) else { continue };
-        let lines = classifier.lines(Kind::Source, &text).prod;
+        let Some((_, l)) = classifier.file(f, &text) else { continue };
+        let lines = l.prod;
         // Only a file with a verdict pays for counting its whole history.
         let held = || kept.iter().filter(|k| k.file == f).any(|k| k.holds(suite, f, lines, churn(repo, f).1));
         if lines >= 100 && !held() {
@@ -464,6 +465,30 @@ mod t {
         }
     }
 
+    /// A big file that keeps changing is not proposed when it is test code:
+    /// a file some other file declares `#[cfg(test)] mod x;`.
+    #[test]
+    fn a_test_module_file_is_no_deepen_candidate() {
+        use crate::measure::t::git;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        git(repo, &["init", "-q"]);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "#[cfg(test)]\nmod fixtures;\nfn main() {}\n").unwrap();
+        for i in 0..5 {
+            let body: String = (0..120).map(|n| format!("pub const C{n}: u8 = {i};\n")).collect();
+            for f in ["src/fixtures.rs", "src/big.rs"] {
+                std::fs::write(repo.join(f), &body).unwrap();
+            }
+            git(repo, &["add", "."]);
+            git(repo, &["commit", "-qm", &format!("c {i}")]);
+        }
+        let suite = crate::config::preset(crate::config::Preset::Rust);
+        let c = Classifier::of_worktree(&suite, repo, &git::files(repo).unwrap()).unwrap();
+        let proposed: Vec<_> = deepen(repo, &c, "s", &[]).unwrap().into_iter().map(|t| t.files).collect();
+        assert_eq!(proposed, [["src/big.rs"]]);
+    }
+
     /// A big file that keeps changing is proposed; kept, it is not, until
     /// its prod lines grow by KEPT_GROWTH or as many commits change it again
     /// as made it a candidate; a verdict on another suite does not hold.
@@ -473,8 +498,7 @@ mod t {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path();
         git(repo, &["init", "-q"]);
-        let c =
-            Classifier::new(&crate::config::preset(crate::config::Preset::Rust), std::path::Path::new(".")).unwrap();
+        let c = Classifier::of_worktree(&crate::config::preset(crate::config::Preset::Rust), repo, &[]).unwrap();
         let commit = |lines: usize, note: &str| {
             let body: String = (0..lines).map(|i| format!("pub const C{i}: u8 = {};\n", note.len())).collect();
             std::fs::create_dir_all(repo.join("src")).unwrap();
@@ -489,7 +513,8 @@ mod t {
         assert_eq!(proposed(&[]), 1);
         let (commits_90d, commits_total) = churn(repo, "src/big.rs");
         assert_eq!((commits_90d, commits_total), (5, 5));
-        let prod_lines = c.lines(Kind::Source, &std::fs::read_to_string(repo.join("src/big.rs")).unwrap()).prod;
+        let prod_lines =
+            c.file("src/big.rs", &std::fs::read_to_string(repo.join("src/big.rs")).unwrap()).unwrap().1.prod;
         let verdict = |suite: &str| KeptFile {
             suite: suite.into(),
             file: "src/big.rs".into(),

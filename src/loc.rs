@@ -1,13 +1,20 @@
-//! Which files of a suite are source and which are test, and how many
-//! non-blank lines each side has. Rust's `#[cfg(test)] mod` blocks count as
-//! test lines even though they sit in source files, and so does every file
+//! Which files of a suite are source and which are test, and which lines
+//! of each are source lines: the one oracle every caller asks.
+//!
+//! A [`Classifier`] is built for a whole tree, because some rules need it:
+//! a file declared `#[cfg(test)] mod x;` is test code, and so is every file
 //! of a workspace crate that other members reach only through
-//! `[dev-dependencies]` (`workspace::test_crates`).
+//! `[dev-dependencies]` (`workspace::test_crates`). Rust's `#[cfg(test)]`
+//! items are test lines even though they sit in source files.
+//!
+//! A source line is a line of a source file, outside its tests, that is
+//! neither blank nor only a `//` comment: what `prod_lines` counts, what
+//! coverage is kept for, and what a change owes mutants for.
 
 use crate::config::{Preset, Suite};
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub struct Classifier {
@@ -16,6 +23,8 @@ pub struct Classifier {
     tests: GlobSet,
     excludes: GlobSet,
     inline_tests: bool,
+    /// Files some file of the tree declares `#[cfg(test)] mod x;`.
+    test_modules: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,18 +33,18 @@ pub enum Kind {
     Test,
 }
 
-/// The lines of one source file: how many are prod, how many test, and
-/// which line numbers (1-based) are test lines.
+/// The lines of one file: how many are source lines (`prod`), how many
+/// test lines, and which line numbers (1-based) are source lines.
 #[derive(Debug, Default, Clone)]
 pub struct FileLines {
     pub prod: u64,
     pub test: u64,
-    pub test_ranges: Vec<(u32, u32)>,
+    source: BTreeSet<u32>,
 }
 
 impl FileLines {
-    pub fn is_test_line(&self, n: u32) -> bool {
-        self.test_ranges.iter().any(|(a, b)| (*a..=*b).contains(&n))
+    pub fn is_source_line(&self, n: u32) -> bool {
+        self.source.contains(&n)
     }
 }
 
@@ -47,24 +56,42 @@ fn set(globs: &[String]) -> Result<GlobSet> {
     Ok(b.build()?)
 }
 
+/// Whether a line counts at all: neither blank nor only a `//` comment.
+fn counts(line: &str) -> bool {
+    let t = line.trim();
+    !t.is_empty() && !t.starts_with("//")
+}
+
 impl Classifier {
-    /// `repo` is where a Rust suite's Cargo manifests are read.
-    pub fn new(suite: &Suite, repo: &Path) -> Result<Self> {
+    /// The suite's classifier for the tree of `files` (relative to `repo`),
+    /// read through `read`. A Rust suite's Cargo manifests are read in `repo`.
+    pub fn new(suite: &Suite, repo: &Path, files: &[String], read: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut tests = suite.tests.clone();
         if suite.preset == Preset::Rust {
             tests.extend(crate::workspace::test_crates(&repo.join(&suite.root)).iter().map(|d| format!("{d}/**")));
         }
-        Ok(Self {
+        let mut c = Self {
             root: suite.root.trim_end_matches('/').to_string(),
             sources: set(&suite.sources)?,
             tests: set(&tests)?,
             excludes: set(&suite.excludes)?,
             inline_tests: suite.inline_tests,
-        })
+            test_modules: BTreeSet::new(),
+        };
+        if c.inline_tests {
+            let declaring = files.iter().filter(|f| c.globbed(f) == Some(Kind::Source));
+            c.test_modules = declaring.filter_map(|f| Some(rust_test_module_files(f, &read(f)?))).flatten().collect();
+        }
+        Ok(c)
     }
 
-    /// `path` is relative to the repository root.
-    pub fn kind(&self, path: &str) -> Option<Kind> {
+    /// The suite's classifier for the working tree at `repo`.
+    pub fn of_worktree(suite: &Suite, repo: &Path, files: &[String]) -> Result<Self> {
+        Self::new(suite, repo, files, |f| std::fs::read_to_string(repo.join(f)).ok())
+    }
+
+    /// The kind the suite's globs alone give `path` (relative to the repo).
+    fn globbed(&self, path: &str) -> Option<Kind> {
         let rel = if self.root == "." || self.root.is_empty() {
             path
         } else {
@@ -76,33 +103,40 @@ impl Classifier {
         Some(if self.tests.is_match(rel) { Kind::Test } else { Kind::Source })
     }
 
-    pub fn lines(&self, kind: Kind, text: &str) -> FileLines {
-        let non_blank =
-            |a: usize, b: usize| text.lines().skip(a).take(b - a).filter(|l| !l.trim().is_empty()).count() as u64;
-        let total = text.lines().count();
-        let all = non_blank(0, total);
-        if kind == Kind::Test {
-            return FileLines { prod: 0, test: all, test_ranges: vec![(1, total as u32)] };
+    /// `path`'s kind in this tree (relative to the repository root); `None`
+    /// when the suite does not count it.
+    pub fn kind(&self, path: &str) -> Option<Kind> {
+        match self.globbed(path)? {
+            Kind::Source if self.test_modules.contains(path) => Some(Kind::Test),
+            k => Some(k),
         }
-        let ranges = if self.inline_tests { rust_test_blocks(text) } else { Vec::new() };
-        let test: u64 = ranges.iter().map(|(a, b)| non_blank(*a as usize - 1, *b as usize)).sum();
-        FileLines { prod: all - test, test, test_ranges: ranges }
+    }
+
+    /// `path`'s kind and lines, its text being `text`.
+    pub fn file(&self, path: &str, text: &str) -> Option<(Kind, FileLines)> {
+        let kind = self.kind(path)?;
+        let tests = match kind {
+            Kind::Test => vec![(1, u32::MAX)],
+            Kind::Source if self.inline_tests => rust_test_blocks(text),
+            Kind::Source => vec![],
+        };
+        let mut l = FileLines::default();
+        for (n, _) in (1..).zip(text.lines()).filter(|(_, line)| counts(line)) {
+            if tests.iter().any(|(a, b)| (*a..=*b).contains(&n)) {
+                l.test += 1;
+            } else {
+                l.prod += 1;
+                l.source.insert(n);
+            }
+        }
+        Some((kind, l))
     }
 
     /// Per-file line counts for `files` read through `read`.
     pub fn count(&self, files: &[String], read: impl Fn(&str) -> Option<String>) -> Totals {
-        let texts: Vec<(&String, Kind, String)> =
-            files.iter().filter_map(|f| Some((f, self.kind(f)?, read(f)?))).collect();
-        // A file declared `#[cfg(test)] mod x;` is test code as a whole.
-        let test_modules: Vec<String> = if self.inline_tests {
-            texts.iter().flat_map(|(f, _, text)| rust_test_module_files(f, text)).collect()
-        } else {
-            Vec::new()
-        };
         let mut t = Totals::default();
-        for (f, kind, text) in texts {
-            let kind = if test_modules.contains(f) { Kind::Test } else { kind };
-            let l = self.lines(kind, &text);
+        for f in files {
+            let Some((kind, l)) = self.kind(f).and_then(|_| self.file(f, &read(f)?)) else { continue };
             t.prod += l.prod;
             t.test += l.test;
             t.files.insert(f.clone(), (kind, l));
@@ -110,7 +144,6 @@ impl Classifier {
         t
     }
 }
-
 /// The files of modules `path` declares as `#[cfg(test)] mod name;`.
 fn rust_test_module_files(path: &str, text: &str) -> Vec<String> {
     let (dir, file) = path.rsplit_once('/').map(|(d, f)| (format!("{d}/"), f)).unwrap_or((String::new(), path));
@@ -224,15 +257,16 @@ mod t {
     use super::*;
     use crate::config::{Preset, preset};
 
+    /// A Rust classifier for a tree of no files.
     fn rust() -> Classifier {
-        Classifier::new(&preset(Preset::Rust), Path::new(".")).unwrap()
+        Classifier::new(&preset(Preset::Rust), Path::new("."), &[], |_| None).unwrap()
     }
 
     #[test]
     fn classifies_by_globs_and_root() {
         let mut s = preset(Preset::Go);
         s.root = "svc".into();
-        let c = Classifier::new(&s, Path::new(".")).unwrap();
+        let c = Classifier::new(&s, Path::new("."), &[], |_| None).unwrap();
         assert_eq!(c.kind("svc/a.go"), Some(Kind::Source));
         assert_eq!(c.kind("svc/a_test.go"), Some(Kind::Test));
         assert_eq!(c.kind("svc/vendor/x/a.go"), None);
@@ -248,7 +282,7 @@ mod t {
         crate::workspace::t::workspace(&d.path().join("ws"));
         let mut s = preset(Preset::Rust);
         s.root = "ws".into();
-        let c = Classifier::new(&s, d.path()).unwrap();
+        let c = Classifier::new(&s, d.path(), &[], |_| None).unwrap();
         let files: Vec<String> =
             ["ws/app/src/lib.rs", "ws/crates/support/src/lib.rs", "ws/crates/both/src/lib.rs"].map(String::from).into();
         let t = c.count(&files, |_| Some("fn a() {}\n\nfn b() {}\n".into()));
@@ -257,18 +291,22 @@ mod t {
         assert_eq!((t.prod, t.test), (4, 2));
     }
 
+    /// Inline tests are test lines; blank lines and `//` comments are
+    /// neither source nor test lines.
     #[test]
-    fn rust_inline_tests_are_test_lines() {
-        let src = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    fn s() { let _ = \"}\"; let _ = '{'; }\n}\nfn b() {}\n";
-        let l = rust().lines(Kind::Source, src);
-        assert_eq!(l.test_ranges, vec![(3, 6)]);
+    fn source_lines_are_outside_tests_blanks_and_comments() {
+        let src = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    // c\n    fn s() { let _ = \"}\"; let _ = '{'; }\n}\n/// doc\nfn b() {}\n";
+        let (_, l) = rust().file("src/a.rs", src).unwrap();
         assert_eq!((l.prod, l.test), (2, 4));
-        assert!(l.is_test_line(5) && !l.is_test_line(7));
+        assert_eq!(l.source.iter().copied().collect::<Vec<_>>(), [1, 9]);
+        assert_eq!(rust_test_blocks(src), vec![(3, 7)]);
     }
 
+    /// A file declared `#[cfg(test)] mod x;` is test code, asked alone: the
+    /// declaring file need not be among the files asked about.
     #[test]
     fn a_cfg_test_module_file_is_test_code() {
-        let files: Vec<String> = ["src/main.rs", "src/fixtures.rs", "src/a.rs", "src/a/t.rs"].map(String::from).into();
+        let tree: Vec<String> = ["src/main.rs", "src/fixtures.rs", "src/a.rs", "src/a/t.rs"].map(String::from).into();
         let text = |f: &str| {
             Some(
                 match f {
@@ -279,17 +317,16 @@ mod t {
                 .to_string(),
             )
         };
-        let t = rust().count(&files, text);
-        let kind = |f: &str| t.files[f].0;
-        assert_eq!(
-            [kind("src/main.rs"), kind("src/fixtures.rs"), kind("src/a.rs"), kind("src/a/t.rs")],
-            [Kind::Source, Kind::Test, Kind::Source, Kind::Test]
-        );
+        let c = Classifier::new(&preset(Preset::Rust), Path::new("."), &tree, text).unwrap();
+        let kinds = tree.iter().map(|f| c.kind(f)).collect::<Vec<_>>();
+        assert_eq!(kinds, [Some(Kind::Source), Some(Kind::Test), Some(Kind::Source), Some(Kind::Test)]);
+        let t = c.count(&tree[1..2], text);
+        assert_eq!((t.prod, t.test), (0, 1));
     }
 
     #[test]
     fn cfg_test_on_a_use_line_ends_at_semicolon() {
         let src = "#[cfg(test)]\nuse x::y;\nfn a() {}\n";
-        assert_eq!(rust().lines(Kind::Source, src).test_ranges, vec![(1, 2)]);
+        assert_eq!(rust_test_blocks(src), vec![(1, 2)]);
     }
 }

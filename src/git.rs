@@ -48,6 +48,12 @@ fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
         .collect()
 }
 
+/// The files of the working tree (tracked, and untracked ones git does not
+/// ignore), relative to `repo`.
+pub fn files(repo: &Path) -> Result<Vec<String>> {
+    Ok(listing(repo)?.into_iter().map(|(_, f)| f).collect())
+}
+
 /// The working tree, read with three git commands: each spawn costs CPU
 /// time, which `test_seconds` counts (ADR 0010).
 pub struct Worktree {

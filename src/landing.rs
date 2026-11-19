@@ -137,22 +137,20 @@ pub fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option
 }
 
 /// Of `added`, the lines a suite's mutants run must measure, per suite whose
-/// tool can be limited to a change (no other runs mutants): in a source file
-/// and outside its inline tests, neither blank nor only a `//` comment.
+/// tool can be limited to a change (no other runs mutants): its source lines.
 pub fn required(repo: &Path, cfg: &Config, added: &Lines) -> Result<BTreeMap<String, Lines>> {
     let files: Vec<String> = added.keys().cloned().collect();
+    let tree = git::files(repo)?;
     let mut out = BTreeMap::new();
     for s in cfg.suites.iter().map(|s| s.resolve()) {
         if !s.mutates() {
             continue;
         }
-        let totals = Classifier::new(&s, repo)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
+        let totals =
+            Classifier::of_worktree(&s, repo, &tree)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
         let mut lines = Lines::new();
         for (f, (_, l)) in totals.files.iter().filter(|(_, (k, _))| *k == Kind::Source) {
-            let wanted = added[f].iter().filter(|(n, text)| {
-                let t = text.trim();
-                !t.is_empty() && !t.starts_with("//") && !l.is_test_line(**n)
-            });
+            let wanted = added[f].iter().filter(|(n, _)| l.is_source_line(**n));
             let wanted: BTreeMap<u32, String> = wanted.map(|(n, t)| (*n, t.clone())).collect();
             if !wanted.is_empty() {
                 lines.insert(f.clone(), wanted);
@@ -282,6 +280,7 @@ mod t {
     #[test]
     fn a_test_crate_owes_no_mutants() {
         let d = tempfile::tempdir().unwrap();
+        crate::measure::t::git(d.path(), &["init", "-q"]);
         crate::workspace::t::workspace(d.path());
         let added: Lines = ["crates/support/src/lib.rs", "crates/core/src/lib.rs"]
             .map(|f| {
@@ -292,5 +291,32 @@ mod t {
         let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
         let got = required(d.path(), &cfg, &added).unwrap();
         assert_eq!(got["rust"].keys().collect::<Vec<_>>(), ["crates/core/src/lib.rs"]);
+    }
+
+    /// A file declared `#[cfg(test)] mod x;` is test code, though the change
+    /// leaves the declaring file alone: its lines owe no mutants. Only a
+    /// prod file's source lines do, not its blanks or `//` comments.
+    #[test]
+    fn a_test_module_file_owes_no_mutants() {
+        let d = tempfile::tempdir().unwrap();
+        crate::measure::t::git(d.path(), &["init", "-q"]);
+        crate::workspace::t::write(
+            d.path(),
+            &[
+                ("Cargo.toml", "[package]\nname = \"x\"\n"),
+                ("src/main.rs", "mod a;\n#[cfg(test)]\nmod fixtures;\nfn main() {}\n"),
+                ("src/fixtures.rs", "fn f() {}\n"),
+                ("src/a.rs", "// c\n\nfn a() {}\n"),
+            ],
+        );
+        let line = |n: u32, t: &str| (n, t.to_string());
+        let added: Lines = [
+            ("src/fixtures.rs".to_string(), [line(1, "fn f() {}")].into()),
+            ("src/a.rs".to_string(), [line(1, "// c"), line(2, ""), line(3, "fn a() {}")].into()),
+        ]
+        .into();
+        let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
+        let got = required(d.path(), &cfg, &added).unwrap();
+        assert_eq!(got["rust"], [("src/a.rs".to_string(), [line(3, "fn a() {}")].into())].into());
     }
 }
