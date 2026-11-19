@@ -80,7 +80,7 @@ fn measure_with_coverage(
         c,
         reach,
         Some(m.into()),
-        Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 },
+        Timing { command_seconds: 0.0, slowdown: 1.0, host_load: 0.0, started: 0.0 },
     )
 }
 

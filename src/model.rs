@@ -137,12 +137,23 @@ pub struct SuiteMeasurement {
     /// How much the host's load slowed the test command: the tests'
     /// durations are divided by it (ADR 0003).
     pub load_slowdown: f64,
+    /// The host's 1-minute load per core as the test command started. Above
+    /// `load::BUSY` a `test_seconds` over its bound is unchecked (ADR 0003).
+    #[serde(default)]
+    pub host_load: f64,
     /// The test run ran inside a `--mutants` run, at background priority by
     /// the rule: its `test_seconds` is not what a gate measures, so it is
     /// neither checked nor ratcheted. A plain `check` of the tree runs the
     /// tests again and keeps the mutants.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub untimed: bool,
+}
+
+impl SuiteMeasurement {
+    /// The host was too busy for the load correction to hold (ADR 0003).
+    pub fn busy(&self) -> bool {
+        self.host_load > crate::load::BUSY
+    }
 }
 
 /// Which tests ran which functions, from a test run that gives every test a

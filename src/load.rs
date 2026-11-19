@@ -34,6 +34,25 @@ pub fn slowdown_during<T>(f: impl FnOnce() -> T) -> (T, f64) {
     (out, probe.join().unwrap_or(1.0))
 }
 
+/// The 1-minute load per core above which the host is busy: beyond it the
+/// probe's correction does not hold (ADR 0003), so a `test_seconds` over its
+/// bound is not taken for slower tests.
+pub const BUSY: f64 = 0.5;
+
+/// The host's 1-minute load average, and its core count.
+pub fn host() -> (f64, usize) {
+    let mut load = [0f64; 3];
+    // SAFETY: `load` has room for the 3 samples asked for.
+    let n = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+    (if n >= 1 { load[0] } else { 0.0 }, std::thread::available_parallelism().map_or(1, |n| n.get()))
+}
+
+/// The host's 1-minute load average per core.
+pub fn per_core() -> f64 {
+    let (load, cores) = host();
+    load / cores as f64
+}
+
 /// Wall time over CPU time, at least 1; 1 for a thread that never ran.
 fn stretch(wall: f64, cpu: f64) -> f64 {
     if cpu > 0.0 { (wall / cpu).max(1.0) } else { 1.0 }

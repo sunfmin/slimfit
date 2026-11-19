@@ -210,7 +210,7 @@ enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held because their tests ran inside `--mutants` (see [host load](help:host-load)).
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held: their tests ran inside `--mutants`, or over the bound on a busy host (see [host load](help:host-load)).
     /// - `landing`: the change the gate holds to a mutants measurement (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `files` (the source files that hold changed lines) and `change` (their mutants by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
@@ -426,6 +426,7 @@ fn help() -> Help {
         .table::<doctor::Kind>("finding")
         .constant("TIME_TOLERANCE", check.time_tolerance)
         .constant("TIME_SLACK", check.time_slack)
+        .constant("BUSY_LOAD", load::BUSY)
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
