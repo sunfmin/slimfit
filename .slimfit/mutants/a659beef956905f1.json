@@ -1,0 +1,32 @@
+{
+  "tree": "48f214945dc587bf79ae05f3efd5ccddce9104bf+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/loc.rs:110:29: replace match guard self.test_modules.contains(path) with false in Classifier::kind",
+        "why": "a cfg(test) module file is test code to every caller, through the tree",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/loc.rs:62:19: replace && with || in counts",
+        "why": "a // comment line is no source line",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/git.rs:54:5: replace files -> Result<Vec<String>> with Ok(vec![])",
+        "why": "the classifier sees the working tree's files",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/loc.rs:120:29: replace match guard self.inline_tests with false in Classifier::file",
+        "why": "inline cfg(test) blocks stay test lines",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:363:5: replace source_suite -> Result<Option<(String, u64)>> with Ok(Some((String::new(), 1)))",
+        "why": "keep records a file's prod lines from the classifier",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
