@@ -150,7 +150,7 @@ pub mod t {
                 (
                     "app/Cargo.toml",
                     "[package]\nname = \"app\"\n[dependencies]\ncore = { path = \"../crates/core\" }\n\
-                     serde = \"1\"\n[dev-dependencies]\nsupport = { workspace = true }\n\
+                     serde = \"1\"\ntokio = { version = \"1\" }\next = { path = \"./../vendor/ext\" }\n[dev-dependencies]\nsupport = { workspace = true }\n\
                      [target.'cfg(unix)'.dev-dependencies]\nboth = { workspace = true }\n",
                 ),
                 // `both` is a dev-dependency of app and, through `../`, a build-dependency of core: prod.
