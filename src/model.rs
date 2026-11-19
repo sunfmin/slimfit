@@ -73,7 +73,7 @@ pub struct Metrics {
 }
 
 /// What a suite's [`Metrics`] print, as the command pages name them.
-pub const METRICS_HELP: &str = "`prod_lines` and `test_lines` (lines of code), `tests`, `failures`, `test_seconds`, `covered_lines` and `uncovered_lines`";
+pub const METRICS_HELP: &str = "`prod_lines` and `test_lines` (lines of source and of tests, neither blank nor only a // comment), `tests`, `failures`, `test_seconds`, `covered_lines` and `uncovered_lines`";
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MutantCounts {

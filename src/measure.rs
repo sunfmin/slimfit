@@ -300,7 +300,7 @@ fn measure_suite(
 ) -> Result<SuiteMeasurement> {
     let root = repo.join(&suite.root);
     let out = scratch.join(&suite.name);
-    let classifier = Classifier::new(suite, repo)?;
+    let classifier = Classifier::of_worktree(suite, repo, files)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
     // The tests of this tree already ran: only the mutants are new. Without
@@ -769,7 +769,7 @@ pub(crate) fn reduce(
         let Some((Kind::Source, fl)) = totals.files.get(&file) else { continue };
         let entry = lines.entry(file).or_default();
         for (n, h) in hits {
-            if !fl.is_test_line(n) {
+            if fl.is_source_line(n) {
                 let e = entry.entry(n).or_insert(0);
                 *e = (*e).max(h);
             }
@@ -830,7 +830,7 @@ fn reached(
     let mut at: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
     for (file, fs) in functions {
         let Some((Kind::Source, fl)) = totals.files.get(file) else { continue };
-        for f in fs.iter().filter(|f| !fl.is_test_line(f.line)) {
+        for f in fs.iter().filter(|f| fl.is_source_line(f.line)) {
             reach.functions.entry(file.clone()).or_default().entry(f.line).or_default();
             at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
         }
@@ -855,7 +855,7 @@ fn reached(
             let Some(file) = resolver.resolve(raw) else { continue };
             let Some((Kind::Source, fl)) = totals.files.get(&file) else { continue };
             let entry = lines.entry(file).or_default();
-            entry.extend(ls.iter().filter(|n| !fl.is_test_line(**n)));
+            entry.extend(ls.iter().filter(|n| fl.is_source_line(**n)));
             entry.sort_unstable();
             entry.dedup();
         }
@@ -1229,7 +1229,7 @@ pub(crate) mod t {
         let repo = tempfile::tempdir().unwrap();
         let mut totals = Totals::default();
         let classifier =
-            Classifier::new(&crate::config::preset(crate::config::Preset::Rust), std::path::Path::new(".")).unwrap();
+            Classifier::of_worktree(&crate::config::preset(crate::config::Preset::Rust), repo.path(), &[]).unwrap();
         let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {\n        a();\n    }\n}\n";
         std::fs::create_dir(repo.path().join("src")).unwrap();
         std::fs::write(repo.path().join("src/a.rs"), text).unwrap();

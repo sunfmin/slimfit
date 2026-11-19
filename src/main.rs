@@ -764,8 +764,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 })
             };
-            if let Some((suite, classifier)) = tasks::source_suite(&repo, &cfg, &test)? {
-                let prod_lines = classifier.lines(loc::Kind::Source, &std::fs::read_to_string(repo.join(&test))?).prod;
+            if let Some((suite, prod_lines)) = tasks::source_suite(&repo, &cfg, &test)? {
                 let (commits_90d, commits_total) = tasks::churn(&repo, &test);
                 base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
                 base.kept_files.push(ratchet::KeptFile {

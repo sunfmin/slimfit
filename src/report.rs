@@ -91,21 +91,25 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
         (0..points).map(|i| (i as f64 * step) as usize).filter(|i| *i < all.len()).map(|i| all[i]).collect();
     picked.dedup();
     picked.reverse();
-    let classifiers: Vec<(String, Classifier)> =
-        cfg.suites.iter().map(|s| Ok((s.name.clone(), Classifier::new(&s.resolve(), repo)?))).collect::<Result<_>>()?;
+    let resolved: Vec<_> = cfg.suites.iter().map(|s| s.resolve()).collect();
+    // Which files a suite counts at all does not depend on the tree: these
+    // classifiers, of no tree, pick the blobs to read.
+    let claims: Vec<Classifier> =
+        resolved.iter().map(|s| Classifier::new(s, repo, &[], |_| None)).collect::<Result<_>>()?;
     let mut out = Vec::new();
     for (commit, date) in picked {
         let ours = |p: &str| p == ratchet::FILE || p.starts_with(landing::DIR);
-        let blobs = git::tree_blobs(repo, commit, |p| ours(p) || classifiers.iter().any(|(_, c)| c.kind(p).is_some()))?;
+        let blobs = git::tree_blobs(repo, commit, |p| ours(p) || claims.iter().any(|c| c.kind(p).is_some()))?;
         let texts: BTreeMap<&str, &str> = blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let baseline: Option<Value> = texts.get(ratchet::FILE).and_then(|t| serde_json::from_str(t).ok());
         let paths: Vec<String> = texts.keys().filter(|p| !ours(p)).map(|p| p.to_string()).collect();
         let mut suites = BTreeMap::new();
-        for (name, c) in &classifiers {
-            let t = c.count(&paths, |p| texts.get(p).map(|t| t.to_string()));
+        let read = |p: &str| texts.get(p).map(|t| t.to_string());
+        for s in &resolved {
+            let t = Classifier::new(s, repo, &paths, read)?.count(&paths, read);
             let mut lines = Lines { prod: t.prod, test: t.test, ..Lines::default() };
-            judged(baseline.as_ref(), name, &mut lines);
-            suites.insert(name.clone(), lines);
+            judged(baseline.as_ref(), &s.name, &mut lines);
+            suites.insert(s.name.clone(), lines);
         }
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
         out.push(Point { commit: commit[..12].to_string(), date: date.to_string(), suites, mutants_records });
