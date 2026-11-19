@@ -143,6 +143,12 @@ pub fn merge_base(repo: &Path, target: &str) -> Option<String> {
     run(repo, &["merge-base", "HEAD", target]).ok().map(|s| s.trim().to_string())
 }
 
+/// Whether commit `a` is `b` or one of its ancestors: `false` too when
+/// either is not a commit of this repository.
+pub fn is_ancestor(repo: &Path, a: &str, b: &str) -> bool {
+    run(repo, &["merge-base", "--is-ancestor", a, b]).is_ok()
+}
+
 /// The unified diff from `from` to `to` of `files` (repository relative),
 /// its paths relative to `root` (a directory of the repository, or ".").
 pub fn diff(repo: &Path, from: &str, to: &str, root: &str, files: &[String]) -> Result<String> {

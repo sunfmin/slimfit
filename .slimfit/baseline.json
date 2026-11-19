@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 5048,
-      "test_lines": 2866,
-      "tests": 73,
+      "prod_lines": 5073,
+      "test_lines": 2924,
+      "tests": 74,
       "failures": 0,
       "test_seconds": 7.896,
-      "covered_lines": 2712,
+      "covered_lines": 2724,
       "uncovered_lines": 70
     }
   },
@@ -39,5 +39,6 @@
       "to": 7.896,
       "reason": "slimfit#31 ratcheted test_seconds 7.5 -> 5.362 before slimfit#29/#32 added 9 tests (62 -> 71; the stand-in test every_preset_through_its_standins alone runs 3.8-4.2s), so proving b6b83c0 measured 7.758s against the limit 7.434 with no change. Median of 3 slimfit check --fresh runs of slimfit#34's tree under worker exclusive, 2026-11-19, no quiet host within 15 min: 8.301s (1-min load 17.7-18.9), 7.896s (20.3-20.8), 7.733s (22.8-21.5). time_slack unchanged. slimfit#34"
     }
-  ]
+  ],
+  "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f"
 }

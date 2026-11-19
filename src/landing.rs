@@ -80,7 +80,8 @@ pub fn recorded(repo: &Path) -> Result<Hashes> {
 pub struct Landing {
     /// The branch it lands on, as named.
     pub target: String,
-    /// The merge base of HEAD and the target.
+    /// The merge base of HEAD and the target, or the baseline's
+    /// `mutants_from` when that is later.
     pub from: String,
     /// The working tree, written as a tree object.
     pub to: String,
@@ -101,6 +102,12 @@ pub fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option
             format!("slimfit.toml's [check] target {target} shares no commit with HEAD (or is not in this repository)"),
             "fetch it (`git fetch`), or set `target` to the branch changes land on",
         ));
+    };
+    // Code from before the rule is not the change: the baseline's
+    // `mutants_from`, while HEAD holds it and the target is behind it.
+    let from = match crate::ratchet::load(repo)?.mutants_from {
+        Some(cut) if git::is_ancestor(repo, &from, &cut) && git::is_ancestor(repo, &cut, "HEAD") => cut,
+        _ => from,
     };
     let to = git::write_tree(repo, head)?;
     let patch = git::diff(repo, &from, &to, ".", &[])?;
@@ -155,7 +162,8 @@ pub fn unmeasured(lines: &Lines, measured: &Hashes) -> Lines {
 pub struct Held {
     /// The branch it lands on, as named.
     pub target: String,
-    /// HEAD's merge base with it: the landing is what was added since.
+    /// HEAD's merge base with it, or the baseline's `mutants_from` when that
+    /// is later: the landing is what was added since.
     pub from: String,
     /// The source lines it adds that a mutants run must measure.
     pub lines: usize,
@@ -164,7 +172,8 @@ pub struct Held {
 }
 
 /// What a [`Held`] prints, as the command pages name it.
-pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's merge base with it), `lines` (the \
+pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's merge base with it, or the baseline's cut \
+     point, mutants_from, when that is later), `lines` (the \
      source lines the change adds that mutants must measure) and `unmeasured` (those no ratcheted mutants run measured)";
 
 /// Holds the landing to its mutants: per suite, a violation when it adds

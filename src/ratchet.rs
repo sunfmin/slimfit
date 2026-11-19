@@ -22,6 +22,11 @@ pub struct Baseline {
     /// each against its test's text: not proposed again until it changes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<Kept>,
+    /// The commit whose code no landing is charged to a mutants run for:
+    /// what was there before the rule came in (ADR 0008). It counts only
+    /// while the target has not reached it; set by hand, once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutants_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -320,7 +325,12 @@ pub fn ratchet(
         })
         .cloned()
         .collect();
-    let mut next = Baseline { suites: BTreeMap::new(), loosened: base.loosened.clone(), kept };
+    let mut next = Baseline {
+        suites: BTreeMap::new(),
+        loosened: base.loosened.clone(),
+        kept,
+        mutants_from: base.mutants_from.clone(),
+    };
     for s in &m.suites {
         let mut metrics = s.metrics.clone();
         if loosen.contains(&Bound::SurvivedMutants)

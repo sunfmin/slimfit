@@ -569,6 +569,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
                 loosened: old.loosened,
                 kept: old.kept,
+                mutants_from: old.mutants_from,
             };
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
@@ -1117,6 +1118,65 @@ mod answer_tests {
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let f = faults(repo, "check");
         assert!(f[0].fault.starts_with("slimfit.toml's [check] target gone shares no commit with HEAD"), "{f:?}");
+    }
+
+    /// Code from before the rule is not charged (slimfit#37): the baseline's
+    /// `mutants_from` moves where a landing starts while the target is
+    /// behind it, and a line added after it is held as ever. A cut that is
+    /// not on HEAD's history counts for nothing.
+    #[test]
+    fn code_from_before_the_rule_is_not_charged() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        let add = |file: &str, text: &str| {
+            let p = repo.join(file);
+            std::fs::write(&p, std::fs::read_to_string(&p).unwrap() + text).unwrap();
+        };
+        let cut = |at: &str| {
+            let p = repo.join(crate::ratchet::FILE);
+            let mut b: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+            b["mutants_from"] = at.into();
+            std::fs::write(p, b.to_string()).unwrap();
+        };
+        let out = |args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .args(["-c", "user.email=t@slimfit", "-c", "user.name=t", "-C"])
+                .arg(repo)
+                .args(args)
+                .output()
+                .unwrap();
+            String::from_utf8(o.stdout).unwrap().trim().to_string()
+        };
+        let held = |want: i32| {
+            let (out, code) = slimfit(repo, "check").unwrap();
+            assert_eq!(code, want, "{out:#}");
+            (out["landing"]["from"].as_str().unwrap().to_string(), out["landing"]["unmeasured"].as_u64().unwrap())
+        };
+        git(repo, &["checkout", "-qb", "a"]);
+        add("src/lib.rs", "\npub fn before_the_rule() -> u8 {\n    1\n}\n");
+        git(repo, &["commit", "-qam", "before the rule"]);
+        let before = out(&["rev-parse", "HEAD"]);
+        cut(&before);
+        let (from, n) = held(crate::EXIT_OK);
+        assert_eq!((from.as_str(), n), (before.as_str(), 0));
+        // A ratchet keeps the cut.
+        slimfit(repo, "ratchet").unwrap();
+        assert_eq!(crate::ratchet::load(repo).unwrap().mutants_from.as_deref(), Some(before.as_str()));
+        // A line added after the cut is the change's, unmeasured: check fails.
+        add("src/lib.rs", "\npub fn after_the_rule() -> u8 {\n    2\n}\n");
+        assert_eq!(held(crate::EXIT_VIOLATION), (before.clone(), 3));
+        // A cut not on HEAD's history (or no commit at all) moves nothing.
+        let target = out(&["rev-parse", "target"]);
+        for elsewhere in [out(&["commit-tree", "-m", "x", "-p", "target", "target^{tree}"]), "0".repeat(40)] {
+            cut(&elsewhere);
+            assert_eq!(held(crate::EXIT_VIOLATION), (target.clone(), 6));
+        }
     }
 
     /// No task left of a kind, and nothing to ratchet, are answers: exit 0.
