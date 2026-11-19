@@ -4,6 +4,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 
 ## Layout
 
+- `src/cli.rs`: the command line, read against the manual: the commands and flags with their pages, the topics, the placeholders' values, and the exit codes. `cli::read` answers help itself and turns a line clap refuses into a fault. `src/main.rs` runs the command it reads and prints the answer.
 - `src/formats/`: readers for the report files the tools write (JUnit, go test JSON, LCOV, Go coverprofile, JaCoCo, and the reports of cargo-mutants, Stryker, PIT, gremlins and muter). Each reads into the shapes in `src/model.rs`.
 - `src/config.rs`: `slimfit.toml` and the per-language presets. A language is just data: commands plus report formats.
 - `src/measure.rs`: runs a suite's commands, resolves the reports' paths to repo files, reduces everything to metrics, and caches the result per working tree.
