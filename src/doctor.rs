@@ -19,11 +19,11 @@ pub enum Kind {
     NoBaseline,
     /// A gate runs the project's own tests and also `slimfit check`, which is a test run: the tests run twice. Fix: take the project's test command out of that gate.
     TestsRunTwice,
-    /// A gate or an `[idle]` step runs mutation testing (`--mutants` or a mutation tool): in a gate it holds up every landing; idle work commits nothing, so its measurement is never recorded. Fix: take it out; the agent runs `slimfit check --mutants` on its own change at background priority, then `slimfit ratchet`, and commits; the gate's plain `slimfit check` holds that it did (see [what the gate holds](help:mutants-scope)).
+    /// A gate or an `[idle]` step runs mutation testing (`--mutants` or a mutation tool): in a gate it holds up every landing; idle work commits nothing, so its measurement is never recorded. Fix: take it out; the agent picks the few mutants of its own change worth running (`slimfit check --mutants` lists them) and runs them at background priority, then `slimfit ratchet`, and commits the record; the gate's plain `slimfit check` holds that it did (see [what the gate holds](help:mutants-scope)).
     MutantsInGate,
-    /// A command in `factorium.toml` (a gate or idle work) mutates the whole codebase: `--all-mutants`, which slimfit refuses, or a mutation tool run without slimfit and without a diff. Mutants run only on a change. Fix: take it out; the agent runs `slimfit check --mutants`, the mutants of its changed lines, as for `mutants_in_gate`.
+    /// A command in `factorium.toml` (a gate or idle work) mutates the whole codebase: `--all-mutants`, which slimfit refuses, or a mutation tool run without slimfit and without a diff. Mutants run only on a change. Fix: take it out; the agent runs its picks of its own change's mutants, as for `mutants_in_gate`.
     WholeCodebaseMutants,
-    /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change's lines to a mutants measurement, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
+    /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change to a record of its mutants, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
     NoTarget,
     /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what is measured now runs slow and its wall times are skewed. Fix: measure when the host is quiet, or at `nice -n 19`.
     HostBusy,
@@ -284,9 +284,10 @@ fn run_by(repo: &Path, at: &str, entry: &str) -> Vec<(String, String)> {
 }
 
 /// Where mutants run instead of a gate or idle work.
-const RUN_ON_THE_CHANGE: &str = "the agent that made a change runs `slimfit check --mutants` on its changed lines, at \
-     background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants`), then \
-     `slimfit ratchet`, and commits the baseline with the change";
+const RUN_ON_THE_CHANGE: &str = "the agent that made a change picks the few of its mutants worth running \
+     (`slimfit check --mutants` lists them) and runs them at background priority (in factorium, `factorium worker \
+     exclusive --background -- slimfit check --mutants <name>... --why <why>...`), then `slimfit ratchet`, and commits \
+     the record with the change";
 
 /// A finding for each of `lines` (run `how`, in a gate or idle work) that
 /// runs mutants: one that mutates the whole codebase is named as that.
@@ -320,7 +321,7 @@ fn no_target(repo: &Path, cfg: &config::Config) -> Vec<Finding> {
     vec![finding(
         Kind::NoTarget,
         None,
-        format!("{what}: `check` cannot hold the change's lines to a mutants measurement, and `--mutants` refuses"),
+        format!("{what}: `check` cannot hold the change to a record of its mutants, and `--mutants` refuses"),
         "set `target` under [check] in slimfit.toml to the branch changes land on (e.g. \"origin/main\"), or \
          `git remote set-head origin --auto`"
             .into(),
@@ -476,7 +477,7 @@ mod tests {
         assert_eq!(kinds(&f), vec![Kind::MutantsInGate; 3], "{f:#?}");
         assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] runs mutation testing as idle work"), "{f:#?}");
         assert!(f[1].what.contains("[gate] fast") && f[2].what.contains("slow.sh:1"), "{f:#?}");
-        let fix = "--background -- slimfit check --mutants`), then `slimfit ratchet`";
+        let fix = "--background -- slimfit check --mutants <name>... --why <why>...`), then `slimfit ratchet`";
         assert!(f.iter().all(|f| f.fix.contains(fix)), "{f:#?}");
     }
 

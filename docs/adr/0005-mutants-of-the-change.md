@@ -3,7 +3,7 @@
 Supersedes `0001-mutate-only-changed-files.md` and
 `0002-mutants-baseline-in-pieces.md`.
 
-**Amended by ADR 0008** (`0008-the-gate-holds-a-landings-lines-to-a-mutants-run.md`): the change is the landing's diff against its target, `mutants_at` is gone, and the gate's plain `check` holds every added source line to a ratcheted mutants run, recorded per run in `.slimfit/mutants/`.
+**Amended by ADR 0008** (`0008-the-agent-picks-the-mutants-the-gate-holds-a-record.md`): the change is the landing's diff against its target, `mutants_at` is gone, the agent picks at most five of its mutants to run, and the gate's plain `check` holds that the change adds a record of them in `.slimfit/mutants/`.
 
 **Amended by ADR 0006** (`0006-mutants-only-on-a-change.md`): `next
 --all-mutants` is gone too, so nothing runs every mutant, and redundant-test

@@ -341,7 +341,7 @@ fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
 
 /// `init` runs the preset's test tools once each, and no mutant; `next`
 /// and `check` then work from that measurement. A preset whose mutants tool
-/// cannot be limited to a change refuses `--mutants` and runs nothing
+/// cannot list a change's mutants and run them by name refuses `--mutants` and runs nothing
 /// (Rust's, given the change's diff, is driven in `rust`). With
 /// `dry`, `init` and `ratchet` are each asked first with `--dry-run`, which
 /// writes nothing and answers what the real run then writes (on one
@@ -382,7 +382,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let tasks = next["tasks"].as_array().unwrap();
     assert!(tasks.iter().any(|t| t["kind"] == "uncovered" && t["files"][0] == lang.source), "{}: {next:#}", lang.name);
     if lang.name != "rust" {
-        s.error(&["check", "--mutants"], &["cannot be limited to a change", "never mutates the whole codebase"]);
+        s.error(&["check", "--mutants"], &["cannot list a change's mutants", "never mutates the whole codebase"]);
     }
     let check = s.ok(&["check"]);
     if dry {
@@ -428,8 +428,8 @@ fn faults(json: &Value) -> String {
 /// report. A failing exit alone is no error: failing tests still write
 /// their reports (a mutants tool's exit is covered in `rust`). No report
 /// is, and the error names the report and ends with the tool's own words.
-/// The mutants tool runs only on a change, and only where it can be
-/// limited to one (Rust's).
+/// The mutants tool runs only on a change, and only where it can list its
+/// mutants and run them by name (Rust's); its listing runs first.
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     let mutates = lang.name == "rust";
     let mut tools = lang.test_tools.to_vec();
@@ -440,13 +440,14 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
         if !tools.contains(&lang.mutants_tool) {
             tools.push(lang.mutants_tool);
         }
-        &["check", "--mutants", "--fresh"]
+        &["check", "--mutants", PICK_KILLED, "--why", "w", "--fresh"]
     } else {
         &["next", "--fresh"]
     };
+    let missing = if mutates { "listed no mutants of the change" } else { "_report at" };
     for tool in tools {
         let link = s.unlink(tool);
-        s.error(args, &["_report at", "fix: fix the command's failure in its log", tool]);
+        s.error(args, &[missing, "fix: fix the command's failure in its log", tool]);
         s.relink(&link);
     }
     let no_report = Some(Fault { exit: 0, no_report: true });
@@ -456,13 +457,15 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
         s.fault(mutants, no_report);
     }
     let (code, json, stderr) = s.slimfit(args);
-    assert!(stderr.contains("test command exited exit status: 3"), "{}: {first}: {stderr}", lang.name);
     if mutates {
+        // The listing runs first: the tool's own words reach the agent, and nothing is measured.
         assert_eq!(code, 2, "{}: {json:#}\n{stderr}", lang.name);
         assert!(faults(&json).contains(&format!("standin {mutants}: writing no report")), "{json:#}");
-    } else {
-        assert_eq!(code, 0, "{}: {json:#}\n{stderr}", lang.name);
+        s.fault(mutants, None);
     }
+    let (code, json, stderr) = s.slimfit(args);
+    assert!(stderr.contains("test command exited exit status: 3"), "{}: {first}: {stderr}", lang.name);
+    assert_eq!(code, 0, "{}: {json:#}\n{stderr}", lang.name);
     s.fault(first, None);
     s.fault(mutants, None);
     for step in lang.test_steps {
@@ -475,11 +478,16 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     }
 }
 
+/// Three picks of the Rust sample's real list, one per function: caught,
+/// missed, caught.
+const PICK_KILLED: &str = "src/lib.rs:2:7: replace + with - in add";
+const PICK_MISSED: &str = "src/lib.rs:6:5: replace unused -> i64 with 0";
+const PICK_ADULT: &str = "src/lib.rs:12:9: replace >= with < in is_adult";
+
 /// The Rust sample, measured, in the states that make each command print
 /// its optional keys: violations, improvements, loosenings, the change's
-/// mutants, their unmeasured lines and the record of the lines measured. A
-/// changed line gives cargo-mutants the change's diff; `--all-mutants` is
-/// refused.
+/// candidates, its picks and their record. A changed line gives
+/// cargo-mutants the change's diff; `--all-mutants` is refused.
 fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mut run = |cmd: &'static str, args: &[&str], code: i32| -> Value {
         let mut all = vec![cmd];
@@ -536,20 +544,30 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // `cargo-nextest`), slimfit writes the plan and its shim.
     let lib = s.repo.join("src/lib.rs");
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "pub fn changed() -> i64 {\n    1\n}\n").unwrap();
-    // No mutants run measured them: the plain check fails.
+    // No record of its mutants: the plain check fails.
     let held = run("check", &[], 1);
     let v = &held["verdict"]["violations"][0];
-    assert_eq!((&v["metric"], &held["landing"]["unmeasured"]), (&"unmeasured_mutants".into(), &3.into()), "{held:#}");
-    // No nextest to hand on to: every mutant runs every test, and stderr says why.
+    assert_eq!((&v["metric"], &held["landing"]["lines"]), (&"unrecorded_mutants".into(), &3.into()), "{held:#}");
+    // The candidates: cargo-mutants lists the change's diff, and nothing builds.
     s.take();
-    let (_, _, stderr) = s.slimfit(&["check", "--mutants"]);
+    let listed = run("check", &["--mutants"], 0);
+    assert_eq!(listed["candidates"]["rust"].as_array().unwrap().len(), 17, "{listed:#}");
+    let calls = s.take();
+    let built = |c: &&state::Call| c.step.contains("nextest") || c.step == "cargo llvm-cov" && c.args[1] != "show-env";
+    assert!(!calls.iter().any(|c| built(&c)), "{calls:#?}");
+    let mutants = calls.iter().filter(|c| c.step == "cargo mutants");
+    assert!(mutants.clone().count() == 1 && mutants.clone().all(|c| c.args.contains(&"--list".into())), "{calls:#?}");
+    let picked = ["--mutants", PICK_KILLED, PICK_MISSED, PICK_ADULT, "--why", "the sum", "the result", "the bound"];
+    // No nextest to hand on to: every mutant runs every test, and stderr says why.
+    let (_, _, stderr) = s.slimfit(&[&["check"], &picked[..]].concat());
     assert!(
         stderr.contains("no cargo-nextest on PATH or in cargo's bin directory: every mutant runs every test"),
         "{stderr}"
     );
-    assert!(!s.take().iter().any(|c| c.args.contains(&"--list".to_string())), "listed with no nextest");
+    let lists = |calls: &[state::Call]| calls.iter().filter(|c| c.args.contains(&"--list".to_string())).count();
+    assert_eq!(lists(&s.take()), 1, "listed for a plan with no nextest");
     std::os::unix::fs::symlink(standin(), s.bin.join("cargo-nextest")).unwrap();
-    let check = run("check", &["--mutants", "--fresh"], 1);
+    let check = run("check", &[&picked[..], &["--fresh"]].concat(), 1);
     let plan: Value = serde_json::from_str(&s.read(".slimfit/out/rust/shim/plan.json")).unwrap();
     let tests = |f: &Value| -> Vec<String> {
         let names =
@@ -573,18 +591,19 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let next = run("next", &["--all"], 0);
     assert!(next["tasks"].as_array().unwrap().iter().any(|t| t["kind"] == "surviving-mutant"), "{next:#}");
     assert_eq!(check["verdict"]["violations"][0]["metric"], "survived_mutants", "{check:#}");
-    assert_eq!(check["mutated"]["rust"]["files"], serde_json::json!(["src/lib.rs"]), "{check:#}");
-    assert!(check["mutated"]["rust"].get("lines").is_none(), "{check:#}");
+    let outcomes: Vec<&str> =
+        check["mutated"]["rust"]["picks"].as_array().unwrap().iter().map(|p| p["outcome"].as_str().unwrap()).collect();
+    assert_eq!(outcomes, ["killed", "survived", "killed"], "{check:#}");
     let calls = s.take();
-    let listed = calls.iter().filter(|c| c.step == "cargo mutants" && c.args.contains(&"--list".to_string())).count();
-    assert_eq!(listed, 1, "{calls:?}");
-    // cargo-mutants' build of each of the 17 listed mutants reaches the
-    // real nextest through the shim as it came; its test run, narrowed:
-    // `add`'s 5 with its 3 tests, `is_adult`'s 3 with its one, each under its
-    // timeout; `unused`'s 9 run none.
+    // The candidates, then the plan's listing of the picks alone.
+    assert_eq!(lists(&calls), 2, "{calls:?}");
+    // cargo-mutants' build of each of the 3 picks reaches the real nextest
+    // through the shim as it came; its test run, narrowed: `add`'s with its
+    // 3 tests, `is_adult`'s with its one, each under its timeout; `unused`'s
+    // runs none.
     let runs = calls.iter().filter(|c| c.step == "cargo nextest").count() / 2;
     let builds = calls.iter().filter(|c| c.step == "cargo-nextest nextest" && c.args.contains(&"--no-run".into()));
-    assert!(builds.clone().count() == 17 && builds.clone().all(|c| c.args.len() == 5), "{calls:#?}");
+    assert!(builds.clone().count() == 3 && builds.clone().all(|c| c.args.len() == 5), "{calls:#?}");
     let filters: Vec<&str> = calls
         .iter()
         .filter(|c| c.step == "cargo-nextest nextest" && !c.args.contains(&"--no-run".into()))
@@ -597,7 +616,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let adds = "(binary_id(=calc) & test(=tests::adds_again)) | (binary_id(=calc) & test(=tests::adds)) | \
                 (binary_id(=calc) & test(=tests::slow))";
     let adult = "(binary_id(=calc) & test(=tests::adult))";
-    assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
+    assert_eq!((runs, filters), (3, vec![adds, adult]), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
     // Each mutant builds as the test run built, into its target directory:
     // no cold first build (ADR 0007).
@@ -605,8 +624,9 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert_eq!(mutants.target_dir, Some(mutants.dir.join("target/llvm-cov-target")), "{mutants:?}");
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
+    assert_eq!(mutants.args.iter().filter(|a| *a == "-F").count(), 3, "{:?}", mutants.args);
     let ratchet = run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);
-    let record = ratchet["measured"].as_str().unwrap();
+    let record = ratchet["record"].as_str().unwrap();
     assert!(record.starts_with(".slimfit/mutants/") && s.repo.join(record).exists(), "{ratchet:#}");
     run("report", &["--points", "1"], 0);
     // A second `fn slow` its path cannot tell apart: no text to keep it by.
@@ -681,13 +701,26 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
         let page = Command::new(env!("CARGO_BIN_EXE_slimfit")).args([cmd, "--help"]).output().unwrap();
         let page = String::from_utf8(page.stdout).unwrap();
         let reached: &[&str] = match *cmd {
-            "init" => &["mutants_diff_flag", "mutants_file_flag"],
+            "init" => &["mutants_diff_flag", "mutants_pick_flag"],
             "next" => &["survivors", "start", "counts", "remaining", "notes"],
-            "check" => &["fix", "improved", "mutated", "change", "unviable", "landing", "unmeasured"],
-            "ratchet" => &["from", "reason", "measured"],
+            "check" => &[
+                "fix",
+                "improved",
+                "mutated",
+                "change",
+                "unviable",
+                "landing",
+                "records",
+                "candidates",
+                "replacement",
+                "picks",
+                "why",
+                "outcome",
+            ],
+            "ratchet" => &["from", "reason", "record"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
             "keep" => &["kept", "test", "hash", "reason"],
-            _ => &["history", "commit", "from"],
+            _ => &["history", "commit", "from", "mutants_records", "with_picks"],
         };
         for k in reached {
             assert!(ks.contains(*k), "{cmd} printed no {k:?}: the states above no longer reach it");

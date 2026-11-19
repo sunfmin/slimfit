@@ -27,6 +27,8 @@ struct Work {
     exit: i32,
     /// Done before the reports: e.g. the build directory a later step reads.
     prepare: Vec<Box<dyn FnOnce()>>,
+    /// cargo-mutants' `-F`: only the mutants of these names are in its reports.
+    named: Option<Vec<String>>,
 }
 
 type Refusal = String;
@@ -87,10 +89,17 @@ fn run(work: Work, reports: &Path, dir: &Path, fault: Fault, step: &str) {
         eprintln!("standin {step}: writing no report (injected)");
     } else {
         for (src, dst) in &work.copies {
-            copy(&reports.join(src), &dir.join(dst), &root);
+            match &work.named {
+                Some(names) => {
+                    std::fs::create_dir_all(dir.join(dst).parent().unwrap()).unwrap();
+                    std::fs::write(dir.join(dst), named(&read(&reports.join(src), &root), names)).unwrap();
+                }
+                None => copy(&reports.join(src), &dir.join(dst), &root),
+            }
         }
         if let Some(s) = &work.stdout {
-            print!("{}", read(&reports.join(s), &root));
+            let text = read(&reports.join(s), &root);
+            print!("{}", work.named.as_ref().map_or(text.clone(), |n| named(&text, n)));
         }
     }
     let exit = if fault.exit != 0 { fault.exit } else { work.exit };
@@ -98,6 +107,37 @@ fn run(work: Work, reports: &Path, dir: &Path, fault: Fault, step: &str) {
         eprintln!("standin {step}: exiting {exit}");
     }
     std::process::exit(exit);
+}
+
+/// cargo-mutants' list (`--list --json`) or `outcomes.json`, with only the
+/// mutants named (and the baseline) left in.
+fn named(text: &str, names: &[String]) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let kept = |m: &serde_json::Value| m["name"].as_str().is_some_and(|n| names.iter().any(|w| w == n));
+    match v.as_array_mut() {
+        Some(list) => list.retain(kept),
+        None => v["outcomes"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|o| o["scenario"]["Mutant"].is_null() || kept(&o["scenario"]["Mutant"])),
+    }
+    serde_json::to_string_pretty(&v).unwrap()
+}
+
+/// The names `-F` gives, as slimfit writes each: anchored, its metacharacters escaped.
+fn names(args: &[String]) -> Result<Option<Vec<String>>, Refusal> {
+    let mut out = Vec::new();
+    for (i, _) in args.iter().enumerate().filter(|(_, a)| *a == "-F") {
+        let re = args.get(i + 1).ok_or("-F needs a regex")?;
+        let inner = re.strip_prefix('^').and_then(|r| r.strip_suffix('$')).ok_or(format!("-F {re} is not anchored"))?;
+        let mut name = String::new();
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            name.push(if c == '\\' { chars.next().ok_or(format!("-F {re} ends in a lone \\"))? } else { c });
+        }
+        out.push(name);
+    }
+    Ok((!out.is_empty()).then_some(out))
 }
 
 /// A report's text with the project root put in for `/REPO`.
@@ -183,20 +223,23 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
             if let Some(diff) = value(args, "--in-diff") {
                 std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
             }
+            let names = names(args)?;
             if args.iter().any(|a| a == "--list") {
                 has(args, "--json")?;
-                return Ok(Work { stdout: Some("mutants.list.json".into()), ..Work::default() });
+                return Ok(Work { stdout: Some("mutants.list.json".into()), named: names, ..Work::default() });
             }
             let outcomes = out.join(CARGO_MUTANTS_OUTCOMES);
             // cargo-mutants exits 2 when a mutant was missed.
-            let missed =
-                std::fs::read_to_string(reports.join("outcomes.json")).is_ok_and(|t| t.contains("\"MissedMutant\""));
+            let text = std::fs::read_to_string(reports.join("outcomes.json")).unwrap_or_default();
+            let missed = names.as_ref().map_or(text.clone(), |n| named(&text, n)).contains("\"MissedMutant\"");
             let (reports, dir) = (reports.to_path_buf(), dir.to_path_buf());
             let skip = value(args, "--baseline").is_some_and(|b| b == "skip");
+            let only = names.clone();
             Ok(Work {
                 copies: vec![("outcomes.json".into(), outcomes)],
                 exit: if missed { 2 } else { 0 },
-                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip))],
+                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip, only.as_deref()))],
+                named: names,
                 ..Work::default()
             })
         }
@@ -215,8 +258,9 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
 /// cargo-mutants' build and test phases, as `--test-tool nextest` runs them: in a build
 /// directory under `out`, unmutated first unless `skip`, then once per
 /// mutant of the real list (its first line marked as cargo-mutants marks
-/// it), `cargo nextest run`. Only when there is a `cargo-nextest` to run.
-fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool) {
+/// it; only those `named`, when given), `cargo nextest run`. Only when
+/// there is a `cargo-nextest` to run.
+fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, named: Option<&[String]>) {
     let on_path =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| d.join("cargo-nextest").is_file());
     if !on_path {
@@ -248,7 +292,8 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool) {
     if !skip {
         test();
     }
-    for m in listed.as_array().unwrap() {
+    let run = listed.as_array().unwrap().iter();
+    for m in run.filter(|m| named.is_none_or(|n| n.iter().any(|w| m["name"] == w.as_str()))) {
         let (file, line) = (m["file"].as_str().unwrap(), m["span"]["start"]["line"].as_u64().unwrap() as usize);
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
         let mutated: Vec<String> = text
