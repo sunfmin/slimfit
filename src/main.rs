@@ -304,19 +304,25 @@ enum Cmd {
         #[arg(long, value_name = "WHY", verbatim_doc_comment)]
         no_mutants: Option<String>,
     },
-    /// Records that a redundant-test candidate is kept: it is not proposed again until its text changes.
+    /// Records that a candidate is kept as it is: a redundant test, or a file a deepen task proposed. It is not proposed again until it changes as below.
     ///
     /// ## When to run it
     ///
-    /// When a `redundant-test` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over. Then commit `.slimfit/baseline.json`.
+    /// When a `redundant-test` or `deepen` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over, or the module is already deep enough and nothing is worth changing. Then commit `.slimfit/baseline.json`.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, and the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept`: the test, that hash and the reason, replacing an earlier verdict on the same test. `slimfit ratchet` drops a verdict whose test changed or is gone.
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. A path to one of a suite's source files is a file kept: it reads the file's prod lines and its git history, and measures nothing. Anything else is a test: it reads the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept` (the test, that hash and the reason) or `kept_files` (the file, its size and churn now, and the reason), replacing an earlier verdict on the same test or file.
+    ///
+    /// When it is proposed again:
+    ///
+    /// - A test: when its text changes. `slimfit ratchet` drops a verdict whose test changed or is gone.
+    /// - A file: once its prod lines grow by {const:KEPT_GROWTH} of `prod_lines`, or {const:KEPT_CHURN} × `commits_90d` commits more change it (counted against `commits_total`), and it is still a deepen candidate. Keeping it again records its size and churn then.
     ///
     /// ## What it answers
     ///
-    /// - `kept`: every keep verdict in the baseline, {const:KEPT}.
+    /// - `kept`: every test kept in the baseline, {const:KEPT}.
+    /// - `kept_files`: every file kept in the baseline, {const:KEPT_FILE}.
     /// - `next`: commit `.slimfit/baseline.json`, then `slimfit next`.
     ///
     /// ## What it may refuse
@@ -324,21 +330,22 @@ enum Cmd {
     /// It writes nothing when it refuses.
     ///
     /// - No `--reason`.
-    /// - No suite's test run recorded the test (its `test` id is a redundant-test task's `test`).
+    /// - No suite's test run recorded the test (its `test` id is a redundant-test task's `test`), and no suite counts it as a source file.
     /// - Its own function was not found, so there is no text to hold the verdict to.
     /// - {const:MEASURE_REFUSALS}
     ///
     /// ## What trips you up
     ///
-    /// - The verdict holds against the test's text only: a change to the other test, or to the code both run, does not bring it back. Any edit inside the test does, a reformat included.
+    /// - A test's verdict holds against the test's text only: a change to the other test, or to the code both run, does not bring it back. Any edit inside the test does, a reformat included.
+    /// - A file's verdict holds against its size and churn only: a rewrite that keeps both under the thresholds does not bring it back.
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Keep {
         #[command(flatten)]
         at: At,
-        /// The test kept: a redundant-test task's `test`.
+        /// The test kept (a redundant-test task's `test`) or the file kept (a deepen task's `file`).
         #[arg(verbatim_doc_comment)]
         test: String,
-        /// Why it stays: what it checks that the other test does not, kept in the baseline.
+        /// Why it stays: what the test checks that the other does not, or why the module is deep enough; kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
     },
@@ -459,6 +466,9 @@ fn help() -> Help {
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
         .constant("KEPT", ratchet::KEPT_HELP)
+        .constant("KEPT_FILE", ratchet::KEPT_FILE_HELP)
+        .constant("KEPT_GROWTH", format!("{:.0}%", ratchet::KEPT_GROWTH * 100.0))
+        .constant("KEPT_CHURN", ratchet::KEPT_CHURN)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
         .constant("CACHE_PITFALL", measure::CACHE_HELP)
 }
@@ -592,6 +602,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
                 loosened: old.loosened,
                 kept: old.kept,
+                kept_files: old.kept_files,
                 mutants_from: old.mutants_from,
             };
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
@@ -612,7 +623,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
-            let mut list = tasks::all(&repo, &cfg, &m, &base.kept)?;
+            let mut list = tasks::all(&repo, &cfg, &m, &base)?;
             if let Some(k) = kind {
                 list.retain(|t| t.kind == k);
             }
@@ -745,9 +756,32 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
                     "keep without --reason",
-                    "add `--reason \"<what it checks that the other test does not>\"`: it is kept in the baseline",
+                    "add `--reason \"<what the test checks that the other does not, or why the module is deep enough>\"`: \
+                     it is kept in the baseline",
                 ));
             };
+            let answer = |base: &ratchet::Baseline| {
+                json!({
+                    "kept": base.kept,
+                    "kept_files": base.kept_files,
+                    "next": "commit .slimfit/baseline.json; then `slimfit next`",
+                })
+            };
+            if let Some((suite, classifier)) = tasks::source_suite(&repo, &cfg, &test)? {
+                let prod_lines = classifier.lines(loc::Kind::Source, &std::fs::read_to_string(repo.join(&test))?).prod;
+                let (commits_90d, commits_total) = tasks::churn(&repo, &test);
+                base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
+                base.kept_files.push(ratchet::KeptFile {
+                    suite,
+                    file: test,
+                    prod_lines,
+                    commits_90d,
+                    commits_total,
+                    reason,
+                });
+                std::fs::write(repo.join(ratchet::FILE), ratchet::render(&base)?)?;
+                return Ok((answer(&base), EXIT_OK));
+            }
             let m = measure::current(
                 &repo,
                 &cfg,
@@ -759,8 +793,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             });
             let Some((suite, source)) = found else {
                 return Err(fault::fault(
-                    format!("no suite's test run recorded a test {test}"),
-                    "name it as the redundant-test task's `test` does: `slimfit next --all --kind redundant-test` lists them",
+                    format!("no suite's test run recorded a test {test}, and no suite counts it as a source file"),
+                    "name it as the redundant-test task's `test` or the deepen task's `file` does: \
+                     `slimfit next --all --kind redundant-test` (or `--kind deepen`) lists them",
                 ));
             };
             let Some(source) = source else {
@@ -772,7 +807,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             base.kept.retain(|k| !(k.suite == suite && k.test == test));
             base.kept.push(ratchet::Kept { suite, test, hash: source.hash, reason });
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&base)?)?;
-            Ok((json!({ "kept": base.kept, "next": "commit .slimfit/baseline.json; then `slimfit next`" }), EXIT_OK))
+            Ok((answer(&base), EXIT_OK))
         }
         Cmd::Doctor { .. } => {
             let host = doctor::Host::current();

@@ -40,11 +40,14 @@ pub struct Lines {
     /// Redundant-test verdicts kept (`slimfit keep`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kept: Option<usize>,
+    /// Deepen verdicts kept: files judged deep enough (`slimfit keep <file>`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept_files: Option<usize>,
 }
 
 /// What a history point's suite prints, as the command pages name it.
 pub const LINES_HELP: &str = "`prod` and `test` lines, and what the baseline committed then held: `tests`, \
-     `test_seconds` and `uncovered_lines` (its bounds) and `kept` (redundant-test verdicts kept)";
+     `test_seconds` and `uncovered_lines` (its bounds) and `kept` (redundant-test verdicts kept) and `kept_files` (deepen verdicts kept)";
 
 /// The baseline's numbers for `suite` in `baseline` (a commit's
 /// `.slimfit/baseline.json`), read field by field: a baseline written by an
@@ -55,7 +58,9 @@ fn judged(baseline: Option<&Value>, suite: &str, lines: &mut Lines) {
     lines.tests = m["tests"].as_u64();
     lines.test_seconds = m["test_seconds"].as_f64();
     lines.uncovered_lines = m["uncovered_lines"].as_u64();
-    lines.kept = b["kept"].as_array().map(|k| k.iter().filter(|k| k["suite"] == suite).count());
+    let count = |key: &str| b[key].as_array().map(|k| k.iter().filter(|k| k["suite"] == suite).count());
+    lines.kept = count("kept");
+    lines.kept_files = count("kept_files");
 }
 
 /// The records among a commit's files, or `None` when it holds none. One
@@ -134,7 +139,7 @@ mod t {
         commit(&[
             (
                 ratchet::FILE,
-                r#"{"suites":{"rust":{"tests":2,"test_seconds":1.5,"uncovered_lines":4}},"kept":[{"suite":"rust"},{"suite":"go"}]}"#,
+                r#"{"suites":{"rust":{"tests":2,"test_seconds":1.5,"uncovered_lines":4}},"kept":[{"suite":"rust"},{"suite":"go"}],"kept_files":[{"suite":"rust"},{"suite":"rust"}]}"#,
             ),
             (".slimfit/mutants/a.json", picked),
             (".slimfit/mutants/b.json", r#"{"none":"docs only"}"#),
@@ -143,10 +148,14 @@ mod t {
         ]);
         let h = history(repo, &cfg, 10, 10).unwrap();
         let rust: Vec<&Lines> = h.iter().map(|p| &p.suites["rust"]).collect();
-        let judged = |l: &Lines| (l.tests, l.test_seconds, l.uncovered_lines, l.kept);
+        let judged = |l: &Lines| (l.tests, l.test_seconds, l.uncovered_lines, l.kept, l.kept_files);
         assert_eq!(
             rust.iter().map(|l| judged(l)).collect::<Vec<_>>(),
-            [(None, None, None, None), (Some(3), None, Some(9), None), (Some(2), Some(1.5), Some(4), Some(1)),]
+            [
+                (None, None, None, None, None),
+                (Some(3), None, Some(9), None, None),
+                (Some(2), Some(1.5), Some(4), Some(1), Some(2)),
+            ]
         );
         assert!(rust.iter().all(|l| l.prod > 0), "{rust:?}");
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
