@@ -270,6 +270,7 @@ fn measure_suite(
     let started = Instant::now();
     let since_epoch =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let host_load = load::per_core();
     let (run, slowdown) = load::slowdown_during(|| shell(&root, &out, &suite.test_command, "test", &[]));
     let (log, _) = run?;
     let command_seconds = started.elapsed().as_secs_f64();
@@ -277,7 +278,7 @@ fn measure_suite(
     let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
     let reach = read_reach(&root, &out, suite)?;
 
-    let timing = Timing { command_seconds, slowdown, started: since_epoch };
+    let timing = Timing { command_seconds, slowdown, host_load, started: since_epoch };
     let mut s = reduce(suite, &totals, &resolver, tests, coverage, reach, None, timing);
     if let Some(change) = mutants {
         let m = mutate_change(repo, &root, &out, suite, &totals, &resolver, change.get()?, &s)?;
@@ -618,10 +619,12 @@ impl Resolver {
 }
 
 /// How long the test command took, how much the host's load slowed it,
-/// and when it started (seconds since the Unix epoch).
+/// how loaded the host was, and when it started (seconds since the Unix epoch).
 pub(crate) struct Timing {
     pub command_seconds: f64,
     pub slowdown: f64,
+    /// The host's 1-minute load per core as the command started.
+    pub host_load: f64,
     pub started: f64,
 }
 
@@ -697,6 +700,7 @@ pub(crate) fn reduce(
         mutated,
         command_seconds: (timing.command_seconds * 1000.0).round() / 1000.0,
         load_slowdown: (timing.slowdown * 1000.0).round() / 1000.0,
+        host_load: (timing.host_load * 1000.0).round() / 1000.0,
         untimed: false,
     }
 }
@@ -1068,7 +1072,7 @@ pub(crate) mod t {
             TestCase { id: "b".into(), seconds: 1.5, passed: true, start: Some(102.0) },
             TestCase { id: "c".into(), seconds: 2.0, passed: true, start: Some(50.0) },
         ];
-        let timing = Timing { command_seconds: 9.87654, slowdown: 1.23456, started: 100.0 };
+        let timing = Timing { command_seconds: 9.87654, slowdown: 1.23456, host_load: 0.25, started: 100.0 };
         let m = reduce(
             &crate::config::preset(crate::config::Preset::Rust),
             &totals,
@@ -1083,7 +1087,10 @@ pub(crate) mod t {
             m.tests.iter().map(|t| (t.seconds * 1e6).round()).collect::<Vec<_>>(),
             [2_430_016.0, 1_215_008.0, 2_000_000.0]
         );
-        assert_eq!((m.metrics.test_seconds, m.load_slowdown, m.command_seconds), (5.645, 1.235, 9.877));
+        assert_eq!(
+            (m.metrics.test_seconds, m.load_slowdown, m.command_seconds, m.host_load),
+            (5.645, 1.235, 9.877, 0.25)
+        );
     }
 
     /// Every function of a source file's coverage is keyed by its first
@@ -1122,7 +1129,7 @@ pub(crate) mod t {
             t("y", None, &[]),
             t("z", Some(&["_Rgone"]), &[2]),
         ];
-        let timing = Timing { command_seconds: 0.0, slowdown: 1.0, started: 0.0 };
+        let timing = Timing { command_seconds: 0.0, slowdown: 1.0, host_load: 0.0, started: 0.0 };
         let suite = crate::config::preset(crate::config::Preset::Rust);
         let resolver = Resolver::new(repo.path(), &totals);
         let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);

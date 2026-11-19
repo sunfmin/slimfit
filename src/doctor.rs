@@ -25,7 +25,7 @@ pub enum Kind {
     WholeCodebaseMutants,
     /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change's lines to a mutants measurement, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
     NoTarget,
-    /// The host's 1-minute load is above its core count: what is measured now runs slow and its wall times are skewed (see [host load](help:host-load)). Fix: measure when the host is quiet, or at `nice -n 19`.
+    /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what is measured now runs slow and its wall times are skewed. Fix: measure when the host is quiet, or at `nice -n 19`.
     HostBusy,
     /// A tool a suite's commands run is not installed on this host: the command that needs it fails. Fix: install it as the finding says.
     ToolMissing,
@@ -64,17 +64,10 @@ pub struct Host {
 
 impl Host {
     pub fn current() -> Host {
-        let mut load = [0f64; 3];
-        // SAFETY: `load` has room for the 3 samples asked for.
-        let n = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+        let (load, cores) = crate::load::host();
         let path = tool_path();
         let jdk = jdk(&path);
-        Host {
-            load: if n >= 1 { load[0] } else { 0.0 },
-            cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
-            path,
-            jdk,
-        }
+        Host { load, cores, path, jdk }
     }
 
     fn has(&self, exe: &str) -> bool {
@@ -218,14 +211,14 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
             )),
         }
     }
-    if host.load > host.cores as f64 {
+    let busy = host.cores as f64 * crate::load::BUSY;
+    if host.load > busy {
         out.push(finding(
             Kind::HostBusy,
             None,
             format!("the 1-minute load is {:.1} on {} cores: anything measured now runs slow", host.load, host.cores),
             format!(
-                "measure when `uptime`'s load is below {}; meanwhile run slimfit at `nice -n 19` and don't ratchet test_seconds from it",
-                host.cores
+                "measure when `uptime`'s load is below {busy}; meanwhile run slimfit at `nice -n 19` and don't ratchet test_seconds from it"
             ),
         ));
     }
@@ -539,14 +532,14 @@ mod tests {
         assert!(jdk(&[bin.path().into()]));
     }
 
-    /// A load above the core count is busy; at it, not yet.
+    /// A load above half the core count is busy; at it, not yet.
     #[test]
-    fn a_load_above_the_cores_is_a_busy_host() {
+    fn a_load_above_half_the_cores_is_a_busy_host() {
         let r = repo(&[]);
         let bin = every_tool();
         let at = |load| kinds(&diagnose(r.path(), &Host { load, ..host(&bin) }));
-        assert_eq!(at(8.0), vec![]);
-        assert_eq!(at(8.5), vec![Kind::HostBusy]);
+        assert_eq!(at(4.0), vec![]);
+        assert_eq!(at(4.5), vec![Kind::HostBusy]);
     }
 
     /// Each tool a suite's commands run, once, by the command that needs it;

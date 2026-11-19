@@ -132,8 +132,9 @@ pub struct Verdict {
     pub new_suites: Vec<String>,
     /// Mutants were not measured, so their bound was not checked.
     pub mutants_unchecked: bool,
-    /// Suites whose tests ran inside `--mutants`, so their `test_seconds`
-    /// was not checked (see [`SuiteMeasurement::untimed`]).
+    /// Suites whose `test_seconds` was not checked: their tests ran inside
+    /// `--mutants` (see [`SuiteMeasurement::untimed`]), or on a busy host
+    /// and over the bound (see [`SuiteMeasurement::busy`]).
     pub time_unchecked: Vec<String>,
 }
 
@@ -261,6 +262,12 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
             }
             let lim = if bound == Bound::Failures { 0.0 } else { limit(cfg, bound, base_v) };
             if cur > lim + 1e-9 {
+                // Load only slows tests: a busy run within the bound holds
+                // it, but over it, load and slower tests look the same.
+                if bound == Bound::TestSeconds && s.busy() {
+                    v.time_unchecked.push(s.suite.clone());
+                    continue;
+                }
                 v.violations.push(Violation {
                     suite: s.suite.clone(),
                     metric: bound,
@@ -324,6 +331,22 @@ pub fn ratchet(
                     s.suite
                 ),
                 fix: format!("{TIME_THE_TESTS}, then `slimfit ratchet` again"),
+            });
+        }
+    }
+    if loosen.contains(&Bound::TestSeconds) {
+        for s in m.suites.iter().filter(|s| s.busy() && !s.untimed) {
+            faults.push(Fault {
+                fault: format!(
+                    "{}: its tests ran at a 1-minute load of {} per core, above {}: its test_seconds is no bound",
+                    s.suite,
+                    s.host_load,
+                    crate::load::BUSY
+                ),
+                fix: format!(
+                    "`slimfit check --fresh` when `uptime`'s load is below {} per core, then `slimfit ratchet` again",
+                    crate::load::BUSY
+                ),
             });
         }
     }
@@ -419,6 +442,7 @@ mod t {
             }),
             command_seconds: 0.0,
             load_slowdown: 1.0,
+            host_load: 0.0,
             untimed: false,
         }
     }
@@ -540,6 +564,29 @@ mod t {
         refused(&base(m(10, 10.0)), &[Bound::TestSeconds]);
         refused(&Baseline::default(), &[]);
         assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg).time_unchecked.is_empty());
+    }
+
+    /// Load only slows tests: on a busy host a `test_seconds` within its
+    /// bound holds it, and one over it is unchecked, not violated. The
+    /// ratchet keeps the baseline's and refuses to loosen it.
+    #[test]
+    fn a_busy_host_over_the_bound_leaves_test_seconds_unchecked() {
+        let cfg = CheckConfig::default();
+        let at = |secs, load| {
+            let mut c = measurement(m(10, secs), None);
+            c.suites[0].host_load = load;
+            c
+        };
+        let b = base(m(10, 10.0));
+        let v = check(&b, &at(31.1, 0.9), &cfg);
+        assert!(v.ok && v.time_unchecked == ["s"], "{v:?}");
+        let v = check(&b, &at(10.0, 0.9), &cfg);
+        assert!(v.ok && v.time_unchecked.is_empty(), "{v:?}");
+        let v = check(&b, &at(31.1, crate::load::BUSY), &cfg);
+        assert!(v.violations[0].metric == Bound::TestSeconds && v.time_unchecked.is_empty(), "{v:?}");
+        assert_eq!(ratchet(&b, &at(31.1, 0.9), &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
+        let f = crate::fault::of(ratchet(&b, &at(31.1, 0.9), &cfg, &[Bound::TestSeconds], Some("x")).unwrap_err());
+        assert!(f[0].fault.contains("0.9 per core, above 0.5") && f[0].fix.contains("below 0.5"), "{f:?}");
     }
 
     #[test]

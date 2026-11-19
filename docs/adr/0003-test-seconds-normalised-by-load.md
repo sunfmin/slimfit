@@ -120,3 +120,41 @@ and the suite keeps a margin under its bound instead of relying on the
 correction. Clean clones at normal priority, load 9-14: c01e62c read 9.72
 and 9.38 (67 tests), #27's tip 5.34 and 5.29 (62), against a bound of 10
 on the 7.5 baseline.
+
+## Where the correction stops holding (slimfit#41)
+
+The host sat at 1-minute load 20-30 for over an hour (a background
+cargo-mutants run, builds). Proving's own tree, unchanged, read 9.84 at
+load 5 but 10.25-10.58 at load 15-17 against a bound of 10.475, and
+slimfit#41's first measure of it at load 25-29 read 11.585 while the probe
+saw a slowdown of 1.012. Most of that load runs at background QoS on the
+12 efficiency cores; a gate runs at normal priority and the spinning probe
+keeps a fast core, so it sees almost nothing, while the tests, many threads
+that start processes, spill onto busy and slower cores. No probe of one
+thread's CPU share sees that.
+
+Decision: the correction is trusted up to a 1-minute load of
+`load::BUSY` = 0.5 per core, read as the test command starts (before the
+run adds its own) and recorded per suite as `host_load`. Above it:
+
+- A `test_seconds` within its bound passes, as before. Load only slows
+  tests, so a busy run that fits would fit on a quiet host too.
+- One over its bound is neither violated nor passed: `check` lists the
+  suite in `time_unchecked`, as for a test run inside `--mutants`
+  (slimfit#39). The ratchet keeps the baseline's `test_seconds` and refuses
+  `--loosen test_seconds`.
+- `slimfit doctor`'s `host_busy` uses the same threshold.
+
+Not taken:
+
+- **A better probe** (per-core load, Darwin's QoS, a probe that starts
+  processes). Each needs a model of the scheduler, and a factor tuned on
+  this host for this suite; the cost of a miss is a false red that stops
+  every landing.
+- **Proving's tree measured back to back in the same run.** It doubles the
+  gate (a second build and test run) and needs the target's tree checked
+  out beside the change.
+
+Cost: a test that really got slower lands unchecked while the host is busy,
+and the next quiet gate (or proving's) fails on it. It is reported, in
+`time_unchecked`, never passed as checked.
