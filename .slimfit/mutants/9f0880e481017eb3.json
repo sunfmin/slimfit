@@ -1,0 +1,32 @@
+{
+  "tree": "c6e65201c597c0f46d6446bc8e5ea6d87cfb40e7+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/doctor.rs:164:5: replace runs_tests -> Option<&'static str> with None",
+        "why": "the rule must still name a real test run beside slimfit check",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:165:48: replace || with && in runs_tests",
+        "why": "words split at shell punctuation, so $(cargo llvm-cov show-env) is seen",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:165:88: delete ! in runs_tests",
+        "why": "empty words are dropped so cargo and llvm-cov stay adjacent",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:169:52: replace == with != in runs_tests",
+        "why": "only cargo llvm-cov's subcommand decides show-env",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:170:42: replace + with - in runs_tests",
+        "why": "the subcommand is the word after cargo llvm-cov",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
