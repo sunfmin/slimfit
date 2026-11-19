@@ -1080,8 +1080,11 @@ pub(crate) mod t {
         let runs = counter.path().join("test-runs");
         let test = format!("echo run >> '{}'; {}", runs.display(), cfg.suites[0].resolve().test_command);
         cfg.suites[0].overrides.test_command = Some(test);
+        // A build of its own, before the tests: its CPU time is not theirs.
+        let build = format!("echo build >> '{}'; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done", runs.display());
+        cfg.suites[0].overrides.build_command = Some(build);
         std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
-        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().count());
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().filter(|l| *l == "run").count());
         let measure = |timed| {
             current(repo, &cfg, &Options { mutants: Mutants::None, fresh: false, dry_run: false, timed }).unwrap()
         };
@@ -1090,6 +1093,7 @@ pub(crate) mod t {
         assert!(args.is_some() && m.suites[0].untimed && ran() == 1);
         // The sample's test command records the slow test's CPU time.
         assert_eq!(m.suites[0].metrics.test_seconds, 0.625);
+        assert_eq!(std::fs::read_to_string(&runs).unwrap(), "build\nrun\n");
         // A baseline it would exceed: no violation, and the ratchet keeps it.
         let held = crate::config::CheckConfig { time_slack: 0.0, ..Default::default() };
         let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
