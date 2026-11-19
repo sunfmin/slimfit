@@ -121,7 +121,7 @@ redundant-test task.
 **Keep** is recorded with `slimfit keep <test> --reason "<why>"`, which the
 task's steps name. `.slimfit/baseline.json`'s `kept` holds the suite, the
 test, the reason and an FNV-1a hash of the test's text, from its `fn` line
-to the brace rustfmt closes it with. The test is found by its function's
+to the brace that closes it, however it is shaped. The test is found by its function's
 name in the suite's Rust files (of several, the one whose path names its
 modules). The coverage report cannot say where, because cargo llvm-cov
 leaves integration tests out of it. A candidate whose kept hash matches its

@@ -1,0 +1,32 @@
+{
+  "tree": "727e09a692cd03412ead010c8cb21f96b0ce31e1+e3db4dc74b77d0be",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/rust_source.rs:25:24: replace match guard !opened with true in item_end",
+        "why": "a ; inside a body does not end the item: only one before any {",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/rust_source.rs:28:23: replace && with || in item_end",
+        "why": "an item ends only where its first { closes, not at its first brace",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:486:85: replace == with != in reduce",
+        "why": "a Rust suite's tests are located and hashed by their fn",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/rust_source.rs:132:5: replace item_text -> Option<String> with Some(String::new())",
+        "why": "the hash is of the item's own text, so an edit inside it changes it",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/rust_source.rs:44:65: replace - with + in test_blocks",
+        "why": "an unclosed #[cfg(test)] item runs to the last line",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

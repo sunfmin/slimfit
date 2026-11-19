@@ -80,7 +80,8 @@ impl Classifier {
         };
         if c.inline_tests {
             let declaring = files.iter().filter(|f| c.globbed(f) == Some(Kind::Source));
-            c.test_modules = declaring.filter_map(|f| Some(rust_test_module_files(f, &read(f)?))).flatten().collect();
+            c.test_modules =
+                declaring.filter_map(|f| Some(crate::rust_source::test_module_files(f, &read(f)?))).flatten().collect();
         }
         Ok(c)
     }
@@ -117,7 +118,7 @@ impl Classifier {
         let kind = self.kind(path)?;
         let tests = match kind {
             Kind::Test => vec![(1, u32::MAX)],
-            Kind::Source if self.inline_tests => rust_test_blocks(text),
+            Kind::Source if self.inline_tests => crate::rust_source::test_blocks(text),
             Kind::Source => vec![],
         };
         let mut l = FileLines::default();
@@ -144,112 +145,12 @@ impl Classifier {
         t
     }
 }
-/// The files of modules `path` declares as `#[cfg(test)] mod name;`.
-fn rust_test_module_files(path: &str, text: &str) -> Vec<String> {
-    let (dir, file) = path.rsplit_once('/').map(|(d, f)| (format!("{d}/"), f)).unwrap_or((String::new(), path));
-    let base = match file {
-        "main.rs" | "lib.rs" | "mod.rs" => dir,
-        _ => format!("{dir}{}/", file.trim_end_matches(".rs")),
-    };
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let mut out = Vec::new();
-    for (i, l) in lines.iter().enumerate() {
-        if !l.starts_with("#[cfg(test)]") {
-            continue;
-        }
-        let rest = l.trim_start_matches("#[cfg(test)]").trim();
-        let decl = if rest.is_empty() { lines.get(i + 1).copied().unwrap_or("") } else { rest };
-        let decl = decl.trim_start_matches("pub(crate) ").trim_start_matches("pub ");
-        if let Some(name) = decl.strip_prefix("mod ").and_then(|d| d.strip_suffix(';')) {
-            out.push(format!("{base}{}.rs", name.trim()));
-            out.push(format!("{base}{}/mod.rs", name.trim()));
-        }
-    }
-    out
-}
 
 #[derive(Debug, Default)]
 pub struct Totals {
     pub prod: u64,
     pub test: u64,
     pub files: BTreeMap<String, (Kind, FileLines)>,
-}
-
-/// Line ranges (1-based, inclusive) of `#[cfg(test)]` items: from the
-/// attribute to the brace that closes the item it is on.
-fn rust_test_blocks(text: &str) -> Vec<(u32, u32)> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if lines[i].trim_start().starts_with("#[cfg(test)]") {
-            let start = i;
-            let mut depth = 0i32;
-            let mut opened = false;
-            let mut j = i;
-            'scan: while j < lines.len() {
-                for ch in strip_strings(lines[j]).chars() {
-                    match ch {
-                        '{' => {
-                            depth += 1;
-                            opened = true;
-                        }
-                        '}' => depth -= 1,
-                        ';' if !opened && j > start => break 'scan,
-                        _ => {}
-                    }
-                    if opened && depth == 0 {
-                        break 'scan;
-                    }
-                }
-                j += 1;
-            }
-            let end = j.min(lines.len() - 1);
-            out.push((start as u32 + 1, end as u32 + 1));
-            i = end + 1;
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-/// The line without string/char literals and `//` comments, so braces in
-/// them don't count.
-fn strip_strings(line: &str) -> String {
-    let mut out = String::new();
-    let mut chars = line.chars().peekable();
-    let mut in_str = false;
-    while let Some(c) = chars.next() {
-        if in_str {
-            match c {
-                '\\' => {
-                    chars.next();
-                }
-                '"' => in_str = false,
-                _ => {}
-            }
-        } else {
-            match c {
-                '"' => in_str = true,
-                '\'' => {
-                    // a char literal like '{' or '\''; a lifetime has no closing quote nearby
-                    let rest: String = chars.clone().take(3).collect();
-                    if rest.starts_with('\\') {
-                        chars.next();
-                        chars.next();
-                        chars.next();
-                    } else if rest.chars().nth(1) == Some('\'') {
-                        chars.next();
-                        chars.next();
-                    }
-                }
-                '/' if chars.peek() == Some(&'/') => break,
-                _ => out.push(c),
-            }
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -299,7 +200,6 @@ mod t {
         let (_, l) = rust().file("src/a.rs", src).unwrap();
         assert_eq!((l.prod, l.test), (2, 4));
         assert_eq!(l.source.iter().copied().collect::<Vec<_>>(), [1, 9]);
-        assert_eq!(rust_test_blocks(src), vec![(3, 7)]);
     }
 
     /// A file declared `#[cfg(test)] mod x;` is test code, asked alone: the
@@ -322,11 +222,5 @@ mod t {
         assert_eq!(kinds, [Some(Kind::Source), Some(Kind::Test), Some(Kind::Source), Some(Kind::Test)]);
         let t = c.count(&tree[1..2], text);
         assert_eq!((t.prod, t.test), (0, 1));
-    }
-
-    #[test]
-    fn cfg_test_on_a_use_line_ends_at_semicolon() {
-        let src = "#[cfg(test)]\nuse x::y;\nfn a() {}\n";
-        assert_eq!(rust_test_blocks(src), vec![(1, 2)]);
     }
 }

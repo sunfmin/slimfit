@@ -2,12 +2,13 @@
 //! reports, and reduce them to `Measurement`. The result is cached under
 //! `.slimfit/out/` and reused while the tree is unchanged.
 
-use crate::config::{Config, Report, Suite};
+use crate::config::{Config, Preset, Report, Suite};
 use crate::fault::{self, Faults, fault};
 use crate::formats;
 use crate::git;
 use crate::loc::{Classifier, Kind, Totals};
 use crate::model::*;
+use crate::rust_source;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -482,7 +483,7 @@ pub(crate) fn reduce(
             functions.entry(file.clone()).or_default().push(Function { file, ..f });
         }
     }
-    let reach = reach.map(|r| reached(r, &functions, totals, resolver));
+    let reach = reach.map(|r| reached(r, &functions, totals, resolver, suite.preset == Preset::Rust));
     let covered = lines.values().flat_map(|l| l.values()).filter(|h| **h > 0).count() as u64;
     let uncovered_total = lines.values().flat_map(|l| l.values()).filter(|h| **h == 0).count() as u64;
     let mut uncovered = Vec::new();
@@ -520,12 +521,14 @@ pub(crate) fn reduce(
 /// Which tests ran each source function, from what each test ran by symbol:
 /// every function the coverage report names in a source file, outside
 /// tests, keyed by its first line; and the source lines each ran, outside
-/// tests. Each test's own function is located by its path, and hashed.
+/// tests. Each test's own function is located by its path, and hashed,
+/// in a Rust suite (`rust`): the one whose tests are `fn`s.
 fn reached(
     tests: Vec<formats::TestReach>,
     functions: &BTreeMap<String, Vec<Function>>,
     totals: &Totals,
     resolver: &Resolver,
+    rust: bool,
 ) -> Reach {
     let mut reach = Reach { lines: Some(Vec::new()), ..Reach::default() };
     let mut at: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
@@ -536,7 +539,7 @@ fn reached(
             at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
         }
     }
-    let fns = fn_lines(totals, resolver);
+    let fns = if rust { rust_source::functions(totals.files.keys(), |f| resolver.read(f)) } else { BTreeMap::new() };
     let every: Vec<(String, u32)> =
         reach.functions.iter().flat_map(|(f, ls)| ls.keys().map(|l| (f.clone(), *l))).collect();
     for (i, t) in tests.into_iter().enumerate() {
@@ -562,72 +565,19 @@ fn reached(
         }
         lines.retain(|_, ls| !ls.is_empty());
         reach.lines.as_mut().expect("set above").push(lines);
-        let source = test_function(&fns, &t.name).and_then(|(file, line)| test_source(file, line, resolver));
+        let source =
+            rust_source::test_function(&fns, &t.name).and_then(|(file, line)| test_source(file, line, resolver));
         reach.tests.push(ReachTest { binary: t.binary, name: t.name, source });
     }
     reach
 }
 
-/// Every `fn` of the suite's Rust files, by name: where each is. The
-/// coverage report cannot say: cargo llvm-cov leaves integration tests out.
-fn fn_lines(totals: &Totals, resolver: &Resolver) -> BTreeMap<String, Vec<(String, u32)>> {
-    let mut out: BTreeMap<String, Vec<(String, u32)>> = BTreeMap::new();
-    for file in totals.files.keys().filter(|f| f.ends_with(".rs")) {
-        let Some(text) = resolver.read(file) else { continue };
-        for (i, line) in text.lines().enumerate() {
-            if let Some(name) = fn_name(line) {
-                out.entry(name.to_string()).or_default().push((file.clone(), i as u32 + 1));
-            }
-        }
-    }
-    out
-}
-
-/// The name a line declares a function of: `fn x(`, after any of `pub`,
-/// `async`, `unsafe`, `const`, `extern`.
-fn fn_name(line: &str) -> Option<&str> {
-    let mut words = line.split_whitespace();
-    let rest = loop {
-        match words.next()? {
-            "fn" => break words.next()?,
-            w if w.starts_with("pub") || ["async", "unsafe", "const", "extern"].contains(&w) => {}
-            _ => return None,
-        }
-    };
-    let name = &rest[..rest.find(['(', '<']).unwrap_or(rest.len())];
-    (!name.is_empty()).then_some(name)
-}
-
-/// Where test `name` (nextest's: `module::path::function`) is: the one `fn`
-/// of its last segment; of several, the one whose file's path names the
-/// most of its modules (`queue::x` in `tests/scenarios/queue.rs`).
-fn test_function<'a>(fns: &'a BTreeMap<String, Vec<(String, u32)>>, name: &str) -> Option<(&'a str, u32)> {
-    let mut segments: Vec<&str> = name.split("::").collect();
-    let found = fns.get(segments.pop()?)?;
-    let named = |file: &str| {
-        let parts: Vec<&str> = file.trim_end_matches(".rs").split('/').collect();
-        segments.iter().filter(|m| parts.contains(m)).count()
-    };
-    let best = found.iter().map(|(f, _)| named(f)).max()?;
-    match found.iter().filter(|(f, _)| named(f) == best).collect::<Vec<_>>().as_slice() {
-        [(file, line)] => Some((file, *line)),
-        _ => None,
-    }
-}
-
-/// Where the test function at `file:line` is and the hash of its text: from
-/// its `fn` line to the brace that closes it, found as rustfmt places it
-/// (alone on its line, indented as the `fn`), or on the `fn` line itself.
+/// Where the test function at `file:line` is and the hash of its text: the
+/// item from its `fn` line to where it ends (`rust_source::item_text`).
 fn test_source(file: &str, line: u32, resolver: &Resolver) -> Option<TestSource> {
-    let text = resolver.read(file)?;
-    let lines: Vec<&str> = text.lines().skip(line.checked_sub(1)? as usize).collect();
-    let first = lines.first()?;
-    let indent = &first[..first.len() - first.trim_start().len()];
-    let one_line = first.contains('{') && first.matches('{').count() == first.matches('}').count();
-    let close = format!("{indent}}}");
-    let n = if one_line { 0 } else { lines.iter().position(|l| l.trim_end() == close)? };
+    let text = rust_source::item_text(&resolver.read(file)?, line)?;
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in lines[..=n].join("\n").bytes() {
+    for b in text.bytes() {
         hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
     }
     Some(TestSource { file: file.into(), line, hash: format!("{hash:016x}") })
@@ -977,28 +927,15 @@ pub(crate) mod t {
             test_source("src/a.rs", 5, &resolver).map(|s| s.hash)
         };
         assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
-        assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash));
+        assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash.clone()));
         assert!(hash("fn a() {}\n").is_none(), "no line 5");
-        assert!(hash(&text.replace("    }\n}", "  }\n}")).is_none(), "no closing brace");
+        // One rule ends it, whatever the shape: a test rustfmt did not shape
+        // is hashed too, so `keep` has its text to hold a verdict to.
+        let unshaped = text.replace("    }\n}", "  }\n}");
+        assert!(hash(&unshaped).is_some_and(|h| h != source.hash), "closing brace not under its fn");
+        assert!(hash("\n\n\n\n    fn t()\n{ a();\n        if x { y() } }\n").is_some(), "brace on its own line");
+        assert!(hash("\n\n\n\n    fn t() {\n        a();\n").is_none(), "no closing brace");
         assert!(hash("\n\n\n\n    fn t() { a(); }\n").is_some(), "one line");
-    }
-
-    /// A test is found by its function's name; of two of that name, by the
-    /// modules its path names; when that does not tell them apart, not at all.
-    #[test]
-    fn a_test_is_found_by_its_name_and_modules() {
-        assert_eq!(fn_name("    pub(crate) async fn x<T>(t: T) {"), Some("x"));
-        assert_eq!(fn_name("    let fn_x = 1;"), None);
-        let at = |f: &str, l| (f.to_string(), l);
-        let fns: BTreeMap<String, Vec<(String, u32)>> = [
-            ("a".to_string(), vec![at("src/lib.rs", 3)]),
-            ("b".to_string(), vec![at("tests/s/queue.rs", 5), at("tests/s/line.rs", 9)]),
-        ]
-        .into();
-        assert_eq!(test_function(&fns, "tests::a"), Some(("src/lib.rs", 3)));
-        assert_eq!(test_function(&fns, "line::b"), Some(("tests/s/line.rs", 9)));
-        assert_eq!(test_function(&fns, "b"), None);
-        assert_eq!(test_function(&fns, "c"), None);
     }
 
     /// No reach_report configured, or none written: nothing is recorded,
