@@ -1,0 +1,27 @@
+{
+  "tree": "31a47dd4e92d1a22136b427c5150595001690fd3+d1fba762150c532c",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/workspace.rs:29:29: replace == with != in test_crates",
+        "why": "a dev-dependency must count as dev and any other kind as prod: the rule itself",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/workspace.rs:70:57: replace == with != in members",
+        "why": "an excluded member must not make a crate prod",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/workspace.rs:104:54: replace == with != in dep_path",
+        "why": "workspace = true dependencies (factum uses them) must resolve through [workspace.dependencies]",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/workspace.rs:116:13: delete match arm Component::ParentDir in normal",
+        "why": "a ../ path from a member must land on the sibling member",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
