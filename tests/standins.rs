@@ -516,27 +516,31 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     };
 
     run("next", &[], 0);
-    // Redundant tests are proposed from each test's lines: `slow` runs only
-    // what `adds` runs. Kept, with a reason, it is not proposed again.
+    // Redundant tests are proposed from each test's lines: `adds`,
+    // `adds_again` and `slow` run the same lines, so each is proposed but
+    // the one that measured least CPU, which is noise: which one that is,
+    // the test does not ask. Kept, with a reason, it is not proposed again.
     let proposed = |next: &Value| -> Vec<String> {
         let tasks = next["tasks"].as_array().unwrap().iter();
         tasks.map(|t| t["evidence"]["test"].as_str().unwrap().to_string()).collect()
     };
     let before = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
-    assert!(before.contains(&"calc::tests::slow".to_string()), "{before:?}");
+    let twins = ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"];
+    assert!(before.len() == 2 && before.iter().all(|t| twins.contains(&t.as_str())), "{before:?}");
+    let twin = before[0].as_str();
     s.error(&["keep", "calc::tests::slow"], &["keep without --reason"]);
     s.error(
         &["keep", "calc::tests::gone", "--reason", "r"],
         &["no suite's test run recorded a test calc::tests::gone"],
     );
-    let kept = run("keep", &["calc::tests::slow", "--reason", "it checks the sleep"], 0);
-    assert_eq!(kept["kept"][0]["test"], "calc::tests::slow", "{kept:#}");
+    let kept = run("keep", &[twin, "--reason", "it checks its own case"], 0);
+    assert_eq!(kept["kept"][0]["test"], twin, "{kept:#}");
     let after = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
-    assert_eq!(after, before.into_iter().filter(|t| t != "calc::tests::slow").collect::<Vec<_>>());
+    assert_eq!(after, before.iter().filter(|t| *t != twin).cloned().collect::<Vec<_>>());
     // A source file is kept as a deepen verdict, with its size and churn, measuring nothing.
     let file = run("keep", &["src/lib.rs", "--reason", "deep enough"], 0);
     assert_eq!(file["kept_files"][0]["file"], "src/lib.rs", "{file:#}");
-    assert_eq!(file["kept"][0]["test"], "calc::tests::slow", "{file:#}");
+    assert_eq!(file["kept"][0]["test"], twin, "{file:#}");
     assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
     assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
