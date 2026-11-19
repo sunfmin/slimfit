@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::git;
 use crate::loc::{Classifier, Kind};
 use crate::model::{Measurement, MutantStatus, ReachTest, SuiteMeasurement};
-use crate::ratchet::Kept;
+use crate::ratchet::{Baseline, Kept, KeptFile};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -33,7 +33,7 @@ pub enum TaskKind {
     /// A picked mutant of the change no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Comes from a `slimfit check --mutants <name>...` of this tree.
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
-    /// A big file that keeps changing. Load the codebase-design and improve-codebase-architecture skills; design the deeper interface first, then move to it one passing step at a time.
+    /// A big file that keeps changing: a proposal from size and churn, not a verdict. Load the codebase-design and improve-codebase-architecture skills and decide: design the deeper interface first, then move to it one passing step at a time; or keep it as it is (`slimfit keep <file>`).
     #[value(verbatim_doc_comment)]
     Deepen,
 }
@@ -112,11 +112,11 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
         .collect()
 }
 
-pub fn all(repo: &Path, cfg: &Config, m: &Measurement, kept: &[Kept]) -> Result<Vec<Task>> {
+pub fn all(repo: &Path, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
     let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
-        out.extend(of_measurement(s, kept));
-        out.extend(deepen(repo, &Classifier::new(&sc.resolve())?, s)?);
+        out.extend(of_measurement(s, &base.kept));
+        out.extend(deepen(repo, &Classifier::new(&sc.resolve())?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -356,9 +356,34 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
         .collect()
 }
 
+/// The suite that counts `path` (relative to the repo) as an existing
+/// source file, with its classifier: where a deepen task's file belongs.
+pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(String, Classifier)>> {
+    if !repo.join(path).is_file() {
+        return Ok(None);
+    }
+    for sc in &cfg.suites {
+        let c = Classifier::new(&sc.resolve())?;
+        if c.kind(path) == Some(Kind::Source) {
+            return Ok(Some((sc.name.clone(), c)));
+        }
+    }
+    Ok(None)
+}
+
+/// How many commits changed `file`: in the last [`DEEPEN_DAYS`], and ever.
+pub fn churn(repo: &Path, file: &str) -> (u64, u64) {
+    let count = |args: &[&str]| {
+        let out = git::run(repo, &[&["log", "--no-merges", "--format=%H"], args, &["--", file]].concat());
+        out.unwrap_or_default().lines().count() as u64
+    };
+    (count(&[&format!("--since={DEEPEN_DAYS}.days")]), count(&[]))
+}
+
 /// Source files that keep changing and are big: where a deeper module pays
-/// off soonest.
-fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<Vec<Task>> {
+/// off soonest. A file kept as it is (`kept`) is not proposed until it has
+/// grown or churned past the verdict's thresholds.
+fn deepen(repo: &Path, classifier: &Classifier, suite: &str, kept: &[KeptFile]) -> Result<Vec<Task>> {
     let log =
         git::run(repo, &["log", &format!("--since={DEEPEN_DAYS}.days"), "--no-merges", "--format=", "--name-only"])
             .unwrap_or_default();
@@ -372,7 +397,9 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
     for (f, n) in changes.into_iter().filter(|(_, n)| *n >= 5) {
         let Ok(text) = std::fs::read_to_string(repo.join(f)) else { continue };
         let lines = classifier.lines(Kind::Source, &text).prod;
-        if lines >= 100 {
+        // Only a file with a verdict pays for counting its whole history.
+        let held = || kept.iter().filter(|k| k.file == f).any(|k| k.holds(suite, f, lines, churn(repo, f).1));
+        if lines >= 100 && !held() {
             hot.push((f.to_string(), n, lines));
         }
     }
@@ -381,13 +408,15 @@ fn deepen(repo: &Path, classifier: &Classifier, s: &SuiteMeasurement) -> Result<
         .into_iter()
         .map(|(f, n, l)| Task {
             kind: TaskKind::Deepen,
-            suite: s.suite.clone(),
+            suite: suite.to_string(),
             summary: format!("{f}: {l} lines, changed in {n} commits in {DEEPEN_DAYS} days"),
             files: vec![f.clone()],
             evidence: json!({ "file": f, "prod_lines": l, "commits_90d": n }),
-            steps: "Load the codebase-design and improve-codebase-architecture skills. Look at the module this file belongs to: \
-                    shallow interfaces, pass-through functions, one concept spread over many small modules, tests that reach past the interface. \
-                    Write the deeper interface down first (GLOSSARY names, ADR if it settles a trade-off), then move to it one step per commit, each step passing the accept command."
+            steps: "Size and churn only propose; the module decides. Load the codebase-design and improve-codebase-architecture skills. Look at the module this file belongs to: \
+                    shallow interfaces, pass-through functions, one concept spread over many small modules, tests that reach past the interface. Then do one: \
+                    CHANGE it: write the deeper interface down first (GLOSSARY names, ADR if it settles a trade-off), then move to it one step per commit, each step passing the accept command. \
+                    KEEP it when it is already deep enough and nothing is worth changing: record why with `slimfit keep <file> --reason \"<why>\"` and commit \
+                    `.slimfit/baseline.json`; `slimfit keep --help` says when it is proposed again."
                 .into(),
             accept: TaskKind::Deepen.accept().into(),
         })
@@ -435,6 +464,59 @@ mod t {
             host_load: 0.0,
             untimed: false,
         }
+    }
+
+    /// A big file that keeps changing is proposed; kept, it is not, until
+    /// its prod lines grow by KEPT_GROWTH or as many commits change it again
+    /// as made it a candidate; a verdict on another suite does not hold.
+    #[test]
+    fn a_kept_file_returns_once_it_grows_or_churns_past_the_verdict() {
+        use crate::measure::t::git;
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        git(repo, &["init", "-q"]);
+        let c = Classifier::new(&crate::config::preset(crate::config::Preset::Rust)).unwrap();
+        let commit = |lines: usize, note: &str| {
+            let body: String = (0..lines).map(|i| format!("pub const C{i}: u8 = {};\n", note.len())).collect();
+            std::fs::create_dir_all(repo.join("src")).unwrap();
+            std::fs::write(repo.join("src/big.rs"), format!("// {note}\n{body}")).unwrap();
+            git(repo, &["add", "."]);
+            git(repo, &["commit", "-qm", &format!("c {note}")]);
+        };
+        for i in 0..5 {
+            commit(120, &"x".repeat(i));
+        }
+        let proposed = |kept: &[KeptFile]| deepen(repo, &c, "s", kept).unwrap().len();
+        assert_eq!(proposed(&[]), 1);
+        let (commits_90d, commits_total) = churn(repo, "src/big.rs");
+        assert_eq!((commits_90d, commits_total), (5, 5));
+        let prod_lines = c.lines(Kind::Source, &std::fs::read_to_string(repo.join("src/big.rs")).unwrap()).prod;
+        let verdict = |suite: &str| KeptFile {
+            suite: suite.into(),
+            file: "src/big.rs".into(),
+            prod_lines,
+            commits_90d,
+            commits_total,
+            reason: "deep enough".into(),
+        };
+        assert_eq!(proposed(&[verdict("s")]), 0);
+        assert_eq!(proposed(&[verdict("other suite")]), 1);
+        // Growth just short of the threshold, in one commit: still kept.
+        let short = (prod_lines as f64 * (1.0 + crate::ratchet::KEPT_GROWTH)) as usize - 2;
+        commit(short, "grown");
+        assert_eq!(proposed(&[verdict("s")]), 0);
+        // Past it: proposed again.
+        commit(short + 2, "grown more");
+        assert_eq!(proposed(&[verdict("s")]), 1);
+        // Back to its size: the 5 commits since reach the 5 that made it a candidate.
+        let back = (0..3).map(|i| "y".repeat(10 + i));
+        for note in back {
+            commit(120, &note);
+        }
+        let mut fewer = verdict("s");
+        fewer.commits_total += 1;
+        assert_eq!(proposed(&[fewer]), 0);
+        assert_eq!(proposed(&[verdict("s")]), 1);
     }
 
     /// A failing test is a task, with the log to read; a passing one is not.

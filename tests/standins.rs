@@ -522,6 +522,10 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert_eq!(kept["kept"][0]["test"], "calc::tests::slow", "{kept:#}");
     let after = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
     assert_eq!(after, before.into_iter().filter(|t| t != "calc::tests::slow").collect::<Vec<_>>());
+    // A source file is kept as a deepen verdict, with its size and churn, measuring nothing.
+    let file = run("keep", &["src/lib.rs", "--reason", "deep enough"], 0);
+    assert_eq!(file["kept_files"][0]["file"], "src/lib.rs", "{file:#}");
+    assert_eq!(file["kept"][0]["test"], "calc::tests::slow", "{file:#}");
     assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
     assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
@@ -719,8 +723,10 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
             ],
             "ratchet" => &["from", "reason", "record"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
-            "keep" => &["kept", "test", "hash", "reason"],
-            _ => &["history", "commit", "from", "mutants_records", "with_picks"],
+            "keep" => {
+                &["kept", "test", "hash", "reason", "kept_files", "file", "prod_lines", "commits_90d", "commits_total"]
+            }
+            _ => &["history", "commit", "from", "mutants_records", "with_picks", "kept", "tests", "files"],
         };
         for k in reached {
             assert!(ks.contains(*k), "{cmd} printed no {k:?}: the states above no longer reach it");
