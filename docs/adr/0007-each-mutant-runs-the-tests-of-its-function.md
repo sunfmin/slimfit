@@ -137,3 +137,60 @@ the host's load or by a mutant that does not hang must not be ended. A
 first build that is not cold (a scratch copy that keeps `target`) is the
 next lever. Not measured: a function that nearly every test runs (the
 daemon's tick), which costs B1's.
+
+## The first build (slimfit#35)
+
+The lever named above, measured as above: `slimfit check --mutants` on a
+fresh clone of factorium at c0dc2e5, `mutants_at` at its first parent
+(ed1ff43), cargo-mutants 27.1.0, cargo-llvm-cov 0.9.1, `-j1`, each run
+under `worker exclusive --background`, 2026-11-19, one after the other on
+the same clone (the 1-minute load 5–22). Each variant was set as the
+suite's `mutants_command` in `slimfit.toml`; the time is cargo-mutants'
+phases (`outcomes.json`), its first build that of its first mutant.
+
+| variant | first build | crates it compiled | mutants |
+|---|---|---|---|
+| A: the preset as it was | 106.2s | 69 | 226.1s |
+| `--copy-target=true` | 94.0s | 69 | 222.2s |
+| `--copy-target=true`, `CARGO_TARGET_DIR=target/llvm-cov-target` (the copy's) | 99.8s | 36 | 223.0s |
+| the same, in the test run's environment (`cargo llvm-cov show-env`) | 95.6s | 36 | 205.1s |
+| `--in-place` | 114.8s | 69 | 335.4s |
+| a target directory of its own at a fixed path, first run | 110.6s | 69 | 230.9s |
+| the same, second run | 13.5s | 4 | 142.9s |
+| B: the test run's environment and its own target directory | 11.1s | 4 | 136.3s |
+
+Every run: 5 caught, 12 unviable, 0 missed, the same verdict mutant by
+mutant, each caught one run on the same 6 of 213 tests (`--in-place`: on
+every test, below).
+
+- **Why copying `target` gains nothing.** A target directory at a new
+  path recompiles every crate with a build script (its outputs name the
+  old path) and every crate above one: proc-macro2, serde, libsqlite3-sys
+  and 33 more, nearly all of the build. cargo-mutants' copy is a new
+  temporary directory each run, so no copy of `target` stays warm.
+- **Why not `--in-place`.** The tree's own `target/debug` is as cold
+  (nothing but the instrumented test run built it), and the shim finds a
+  mutant by comparing the build directory with the suite's own files:
+  in place they are the same files, so every mutant ran every test.
+  It also leaves a mutation in the working tree if the run is killed.
+- **Decision: B.** The preset's `mutants_command` reads `cargo llvm-cov
+  show-env --sh` (its rustc wrapper, flags and target directory) and
+  builds into `$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target`, the directory
+  `cargo llvm-cov nextest` built the test run in, at the same path and
+  with the same flags: only the workspace crates the mutant's copy names
+  anew compile. Each mutant's tests write their profiles into the copy
+  (`LLVM_PROFILE_FILE` relative), which cargo-mutants deletes. When
+  `show-env` gives nothing, the build is cold, as before.
+- **What it costs.** The mutants' builds leave the test run's directory
+  holding the workspace crates of the copy: the next test run recompiles
+  them (35s at background priority on factorium) and measures the same
+  coverage (4959 covered, 168 uncovered, 213 tests passed). An edit after
+  the run recompiles them anyway. Not measured: cargo-mutants with
+  `--jobs` above 1, whose copies would share that one directory, so one
+  mutant's test binary could be another's. The preset does not pass it; a
+  suite that adds it must drop `CARGO_TARGET_DIR` from its command.
+
+So the mutants of this change take 136s instead of 226s: of A's 226s,
+the 95s that was the cold build is gone; what is left over B2 of the
+Context (69s) is the hangs' timeouts and the first mutant that compiles
+(about 20s, linking the test binaries).

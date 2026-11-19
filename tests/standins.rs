@@ -592,6 +592,10 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let adult = "(binary_id(=calc) & test(=tests::adult))";
     assert_eq!((runs, filters), (17, [[adds; 5].as_slice(), &[adult; 3]].concat()), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
+    // Each mutant builds as the test run built, into its target directory:
+    // no cold first build (ADR 0007).
+    assert!(calls.iter().any(|c| c.step == "cargo llvm-cov" && c.args[1] == "show-env"), "{calls:#?}");
+    assert_eq!(mutants.target_dir, Some(mutants.dir.join("target/llvm-cov-target")), "{mutants:?}");
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     run("ratchet", &["--loosen", "survived_mutants", "--reason", "test"], 0);

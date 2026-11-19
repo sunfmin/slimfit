@@ -38,6 +38,9 @@ pub struct Call {
     pub args: Vec<String>,
     /// The directory it ran in.
     pub dir: PathBuf,
+    /// `CARGO_TARGET_DIR`, when set: where cargo would build.
+    #[serde(default)]
+    pub target_dir: Option<PathBuf>,
 }
 
 impl State {
