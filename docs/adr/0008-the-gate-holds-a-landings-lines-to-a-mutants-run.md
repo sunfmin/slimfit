@@ -157,7 +157,8 @@ measured. A landing measured against one base and gated against
 another can be short like this by a few lines; measure from the base the
 gate uses.
 
-(A first run without the plain check before it ran the tests at background
-priority: test_seconds 31.1 against a limit of 10.5, and the ratchet refused
-it. Since slimfit#39 such a test run's `test_seconds` is neither checked nor
-ratcheted: see `slimfit help host-load`.)
+A `--mutants` run with no cached test run of the tree times its tests at
+background priority, which is not what a gate measures: such a run's
+`test_seconds` is neither checked nor ratcheted, and a plain `check` of the
+tree times the tests again (slimfit#39; `slimfit help host-load`; its
+measurements are in the comment on slimfit#39).
