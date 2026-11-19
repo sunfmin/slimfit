@@ -158,6 +158,7 @@ phases (`outcomes.json`), its first build that of its first mutant.
 | a target directory of its own at a fixed path, first run | 110.6s | 69 | 230.9s |
 | the same, second run | 13.5s | 4 | 142.9s |
 | B: the test run's environment and its own target directory | 11.1s | 4 | 136.3s |
+| B as the preset now builds it (no `mutants_command` of the suite's own) | 8.8s | 4 | 129.2s |
 
 Every run: 5 caught, 12 unviable, 0 missed, the same verdict mutant by
 mutant, each caught one run on the same 6 of 213 tests (`--in-place`: on
@@ -190,7 +191,7 @@ every test, below).
   mutant's test binary could be another's. The preset does not pass it; a
   suite that adds it must drop `CARGO_TARGET_DIR` from its command.
 
-So the mutants of this change take 136s instead of 226s: of A's 226s,
-the 95s that was the cold build is gone; what is left over B2 of the
+So the mutants of this change take 129-136s instead of 226s: of A's
+226s, the 95-97s that was the cold build is gone; what is left over B2 of the
 Context (69s) is the hangs' timeouts and the first mutant that compiles
 (about 20s, linking the test binaries).

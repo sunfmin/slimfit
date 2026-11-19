@@ -213,7 +213,7 @@ const RUST_TEST: &str = include_str!("presets/rust-test.sh");
 /// environment the test run built with (its rustc wrapper and flags), and
 /// the build goes to the test run's own target directory: a target at the
 /// same path, built the same way, keeps every crate but the mutated ones
-/// fresh (11s; ADR 0007). Without that environment (show-env failed) it
+/// fresh (9-11s; ADR 0007). Without that environment (show-env failed) it
 /// builds cold, as before. Each mutant's test processes write their
 /// profiles in the copy, which cargo-mutants deletes.
 const RUST_MUTANTS: &str = "eval \"$(cargo llvm-cov show-env --sh 2>/dev/null)\"; \
