@@ -6,7 +6,7 @@
 //! or `ratchet` reads it.
 
 use super::mutants::{Listed, Stop, list_suite, mutate_picks, runs_alone, stops};
-use super::{OUT, Resolver, Scratch};
+use super::{OUT, Resolver, Run, Scratch};
 use crate::config::Config;
 use crate::git;
 use crate::landing::{self, Record};
@@ -233,9 +233,9 @@ fn run(
     for s in suites {
         let suite = cfg.suites.iter().find(|x| &x.name == s).expect("a configured suite").resolve();
         let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
-        let out = repo.join(OUT).join("sample").join(s);
-        std::fs::create_dir_all(&out)?;
-        let stop = stops(&suite, tested, &out);
+        let run = Run::new(repo, &suite, repo.join(OUT).join("sample").join(s));
+        std::fs::create_dir_all(&run.out)?;
+        let stop = stops(&suite, tested, &run.out);
         let (ranks, picks): (Vec<usize>, Vec<Pick>) = (drawn.iter().enumerate())
             .filter(|(r, (x, _))| x == s && (stop || *r < n))
             .map(|(r, (_, c))| (r, Pick { name: c.name.clone(), why: "sampled".into(), outcome: None }))
@@ -244,10 +244,9 @@ fn run(
         let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });
         let totals = Classifier::of_worktree(&suite, repo, &files)?
             .count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
-        let root = repo.join(&suite.root);
         let resolver = Resolver::new(repo, &totals);
-        let run = mutate_picks((&root, &out), &suite, &resolver, &listed[s], &picks, tested, stop.as_ref())?;
-        ran.extend(ranks.into_iter().zip(run.mutated.picks.into_iter().map(|p| p.outcome)));
+        let mutated = mutate_picks(&run, &resolver, &listed[s], &picks, tested, stop.as_ref())?;
+        ran.extend(ranks.into_iter().zip(mutated.mutated.picks.into_iter().map(|p| p.outcome)));
     }
     let mut viable = 0;
     for (r, outcome) in ran {
