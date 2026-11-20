@@ -623,13 +623,7 @@ mod tests {
         assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
-        let held = crate::landing::Held {
-            target: String::new(),
-            from: String::new(),
-            lines: 0,
-            records: vec![],
-            added: Default::default(),
-        };
+        let held = crate::landing::Held::default();
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
         assert_eq!(named(crate::report::RATE_HELP), keys(&crate::report::Rate::default()));

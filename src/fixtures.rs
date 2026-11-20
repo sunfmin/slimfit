@@ -161,7 +161,7 @@ fn a_line_that_flaps_neither_fails_check_nor_ratchets() {
         let mut base = Baseline::default();
         base = ratchet(&base, first, &cfg, &[], None).unwrap();
         for m in [second, first, second] {
-            let v = check(&base, m, &cfg);
+            let v = check(&base, m, &cfg, None);
             assert!(v.ok && v.improved.is_empty(), "{v:?}");
             base = ratchet(&base, m, &cfg, &[], None).unwrap();
             assert_eq!(base.suites["rust"].uncovered_lines, uncovered(first));
