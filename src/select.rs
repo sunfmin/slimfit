@@ -262,18 +262,21 @@ pub fn shim(args: Vec<OsString>) -> ! {
     if build {
         std::process::exit(budgeted(&args));
     }
-    if test_run {
-        match narrowed() {
-            Ok(Some(extra)) => {
-                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-                args.splice(at..at, extra);
-            }
-            Ok(None) => std::process::exit(0),
-            Err(e) => eprintln!("slimfit: {e:#}: every test runs"),
-        }
-    }
+    test_run.then(|| narrow(&mut args));
     // Not exec: this process must exit to write its own coverage profile.
     std::process::exit(real_or_fail(&args));
+}
+
+/// A test run's `args`, narrowed to the mutant's tests; none to run: exit.
+fn narrow(args: &mut Vec<OsString>) {
+    match narrowed() {
+        Ok(Some(extra)) => {
+            let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            args.splice(at..at, extra);
+        }
+        Ok(None) => std::process::exit(0),
+        Err(e) => eprintln!("slimfit: {e:#}: every test runs"),
+    }
 }
 
 /// A build (`--no-run`): not made, and failed, when the plan's budget is
