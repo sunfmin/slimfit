@@ -34,6 +34,8 @@ pub fn list(text: &str) -> Result<Vec<Candidate>> {
             line: line_of(&m["span"]["start"]["line"]),
             function: s(&m["function"]["function_name"]),
             replacement: s(&m["replacement"]),
+            end: line_of(&m["span"]["end"]["line"]),
+            field: m["genre"] == "StructField",
         })
         .collect())
 }
@@ -220,6 +222,17 @@ mod t {
         let s: Vec<MutantStatus> = r.iter().map(|m| m.status).collect();
         assert_eq!(s, vec![MutantStatus::Killed, MutantStatus::Survived, MutantStatus::Unviable]);
         assert_eq!((r[0].line, r[0].description.as_str()), (3, "EqualityOperator: a < b"));
+    }
+
+    /// PIT escapes `<init>` and quotes in element text: they read back as written.
+    #[test]
+    fn pitest_unescapes_references_in_text() {
+        let x = "<mutations><mutation status='KILLED'><sourceFile>A.kt</sourceFile>\
+            <mutatedClass>p.A</mutatedClass><mutatedMethod>&lt;init&gt;</mutatedMethod><lineNumber>2</lineNumber>\
+            <description>&quot;a&quot; &amp; &apos;b&apos; &#65;</description></mutation></mutations>";
+        let r = read(MutantsFormat::Pitest, &[x.into()]).unwrap();
+        assert_eq!((r[0].file.as_str(), r[0].line), ("p/A.kt", 2));
+        assert_eq!(r[0].description, "<init>: \"a\" & 'b' A");
     }
 
     /// A timed-out mutant is killed; when the unmutated tests fail, no

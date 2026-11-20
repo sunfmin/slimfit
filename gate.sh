@@ -8,7 +8,7 @@ cargo fmt --check
 cargo clippy --all-targets --quiet -- -D warnings
 cargo build --release --quiet
 mkdir -p .slimfit/out
-# slimfit checks itself: tests pass, no new uncovered lines, no slower tests.
+# slimfit checks itself: tests pass and the change carries its mutants record; coverage and test time are answered as trends.
 ./target/release/slimfit check --fresh > .slimfit/out/gate.json || { cat .slimfit/out/gate.json; exit 1; }
 # The release script, as far as it goes without publishing.
 sh -n packaging/release.sh

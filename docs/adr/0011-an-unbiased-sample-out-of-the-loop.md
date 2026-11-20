@@ -21,7 +21,17 @@ one (slimfit#55).
   better result.
 - **The run.** The drawn mutants run as picks run (ADR 0007: each with its
   function's tests). One that does not build is replaced by the next in the
-  draw, for at most 3 runs, so N means N viable where the pool allows.
+  draw, so N means N viable where the pool allows. (Amended by slimfit#60:
+  at first in up to 3 runs, each with its own build; now 2N are drawn at
+  once and run in one run, and the shim builds none once N drawn before it
+  have built. cargo-mutants runs them in its own order, so a mutant drawn
+  later may build before the draw is known not to need it: the price of
+  keeping the sample the draw's first N viable, unbiased and the tip's
+  alone. Where no shim runs, the first N run alone, none replaced.)
+- **Field deletions.** cargo-mutants 27 runs every field deletion on the
+  lines of its `--in-diff`, whatever `-F` says (slimfit#60), so a run is
+  given one line of each mutant it runs, one no other field deletion
+  touches, and a mutant with no such line is not drawn.
 - **Where it runs.** On factorium's idle tasks line
   (`slimfit next --all --sample 5`), at its background priority. It is a
   flag of `next` so that the line still prints a single `next --all` answer.

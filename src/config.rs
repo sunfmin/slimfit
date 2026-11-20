@@ -21,8 +21,9 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CheckConfig {
-    /// Lines by which `uncovered_lines` may move either way and still count
-    /// as unchanged: coverage that depends on timing flaps (docs/adr/0001).
+    /// Lines by which `uncovered_lines` may fall and still count as
+    /// unchanged, so `ratchet` does not lock in a line whose coverage flaps
+    /// by timing (docs/adr/0001). `uncovered_lines` bounds nothing.
     pub coverage_slack: u64,
     /// The branch changes land on: a change's lines are those added since
     /// HEAD's merge base with it (`landing::DEFAULT_TARGET` when unset).

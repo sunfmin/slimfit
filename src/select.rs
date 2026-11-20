@@ -40,6 +40,74 @@ pub struct Plan {
     pub root: PathBuf,
     pub tests: Vec<PlanTest>,
     pub functions: Vec<PlanFunction>,
+    /// A sample's stop, when the run holds more mutants than it wants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Budget>,
+}
+
+/// A run of a sample's draw and its replacements, all at once (ADR 0011):
+/// the sample is the first `viable` of the draw that build, so a mutant
+/// is not built once that many of those drawn before it have built.
+/// cargo-mutants runs them in its own order, not the draw's, so one
+/// drawn later may build before the draw is known to need it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Budget {
+    pub viable: usize,
+    /// The ranks known to build before this run (another suite's run).
+    pub known: Vec<usize>,
+    pub mutants: Vec<PlanMutant>,
+}
+
+/// A drawn mutant, by its rank in the draw, and the text a build directory
+/// holds with it applied: the lines its diff puts in, from line `start` of
+/// `file`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanMutant {
+    pub rank: usize,
+    pub file: String,
+    pub start: u32,
+    pub text: Vec<String>,
+}
+
+/// The drawn mutants of a listing (`--list --json`), each with the lines
+/// its diff puts in; `rank` gives a name's rank in the draw, `None` if not drawn.
+pub fn drawn(listed: &str, rank: impl Fn(&str) -> Option<usize>) -> Result<Vec<PlanMutant>> {
+    let listed: serde_json::Value = serde_json::from_str(listed).context("cargo mutants --list --json")?;
+    let mutant = |m: &serde_json::Value| {
+        let rank = rank(m["name"].as_str()?)?;
+        let mut lines = m["diff"].as_str()?.lines().skip_while(|l| !l.starts_with("@@ "));
+        let header = lines.next()?;
+        let mut at: u32 = header.split(" +").nth(1)?.split([',', ' ']).next()?.parse().ok()?;
+        // The new side's changed lines, from the first: context before them counts.
+        let mut lines = lines.filter(|l| !l.starts_with('-')).peekable();
+        while lines.next_if(|l| !l.starts_with('+')).is_some() {
+            at += 1;
+        }
+        let text = lines.map_while(|l| l.strip_prefix('+')).map(String::from).collect();
+        Some(PlanMutant { rank, file: m["file"].as_str()?.into(), start: at, text })
+    };
+    Ok(listed.as_array().into_iter().flatten().filter_map(mutant).collect())
+}
+
+impl Budget {
+    /// The drawn mutant applied in build directory `dir`, if one is.
+    fn applied(&self, dir: &Path) -> Option<usize> {
+        self.mutants
+            .iter()
+            .find(|m| {
+                let Ok(text) = std::fs::read_to_string(dir.join(&m.file)) else { return false };
+                let at = text.lines().skip(m.start as usize - 1);
+                at.take(m.text.len()).eq(m.text.iter().map(String::as_str))
+            })
+            .map(|m| m.rank)
+    }
+
+    /// Whether a mutant of `rank` need not build, `built` the ranks known
+    /// to have built: the draw before it already holds enough that build.
+    fn spent(&self, rank: usize, built: impl Iterator<Item = usize>) -> bool {
+        let before: BTreeSet<usize> = built.chain(self.known.iter().copied()).filter(|r| *r < rank).collect();
+        before.len() >= self.viable
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,7 +174,7 @@ pub fn plan(
         };
         functions.push(PlanFunction { file: file.into(), start, end, tests });
     }
-    Ok(Plan { root: root.into(), tests: plan_tests, functions })
+    Ok(Plan { root: root.into(), tests: plan_tests, functions, budget: None })
 }
 
 /// The tests to run in build directory `dir`, and why: `None` runs every
@@ -190,22 +258,60 @@ pub fn shim(args: Vec<OsString>) -> ! {
     let test_run = args.first().is_some_and(|a| a == "nextest")
         && args.get(1).is_some_and(|a| a == "run")
         && !args.iter().any(|a| a == "--no-run");
-    if test_run {
-        match narrowed() {
-            Ok(Some(extra)) => {
-                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-                args.splice(at..at, extra);
-            }
-            Ok(None) => std::process::exit(0),
-            Err(e) => eprintln!("slimfit: {e:#}: every test runs"),
-        }
+    let build = args.first().is_some_and(|a| a == "nextest") && args.iter().any(|a| a == "--no-run");
+    if build {
+        std::process::exit(budgeted(&args));
     }
+    test_run.then(|| narrow(&mut args));
     // Not exec: this process must exit to write its own coverage profile.
-    let code = real(&args).unwrap_or_else(|e| {
+    std::process::exit(real_or_fail(&args));
+}
+
+/// A test run's `args`, narrowed to the mutant's tests; none to run: exit.
+fn narrow(args: &mut Vec<OsString>) {
+    match narrowed() {
+        Ok(Some(extra)) => {
+            let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            args.splice(at..at, extra);
+        }
+        Ok(None) => std::process::exit(0),
+        Err(e) => eprintln!("slimfit: {e:#}: every test runs"),
+    }
+}
+
+/// A build (`--no-run`): not made, and failed, when the plan's budget is
+/// spent before the drawn mutant applied; else the real one, recording a
+/// drawn mutant that built.
+fn budgeted(args: &[OsString]) -> i32 {
+    let plan = std::env::var_os(PLAN_ENV).map(PathBuf::from);
+    let read = |p: &PathBuf| serde_json::from_str::<Plan>(&std::fs::read_to_string(p).ok()?).ok();
+    let budget = plan.as_ref().and_then(|p| Some((p.parent()?.to_path_buf(), read(p)?.budget?)));
+    let rank = budget.as_ref().and_then(|(_, b)| b.applied(&std::env::current_dir().ok()?));
+    let (Some((dir, budget)), Some(rank)) = (budget, rank) else { return real_or_fail(args) };
+    if budget.spent(rank, built(&dir)) {
+        eprintln!(
+            "slimfit: drawn mutant {rank}: {} drawn before it built: not built, and not in the sample",
+            budget.viable
+        );
+        return 1;
+    }
+    eprintln!("slimfit: drawn mutant {rank}: building");
+    let code = real_or_fail(args);
+    let _ = (code == 0).then(|| std::fs::write(dir.join(format!("built-{rank}")), ""));
+    code
+}
+
+/// The ranks recorded as built in `dir`.
+fn built(dir: &Path) -> impl Iterator<Item = usize> {
+    let names = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.file_name());
+    names.filter_map(|n| n.to_str()?.strip_prefix("built-")?.parse().ok())
+}
+
+fn real_or_fail(args: &[OsString]) -> i32 {
+    real(args).unwrap_or_else(|e| {
         eprintln!("slimfit: {e:#}");
         101
-    });
-    std::process::exit(code);
+    })
 }
 
 /// Runs the real nextest with `args`: its exit code.
@@ -285,6 +391,31 @@ mod tests {
     /// own file; its function's tests run, each under its timeout. A line
     /// in no function, a function of unknown tests, or no difference at
     /// all: every test.
+    /// A sample's build is found by the lines its diff puts in (the real
+    /// list's), and not made once as many drawn before it as the sample
+    /// wants have built, here or in an earlier run.
+    #[test]
+    fn a_sample_builds_none_once_enough_drawn_before_it_built() {
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust");
+        let list = std::fs::read_to_string(sample.join("reports/mutants.list.json")).unwrap();
+        let names = ["src/lib.rs:12:9: replace >= with < in is_adult", "src/lib.rs:2:5: replace add -> i64 with 1"];
+        let mutants = drawn(&list, |n| names.iter().position(|d| *d == n)).unwrap();
+        let b = Budget { viable: 2, known: vec![], mutants };
+        let build = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(build.path().join("src")).unwrap();
+        let own = std::fs::read_to_string(sample.join("src/lib.rs")).unwrap();
+        let applied = |from: &str, to: &str| {
+            std::fs::write(build.path().join("src/lib.rs"), own.replacen(from, to, 1)).unwrap();
+            b.applied(build.path())
+        };
+        assert_eq!(applied("age >= 18", "age < /* ~ changed by cargo-mutants ~ */ 18"), Some(0));
+        assert_eq!(applied("    a + b", "    1 /* ~ changed by cargo-mutants ~ */"), Some(1));
+        assert_eq!(applied("    a + b", "    0 /* ~ changed by cargo-mutants ~ */"), None);
+        assert!(!b.spent(1, [0, 3].into_iter()));
+        assert!(b.spent(4, [0, 3].into_iter()));
+        assert!(Budget { known: vec![2], ..b }.spent(3, [0].into_iter()));
+    }
+
     #[test]
     fn chooses_the_tests_of_the_mutated_function() {
         let (own, build) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -298,6 +429,7 @@ mod tests {
             root: own.path().into(),
             tests: vec![t("calc", "x"), t("calc::it", "a,b)\\"), t("calc", "z")],
             functions: vec![f(1, 3, Some(vec![0, 1])), f(5, 7, None), f(5, 5, Some(vec![]))],
+            budget: None,
         };
         let choose_at = |plan: &Plan, from: &str, to: &str| {
             std::fs::write(build.path().join("lib.rs"), text.replacen(from, to, 1)).unwrap();

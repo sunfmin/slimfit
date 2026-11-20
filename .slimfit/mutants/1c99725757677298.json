@@ -1,0 +1,34 @@
+{
+  "tree": "ce3f20d6f99c5854566f5b0086edc81d6364694f+d1fba762150c532c",
+  "picker": "claude-code/opus-5.5/picker-a3f91c",
+  "author": "claude-code/opus-5.5/worker-slimfit-67-1",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/ratchet.rs:209:51: replace > with >= in Trend::rose",
+        "why": "the edge of rose: current equal to the baseline",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:209:9: replace Trend::rose -> bool with true",
+        "why": "spans named when the count did not rise",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:225:60: replace == with != in Verdict::name_new_spans",
+        "why": "a trend matched to the wrong suite",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/formats/xml.rs:43:34: replace || with && in walk",
+        "why": "blank text after a reference must not need non-blank text",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:393:17: delete match arm Bound::UncoveredLines in check",
+        "why": "the uncovered_lines trend dropped from the verdict",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
