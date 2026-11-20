@@ -1,0 +1,33 @@
+{
+  "tree": "a4d85a81865fd8c2b07fb6c8cffe4cf16c040c52+d1fba762150c532c",
+  "picker": "codex:01a1f803-4463-7341-a832-c1f4f49352ba:default",
+  "author": "claude-code:137bd4ee-379e-5bf4-bccf-df953349552b:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/sample.rs:235:56: replace == with != in run",
+        "why": "A test that only checks the sample size can miss whether each selected suite uses its own measurement and test reach.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:578:54: replace * with / in deepen",
+        "why": "The shown tests produce at most one deepen task, so they cannot detect a change in how competing files are ranked.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:364:5: replace hold -> Result<(Option<Held>, Vec<Violation>)> with Ok((None, vec![]))",
+        "why": "The shown tests check which lines require mutants, leaving open whether the gate reports a violation when those lines have no picker record.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:106:5: replace list_suite -> Result<Listed> with Ok(Default::default())",
+        "why": "The shown tests can pass without checking that a suite with changed source lines returns candidates from the mutation tool.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
