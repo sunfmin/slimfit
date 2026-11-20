@@ -237,7 +237,9 @@ fn run(
         let stop = stops(&suite, tested, &run.out);
         let (ranks, picks): (Vec<usize>, Vec<Pick>) = (drawn.iter().enumerate())
             .filter(|(r, (x, _))| x == s && (stop || *r < n))
-            .map(|(r, (_, c))| (r, Pick { name: c.name.clone(), why: "sampled".into(), outcome: None }))
+            .map(|(r, (_, c))| {
+                (r, Pick { name: c.name.clone(), why: "sampled".into(), outcome: None, first_outcome: None })
+            })
             .unzip();
         let known = ran.iter().filter(|(_, o)| built(o)).map(|(r, _)| *r).collect();
         let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });

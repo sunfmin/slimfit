@@ -33,21 +33,36 @@ pub struct Point {
 
 /// How the mutants one source chose came out: `ran` built and ran (killed
 /// or survived), `survived` of those, `rate` = survived / ran (`None` when
-/// none ran), and `unviable` (did not build, or no outcome).
+/// none ran), and `unviable` (did not build, or no outcome); and on their
+/// first run, before the change's author could answer a survivor:
+/// `first_survived`, and `first_unknown` (picks in records from before the
+/// first was kept).
 #[derive(Debug, Default, Serialize, PartialEq)]
 pub struct Rate {
     pub ran: u64,
     pub survived: u64,
     pub rate: Option<f64>,
     pub unviable: u64,
+    pub first_survived: u64,
+    pub first_unknown: u64,
 }
 
 /// What a [`Rate`] prints, as the command pages name it.
 pub const RATE_HELP: &str = "`ran` (built and ran: killed or survived), `survived` (of those), `rate` (survived / \
-     ran, or null when none ran) and `unviable` (did not build, or reported no outcome)";
+     ran, or null when none ran), `unviable` (did not build, or reported no outcome), `first_survived` (survived \
+     their first run, before the change's author could answer them: one killed since counts here too, so it counts \
+     the gaps the picks found) and `first_unknown` (picks in records from before the first run's outcome was kept; \
+     a sample runs once, so its one run is its first)";
 
 impl Rate {
-    fn add(&mut self, outcome: Option<MutantStatus>) {
+    /// Counts a mutant by its last `outcome`, and by its `first` (`None`:
+    /// not known).
+    fn add(&mut self, outcome: Option<MutantStatus>, first: Option<MutantStatus>) {
+        match first {
+            Some(MutantStatus::Survived) => self.first_survived += 1,
+            None => self.first_unknown += 1,
+            Some(_) => {}
+        }
         match outcome {
             Some(MutantStatus::Killed) => self.ran += 1,
             Some(MutantStatus::Survived) => (self.ran, self.survived) = (self.ran + 1, self.survived + 1),
@@ -68,12 +83,15 @@ fn survival<'a>(files: impl Iterator<Item = (&'a str, &'a str)>) -> Option<BTree
             let Ok(r) = serde_json::from_str::<Record>(text) else { continue };
             let by = if r.picked_by_another() { Source::Picker } else { Source::Author };
             for pick in r.picks.values().flatten() {
-                out.entry(by).or_default().add(pick.outcome);
+                out.entry(by).or_default().add(pick.outcome, pick.first_outcome);
             }
         } else if p.starts_with(&samples) {
             let Ok(s) = serde_json::from_str::<sample::Sample>(text) else { continue };
             for d in s.drawn.values().flatten() {
-                out.entry(Source::Sampled).or_default().add(d.outcome);
+                // A sample runs once: its one outcome is its first (none: not a survivor).
+                out.entry(Source::Sampled)
+                    .or_default()
+                    .add(d.outcome, Some(d.outcome.unwrap_or(MutantStatus::Unviable)));
             }
         }
     }
@@ -98,11 +116,15 @@ pub struct Lines {
     /// Deepen verdicts kept: files judged deep enough (`slimfit keep <file>`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kept_files: Option<usize>,
+    /// What the measurement the baseline was written from measured: a rise
+    /// the bounds above do not keep shows here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured: Option<ratchet::Measured>,
 }
 
 /// What a history point's suite prints, as the command pages name it.
 pub const LINES_HELP: &str = "`prod` and `test` lines, and what the baseline committed then held: `tests`, \
-     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept) and `kept_files` (deepen verdicts kept)";
+     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept), `kept_files` (deepen verdicts kept) and `measured` (what was measured when the baseline was written: `uncovered_lines` and `test_seconds`, which only it shows rising; absent before baselines kept it)";
 
 /// The baseline's numbers for `suite` in `baseline` (a commit's
 /// `.slimfit/baseline.json`), read field by field: a baseline written by an
@@ -116,6 +138,7 @@ fn judged(baseline: Option<&Value>, suite: &str, lines: &mut Lines) {
     let count = |key: &str| b[key].as_array().map(|k| k.iter().filter(|k| k["suite"] == suite).count());
     lines.kept = count("kept");
     lines.kept_files = count("kept_files");
+    lines.measured = serde_json::from_value(b["measured"][suite].clone()).ok();
 }
 
 /// The records among a commit's files, or `None` when it holds none. One
@@ -198,11 +221,12 @@ mod t {
         };
         commit(&[(ratchet::FILE, r#"{"suites":{"rust":{"tests":3,"uncovered_lines":9}}}"#)]);
         let picked = r#"{"picks":{"rust":[{"name":"m","why":"w","outcome":"killed"}]}}"#;
-        let second = r#"{"picker":"p","author":"a","picks":{"rust":[{"name":"n","why":"w","outcome":"survived"}]}}"#;
+        // A second agent's: one from before first outcomes were kept, one that survived its first run and was then killed.
+        let second = r#"{"picker":"p","author":"a","picks":{"rust":[{"name":"n","why":"w","outcome":"survived"},{"name":"k","why":"w","outcome":"killed","first_outcome":"survived"}]}}"#;
         commit(&[
             (
                 ratchet::FILE,
-                r#"{"suites":{"rust":{"tests":2,"test_seconds":1.5,"uncovered_lines":4}},"kept":[{"suite":"rust"},{"suite":"go"}],"kept_files":[{"suite":"rust"},{"suite":"rust"}]}"#,
+                r#"{"suites":{"rust":{"tests":2,"test_seconds":1.5,"uncovered_lines":4}},"kept":[{"suite":"rust"},{"suite":"go"}],"kept_files":[{"suite":"rust"},{"suite":"rust"}],"measured":{"rust":{"uncovered_lines":6,"test_seconds":2.0}}}"#,
             ),
             (".slimfit/mutants/a.json", picked),
             (".slimfit/mutants/e.json", second),
@@ -226,14 +250,18 @@ mod t {
             ]
         );
         assert!(rust.iter().all(|l| l.prod > 0), "{rust:?}");
+        // Beside the ratcheted numbers, what was measured: a rise shows there.
+        let measured = Some(ratchet::Measured { uncovered_lines: 6, test_seconds: Some(2.0) });
+        assert_eq!(rust.iter().map(|l| l.measured.clone()).collect::<Vec<_>>(), [None, None, measured]);
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
         assert_eq!(records, [None, None, Some(&Records { with_picks: 2, without_picks: 1, older: 1 })]);
-        // Survival by who chose the mutants, side by side: a second agent's picks, the author's and the sample.
+        // Survival by who chose the mutants, side by side: a second agent's picks, the author's and the sample;
+        // and on the first run, a survivor since killed counted, unknown in records from before it was kept.
         let survival = serde_json::to_value(&h[2].mutants_survival).unwrap();
         let want = serde_json::json!({
-            "picker": { "ran": 1, "survived": 1, "rate": 1.0, "unviable": 0 },
-            "author": { "ran": 1, "survived": 0, "rate": 0.0, "unviable": 0 },
-            "sampled": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 1 },
+            "picker": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 0, "first_survived": 1, "first_unknown": 1 },
+            "author": { "ran": 1, "survived": 0, "rate": 0.0, "unviable": 0, "first_survived": 0, "first_unknown": 1 },
+            "sampled": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 1, "first_survived": 1, "first_unknown": 0 },
         });
         assert_eq!((survival, h[1].mutants_survival.is_none()), (want, true));
     }

@@ -34,6 +34,31 @@ pub struct Baseline {
     /// while the target has not reached it; set by hand, once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mutants_from: Option<String>,
+    /// What the measurement the baseline was last written from measured of
+    /// each suite's trends, beside the bounds it keeps: those only tighten,
+    /// so a rise shows here, landing by landing.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub measured: BTreeMap<String, Measured>,
+}
+
+/// A suite's trends as measured, not as ratcheted: `uncovered_lines`, and
+/// `test_seconds` when the tests were timed (not run inside `--mutants`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Measured {
+    pub uncovered_lines: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_seconds: Option<f64>,
+}
+
+impl Measured {
+    /// Each suite's trends in `m`.
+    pub fn of(m: &Measurement) -> BTreeMap<String, Measured> {
+        let of = |s: &SuiteMeasurement| Measured {
+            uncovered_lines: s.metrics.uncovered_lines,
+            test_seconds: (!s.untimed).then_some(s.metrics.test_seconds),
+        };
+        m.suites.iter().map(|s| (s.suite.clone(), of(s))).collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -487,6 +512,7 @@ pub fn ratchet(
         kept,
         kept_files: base.kept_files.clone(),
         mutants_from: base.mutants_from.clone(),
+        measured: Measured::of(m),
     };
     for s in &m.suites {
         let old = base.suites.get(&s.suite);
@@ -628,6 +654,8 @@ mod t {
         assert!(same.uncovered_lines[0].new_spans.is_empty(), "{same:?}");
         let kept = |cur: u64| ratchet(&base(m(10, 10.0)), &measurement(m(cur, 10.0), None), &cfg, &[], None);
         assert_eq!([14, 9, 8].map(|c| kept(c).unwrap().suites["s"].uncovered_lines), [10, 10, 8]);
+        // Beside the bound, what was measured: the rise shows there.
+        assert_eq!(kept(14).unwrap().measured["s"], Measured { uncovered_lines: 14, test_seconds: Some(10.0) });
         let f = crate::fault::of(
             ratchet(&base(m(10, 10.0)), &more, &cfg, &[Bound::UncoveredLines], Some("x")).unwrap_err(),
         );

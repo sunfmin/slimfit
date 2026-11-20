@@ -7,7 +7,7 @@ use crate::config::{CheckConfig, Config};
 use crate::fault::fault;
 use crate::git;
 use crate::loc::{Classifier, Kind};
-use crate::model::Pick;
+use crate::model::{Measurement, MutantStatus, Pick};
 use crate::ratchet::{Bound, PICK_THE_MUTANTS, Violation};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,85 @@ impl Record {
     pub fn file(&self) -> Result<(String, String)> {
         let text = serde_json::to_string_pretty(self)? + "\n";
         Ok((format!("{DIR}/{}.json", hash(&text)), text))
+    }
+}
+
+/// Where each pick's first outcome on the change waits for its record: a
+/// survivor its author then kills reads `killed` in the run the record is
+/// made of, and only this keeps that it survived first. In `.slimfit/out`:
+/// of this working copy, never committed.
+pub const FIRSTS: &str = ".slimfit/out/first-outcomes.json";
+
+/// The first outcome of each mutant picked since the last record, by suite
+/// and name.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Firsts(BTreeMap<String, BTreeMap<String, MutantStatus>>);
+
+impl Firsts {
+    fn load(repo: &Path) -> Self {
+        let text = std::fs::read_to_string(repo.join(FIRSTS)).unwrap_or_default();
+        serde_json::from_str(&text).unwrap_or_default()
+    }
+
+    /// The first outcome of `name` in `suite`: by its name, or else by its
+    /// file and description when one mutant alone has them, since an edit
+    /// above it (the test that kills it) moves its line and column.
+    fn of(&self, suite: &str, name: &str) -> Option<MutantStatus> {
+        let seen = self.0.get(suite)?;
+        if let Some(s) = seen.get(name) {
+            return Some(*s);
+        }
+        // A name is `file:line:column: description`.
+        fn place(n: &str) -> Option<(&str, &str)> {
+            let p: Vec<&str> = n.splitn(4, ':').collect();
+            Some((p.first().copied()?, p.get(3).copied()?))
+        }
+        let at = place(name)?;
+        let mut same = seen.iter().filter(|(n, _)| place(n) == Some(at)).map(|(_, s)| *s);
+        match (same.next(), same.next()) {
+            (Some(s), None) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// Keeps the outcome of each pick `m` ran that is the first seen of its
+/// mutant since the last record.
+pub fn remember_firsts(repo: &Path, m: &Measurement) -> Result<()> {
+    // Whether a mutant was seen is asked of what was kept before this run: two of its picks are two mutants.
+    let before = Firsts::load(repo);
+    let mut firsts = Firsts::load(repo);
+    for s in &m.suites {
+        for p in s.mutated.iter().flat_map(|d| &d.picks) {
+            let Some(outcome) = p.outcome.filter(|_| before.of(&s.suite, &p.name).is_none()) else { continue };
+            firsts.0.entry(s.suite.clone()).or_default().insert(p.name.clone(), outcome);
+        }
+    }
+    std::fs::create_dir_all(repo.join(FIRSTS).parent().expect("a directory"))?;
+    std::fs::write(repo.join(FIRSTS), serde_json::to_string_pretty(&firsts)?)?;
+    Ok(())
+}
+
+impl Record {
+    /// Sets each pick's `first_outcome`: the first seen of its mutant since
+    /// the last record, else the outcome it holds.
+    pub fn with_firsts(mut self, repo: &Path) -> Self {
+        let firsts = Firsts::load(repo);
+        for (suite, picks) in &mut self.picks {
+            for p in picks {
+                p.first_outcome = firsts.of(suite, &p.name).or(p.outcome);
+            }
+        }
+        self
+    }
+}
+
+/// Forgets the first outcomes once their record is written: the next
+/// change's picks start afresh.
+pub fn forget_firsts(repo: &Path) -> Result<()> {
+    match std::fs::remove_file(repo.join(FIRSTS)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
     }
 }
 
@@ -310,6 +389,47 @@ pub fn added_lines(patch: &str, prefix: &str) -> Lines {
 #[cfg(test)]
 mod t {
     use super::*;
+
+    /// A pick's first outcome is found by its name, or, once an edit above
+    /// it moved its line, by its file and description when one mutant alone
+    /// has them; a later run does not replace it.
+    #[test]
+    fn a_first_outcome_follows_its_mutant_down_the_file() {
+        use crate::model::{Mutated, SuiteMeasurement};
+        let d = tempfile::tempdir().unwrap();
+        let ran = |picks: &[(&str, MutantStatus)]| {
+            let picks = picks
+                .iter()
+                .map(|(n, s)| Pick { name: n.to_string(), why: String::new(), outcome: Some(*s), first_outcome: None })
+                .collect();
+            let s = SuiteMeasurement {
+                suite: "s".into(),
+                metrics: Default::default(),
+                tests: vec![],
+                uncovered: vec![],
+                mutants: vec![],
+                reach: None,
+                mutated: Some(Mutated { picks, change: Default::default() }),
+                command_seconds: 0.0,
+                untimed: false,
+            };
+            remember_firsts(d.path(), &Measurement { tree: String::new(), with_mutants: true, suites: vec![s] })
+                .unwrap();
+        };
+        use MutantStatus::*;
+        let g = |line: u32| format!("a.rs:{line}:9: replace + with - in g");
+        ran(&[("a.rs:3:5: replace f -> bool with true", Survived), (&g(7), Survived), (&g(8), Killed)]);
+        ran(&[("a.rs:4:5: replace f -> bool with true", Killed)]);
+        let firsts = Firsts::load(d.path());
+        assert_eq!(firsts.of("s", "a.rs:4:5: replace f -> bool with true"), Some(Survived));
+        assert_eq!(firsts.of("s", &g(8)), Some(Killed));
+        // Two mutants of that file and description: neither is known to be the moved one.
+        assert_eq!(firsts.of("s", &g(9)), None);
+        assert_eq!(firsts.of("other", "a.rs:3:5: replace f -> bool with true"), None);
+        forget_firsts(d.path()).unwrap();
+        forget_firsts(d.path()).unwrap();
+        assert!(Firsts::load(d.path()).0.is_empty());
+    }
 
     /// FNV-1a 64, as published: a record's name is the hash of its text.
     #[test]

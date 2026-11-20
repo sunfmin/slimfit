@@ -1,0 +1,21 @@
+{
+  "tree": "480f862c52747c4e2bf62dd96eb91c95deb7c169+8a0f5da0cdecddbe",
+  "picker": "claude-code:724d63fd-3f04-4cd0-8390-9c125ef7701b:claude-opus-5-5",
+  "author": "claude-code:65405c05-c485-54a0-b024-a0759fd4111c:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:456:64: replace == with != in grown_tests",
+        "why": "Every test seen runs with reach: None, where file returns before this comparison; the lookup of a test's file by id looks unexercised.",
+        "outcome": "killed",
+        "first_outcome": "survived"
+      },
+      {
+        "name": "src/landing.rs:148:19: replace match guard e.kind() != std::io::ErrorKind::NotFound with false in forget_firsts",
+        "why": "Nothing checks that a real removal error is reported rather than silently swallowed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

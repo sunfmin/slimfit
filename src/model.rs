@@ -129,11 +129,16 @@ pub struct Pick {
     pub why: String,
     /// `None` when its run reported no outcome for it.
     pub outcome: Option<MutantStatus>,
+    /// In a record: its outcome on its first run on the change, before its
+    /// author could answer a survivor; `None` in a measurement, and in
+    /// records from before slimfit kept it (slimfit#68).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_outcome: Option<MutantStatus>,
 }
 
 /// What a [`Pick`] prints, as the command pages name it.
 pub const PICK_HELP: &str = "each with `name`, `why` (the reason it was picked) and `outcome` (`killed`, \
-     `survived` or `unviable`; `null` when the run reported none)";
+     `survived` or `unviable`; `null` when the run reported none), and in a record `first_outcome` (its outcome on the first run of the change, before a survivor was answered; absent in records from before it was kept)";
 
 /// The picked mutants a run of the change ran, and what they came to.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

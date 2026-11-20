@@ -79,7 +79,15 @@ none is worth one. Mutants never run in a gate (ADR 0006).
 - **Drift shows as a trend.** `slimfit report` counts records with picks
   against those without (`mutants_records`) and tallies the picks'
   survival by who picked (`picker`; `author` for a record that names no
-  other picker) beside the unbiased sample's (ADR 0011).
+  other picker) beside the unbiased sample's (ADR 0011). A survivor is
+  killed before its record is written, so the record's last outcome reads
+  like a pick the tests already held: since slimfit#68 each pick also keeps
+  its first outcome (`first_outcome`, from the first `check --mutants` that
+  ran it since the last record, kept in `.slimfit/out/` until then), and
+  the tally counts first-run survivors (`first_survived`) by who picked:
+  the gaps a second agent's picks find against the author's. Records from
+  before it count by their picker as before, their first outcome unknown
+  (`first_unknown`).
 
 ## Consequences
 

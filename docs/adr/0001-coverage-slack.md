@@ -61,7 +61,10 @@ a larger value; a deterministic suite can set 0.
 New uncovered lines land when their author judges them fine; they are named
 at the change (`new_spans`) and stay `uncovered` tasks until a test asserts
 what they decide or they are deleted. The baseline keeps the lowest count
-ratcheted, so a rise does not show in `report`'s history: it shows in the
-`check` of the change that brought it. A real gain of `coverage_slack` lines
+ratcheted, so a rise does not show in its bound: it shows in the `check` of
+the change that brought it, and, since slimfit#68, in what each landing
+measured, kept beside the bound (`measured`): `report`'s history shows it,
+and `next` gives a run of rises over the last landings as a `rising-trend`
+task, which no check fails on. A real gain of `coverage_slack` lines
 or fewer is not locked in by itself; it is locked in with the next gain that
 clears the band.

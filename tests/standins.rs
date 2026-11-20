@@ -381,6 +381,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
         let held = |text: &str| {
             let mut b: Value = serde_json::from_str(text).unwrap();
             b["suites"][lang.name]["test_seconds"] = Value::Null;
+            b["measured"][lang.name]["test_seconds"] = Value::Null;
             b
         };
         assert_eq!(held(&base), held(would[".slimfit/baseline.json"].as_str().unwrap()), "{}", lang.name);

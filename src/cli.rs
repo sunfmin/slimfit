@@ -187,7 +187,7 @@ pub(crate) enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and which files in `.slimfit/mutants/` the change adds. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache and the suites' reports and logs beside it. The baseline is never written: `slimfit ratchet` does that.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json` and which files in `.slimfit/mutants/` the change adds. It measures the working tree, or reuses the measurement in `.slimfit/out/` when the tree is unchanged since it was taken, and writes nothing but that cache, the suites' reports and logs beside it, and with `--mutants` each pick's first outcome since the last record (`.slimfit/out/first-outcomes.json`, read by `slimfit ratchet`). The baseline is never written: `slimfit ratchet` does that.
     ///
     /// ## What it holds
     ///
@@ -241,7 +241,7 @@ pub(crate) enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason. When the measurement ran picked mutants, or with `--no-mutants`, it also writes `.slimfit/mutants/<hash>.json`, the change's record: the tree it was made of, `picker` and `author` (the ids given), and per suite the picks ({const:PICK}), or `none`, the reason none was picked; named by its contents (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`, measures (or reuses the measurement in `.slimfit/out/` when the tree is unchanged), and writes `.slimfit/baseline.json`: each bound at the better of baseline and now, a loosened bound at now, with its reason, and beside the bounds `measured`, per suite the `uncovered_lines` and `test_seconds` measured now (`slimfit report` shows them landing by landing, and `slimfit next` gives a run of rises as a `rising-trend` task). When the measurement ran picked mutants, or with `--no-mutants`, it also writes `.slimfit/mutants/<hash>.json`, the change's record: the tree it was made of, `picker` and `author` (the ids given), and per suite the picks ({const:PICK}), or `none`, the reason none was picked; named by its contents; each pick's `first_outcome` is its outcome on the first `check --mutants` that ran it since the last record, kept in `.slimfit/out/` until this record is written, so a survivor killed before the record still counts as one (see [what the gate holds](help:mutants-scope)). With `--dry-run` it writes nothing, and caches no measurement (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -353,7 +353,7 @@ pub(crate) enum Cmd {
     /// - `current`: per suite, the metrics measured now: {const:METRICS}.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. A number from before the baseline held it (or before any record) is absent, not zero.
+    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. The trend: `measured` shows each landing's `uncovered_lines` and `test_seconds` as measured, so a run of rises the ratcheted numbers hide shows here (and as a `rising-trend` task of `slimfit next`). The tally: `first_survived` per source is how many gaps its picks found, survivors since killed included, where `survived` counts only those still alive when recorded; a `picker` count above the `author` one is what a second agent buys. A number from before the baseline held it (or before any record) is absent, not zero.
     /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is a `picker` rate far below the `sampled` one in `mutants_survival`.
     /// - `next`: `slimfit next`.
     ///
@@ -364,7 +364,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - `history` counts lines with today's `slimfit.toml` (and a Rust suite's test crates by today's Cargo manifests): a commit from before a suite existed counts it as it is configured now.
-    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds` and `uncovered_lines`, the lowest ratcheted so far (a rise a change brought shows in that change's `check`, not here); `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
+    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds` and `uncovered_lines`, the lowest ratcheted so far; a rise shows in `measured` beside them, which baselines written before it was kept lack; `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
@@ -455,6 +455,9 @@ fn help() -> Help {
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
         .constant("LISTED_DEEPEN", tasks::LISTED_DEEPEN)
         .constant("DEEPEN_DAYS", tasks::DEEPEN_DAYS)
+        .constant("TREND_LANDINGS", tasks::TREND_LANDINGS)
+        .constant("TREND_MIN", tasks::TREND_MIN)
+        .constant("TIME_NOISE", format!("{:.0}%", tasks::TIME_NOISE * 100.0))
         .constant("COMMON_LINES", format!("{:.0}%", tasks::COMMON_LINES * 100.0))
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
@@ -629,14 +632,14 @@ mod tests {
         };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
-        assert_eq!(named(crate::report::RATE_HELP)[..4], keys(&crate::report::Rate::default())[..]);
+        assert_eq!(named(crate::report::RATE_HELP), keys(&crate::report::Rate::default()));
         assert_eq!(
             named(crate::measure::sample::SAMPLE_HELP)[..4],
             keys(&crate::measure::sample::Sample::default())[..]
         );
         let candidate = model::Candidate::default();
         assert_eq!(named(model::CANDIDATE_HELP), keys(&candidate));
-        let pick = model::Pick { name: String::new(), why: String::new(), outcome: None };
+        let pick = model::Pick { name: String::new(), why: String::new(), outcome: None, first_outcome: None };
         assert_eq!(named(model::PICK_HELP)[..3], keys(&pick)[..]);
         let check = super::help().command_help(&["check"]).unwrap();
         assert!(check.contains(model::CANDIDATE_HELP) && check.contains(model::PICK_HELP), "{check}");

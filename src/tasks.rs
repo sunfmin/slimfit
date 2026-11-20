@@ -6,7 +6,7 @@ use crate::git;
 use crate::landing::Tree;
 use crate::loc::{Classifier, Kind};
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
-use crate::ratchet::{Baseline, Kept, KeptFile};
+use crate::ratchet::{Baseline, Kept, KeptFile, Measured};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -31,6 +31,9 @@ pub enum TaskKind {
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
     #[value(verbatim_doc_comment)]
     SlowTest,
+    /// A trend rose over the suite's last landings (first-parent commits that wrote the baseline, at most {const:TREND_LANDINGS} back, at least {const:TREND_MIN} of them): `uncovered_lines` as measured, from the first to the last, by more than `coverage_slack`, or `test_seconds` by more than {const:TIME_NOISE} (load moves CPU time nearly that far on an unchanged tree). The baseline keeps the lowest, so no `check` sees a run of rises: this task is how it shows, and no bound holds it. `evidence.landings` names them; `evidence.spans` the uncovered spans holding a line added since the first, or `evidence.tests` the tests in files changed since, slowest first. Lower it as an `uncovered` or `slow-test` task says, or judge the rise worth what it bought and leave it: the task goes once the landings no longer rise.
+    #[value(verbatim_doc_comment)]
+    RisingTrend,
     /// A mutant no test notices. Assert the behaviour through the interface with a fast test, or simplify the code away. Its `evidence.source` says who chose it: `picker`, a second agent's pick of the change, from a `slimfit check --mutants <name>...` of this tree; `sampled`, drawn by `slimfit next --sample` from changes already landed (see [the sample](help:sample)).
     #[value(verbatim_doc_comment)]
     SurvivingMutant,
@@ -119,8 +122,10 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
 pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
     let mut out = pick_mutants(repo, tree, cfg, m.with_mutants)?;
     let files = &tree.wt.files;
+    let landed = landed(repo);
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
+        out.extend(rising(repo, &cfg.check, s, &landed));
         out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, files)?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
@@ -340,6 +345,125 @@ fn slow(s: &SuiteMeasurement) -> Vec<Task> {
             accept: TaskKind::SlowTest.accept().into(),
         })
         .collect()
+}
+
+/// How many landings back a rising trend is looked for.
+pub const TREND_LANDINGS: usize = 5;
+/// The fewest landings a rising trend is read from: a rise over fewer is
+/// the change's own, which its `check` answers.
+pub const TREND_MIN: usize = 3;
+/// How far `test_seconds` may rise over the landings, as a share of the
+/// first, before it is a task: past what load moved the CPU time of an
+/// unchanged tree (to 51% over its baseline, the most seen).
+pub const TIME_NOISE: f64 = 0.6;
+
+/// A landing: a first-parent commit that wrote the baseline, and what the
+/// measurement it was written from measured of each suite.
+struct Landed {
+    commit: String,
+    date: String,
+    subject: String,
+    measured: BTreeMap<String, Measured>,
+}
+
+/// The last [`TREND_LANDINGS`] landings of HEAD that kept what they
+/// measured, oldest first.
+fn landed(repo: &Path) -> Vec<Landed> {
+    let n = TREND_LANDINGS.to_string();
+    let args = ["log", "--first-parent", "-n", &n, "--format=%H%x09%cs%x09%s", "--", crate::ratchet::FILE];
+    let log = git::run(repo, &args).unwrap_or_default();
+    let mut out: Vec<Landed> = log
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            let (commit, date, subject) = (f.next()?, f.next()?, f.next().unwrap_or_default());
+            let text = git::run(repo, &["show", &format!("{commit}:{}", crate::ratchet::FILE)]).ok()?;
+            let b: Value = serde_json::from_str(&text).ok()?;
+            let measured = serde_json::from_value(b.get("measured")?.clone()).ok()?;
+            Some(Landed { commit: commit[..12].into(), date: date.into(), subject: subject.into(), measured })
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
+/// The suite's trends that rose over `landed` past their noise: a task each.
+fn rising(repo: &Path, check: &crate::config::CheckConfig, s: &SuiteMeasurement, landed: &[Landed]) -> Vec<Task> {
+    let series = |of: fn(&Measured) -> Option<f64>| -> Vec<(&Landed, f64)> {
+        landed.iter().filter_map(|l| Some((l, of(l.measured.get(&s.suite)?)?))).collect()
+    };
+    let slack = check.coverage_slack as f64;
+    let mut out = Vec::new();
+    for time in [false, true] {
+        let metric = if time { "test_seconds" } else { "uncovered_lines" };
+        let values = if time { series(|m| m.test_seconds) } else { series(|m| Some(m.uncovered_lines as f64)) };
+        let (Some((first, from)), Some((last, to))) = (values.first(), values.last()) else { continue };
+        let past = if time { from * (1.0 + TIME_NOISE) } else { from + slack };
+        if values.len() < TREND_MIN || *to <= past + 1e-9 {
+            continue;
+        }
+        // What grew: what the landings after the first added.
+        let patch = git::diff(repo, &first.commit, "HEAD", ".", &[]).unwrap_or_default();
+        let added = crate::landing::added_lines(&patch, "");
+        let (grew, files) = if time { grown_tests(s, &added) } else { grown_spans(s, &added) };
+        let landings: Vec<Value> = values
+            .iter()
+            .map(|(l, v)| json!({ "commit": l.commit, "date": l.date, "subject": l.subject, "value": v }))
+            .collect();
+        let (key, kind) = if time { ("tests", "slow-test") } else { ("spans", "uncovered") };
+        out.push(Task {
+            kind: TaskKind::RisingTrend,
+            suite: s.suite.clone(),
+            summary: format!(
+                "{metric} rose from {from} to {to} over the last {} landings, {} to {}",
+                values.len(),
+                first.commit,
+                last.commit
+            ),
+            files,
+            evidence: json!({ "metric": metric, "from": from, "to": to, "landings": landings, key: grew }),
+            steps: format!(
+                "No bound holds {metric}, so this is how a run of rises shows. Read the landings in \
+                 `evidence.landings` (`git show <commit>`): which brought the rise, and what it bought. Then lower it \
+                 where `evidence.{key}` points, as a `{kind}` task's steps say ({}), or judge the rise worth what it \
+                 bought and leave it: no check fails on it, and the task goes once the landings no longer rise.",
+                if time {
+                    "make each test cheaper without testing less, or merge it into faster ones"
+                } else {
+                    "a fast test through the module's interface that asserts what the lines decide, or delete the \
+                     lines nothing needs; a test that only runs them is no fix"
+                }
+            ),
+            accept: TaskKind::RisingTrend.accept().into(),
+        });
+    }
+    out
+}
+
+/// The uncovered spans holding a line of `added`, and their files.
+fn grown_spans(s: &SuiteMeasurement, added: &crate::landing::Lines) -> (Value, Vec<String>) {
+    let adds =
+        |sp: &&crate::model::Span| added.get(&sp.file).is_some_and(|l| l.range(sp.start..=sp.end).next().is_some());
+    let spans: Vec<_> = s.uncovered.iter().filter(adds).collect();
+    let files: BTreeSet<String> = spans.iter().map(|sp| sp.file.clone()).collect();
+    (json!(spans), files.into_iter().collect())
+}
+
+/// The tests in the files `added` changes, slowest first (every test when
+/// the test run records no test's file), the first [`LISTED_PER_KIND`].
+fn grown_tests(s: &SuiteMeasurement, added: &crate::landing::Lines) -> (Value, Vec<String>) {
+    let file = |id: &str| {
+        let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == id)?;
+        Some(t.source.as_ref()?.file.clone())
+    };
+    let known = s.reach.is_some();
+    let mut tests: Vec<_> =
+        s.tests.iter().filter(|t| !known || file(&t.id).is_some_and(|f| added.contains_key(&f))).collect();
+    tests.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+    tests.truncate(LISTED_PER_KIND);
+    let files: BTreeSet<String> = tests.iter().filter_map(|t| file(&t.id)).collect();
+    let tests: Vec<Value> = tests.iter().map(|t| json!({ "test": t.id, "seconds": t.cpu })).collect();
+    (json!(tests), files.into_iter().collect())
 }
 
 fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
@@ -594,6 +718,42 @@ mod t {
         fewer.commits_total += 1;
         assert_eq!(proposed(&[fewer]), 0);
         assert_eq!(proposed(&[verdict("s")]), 1);
+    }
+
+    /// A trend is a task only past its noise over at least TREND_MIN
+    /// landings: `test_seconds` past TIME_NOISE of the first, with the
+    /// tests, slowest first (all of them when the run records no test's
+    /// file); `uncovered_lines` past `coverage_slack`.
+    #[test]
+    fn a_trend_is_a_task_only_past_its_noise_over_enough_landings() {
+        let landed = |values: &[(u64, f64)]| -> Vec<Landed> {
+            let at = |(i, (u, t)): (usize, &(u64, f64))| Landed {
+                commit: format!("c{i}"),
+                date: String::new(),
+                subject: String::new(),
+                measured: [("s".to_string(), Measured { uncovered_lines: *u, test_seconds: Some(*t) })].into(),
+            };
+            values.iter().enumerate().map(at).collect()
+        };
+        let s = suite([("fast", 0.1, vec![1]), ("slow", 0.9, vec![2])]);
+        let s = SuiteMeasurement { reach: None, ..s };
+        let check = crate::config::CheckConfig::default();
+        let nowhere = Path::new("/nonexistent");
+        let metrics = |values: &[(u64, f64)]| -> Vec<String> {
+            let tasks = rising(nowhere, &check, &s, &landed(values));
+            tasks.iter().map(|t| t.evidence["metric"].as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(metrics(&[(10, 1.0), (11, 1.2), (11, 1.6)]), Vec::<String>::new());
+        assert_eq!(metrics(&[(10, 1.0), (11, 1.2), (12, 1.7)]), ["uncovered_lines", "test_seconds"]);
+        assert_eq!(metrics(&[(10, 1.0), (12, 1.7)]), Vec::<String>::new());
+        let time = &rising(nowhere, &check, &s, &landed(&[(1, 1.0), (1, 1.0), (1, 2.0)]))[0];
+        assert_eq!(time.evidence["tests"][0]["test"], "t::slow");
+        assert_eq!(time.evidence["landings"][2]["commit"], "c2");
+        // Where the run records each test's file, only the tests in the files the landings changed.
+        let known = suite([("fast", 0.1, vec![1]), ("slow", 0.9, vec![2])]);
+        let added: crate::landing::Lines = [("tests/fast.rs".to_string(), [(1, "x".to_string())].into())].into();
+        let (tests, files) = grown_tests(&known, &added);
+        assert_eq!((tests, files), (json!([{ "test": "t::fast", "seconds": 0.1 }]), vec!["tests/fast.rs".to_string()]));
     }
 
     /// A failing test is a task, with the log to read; a passing one is not.

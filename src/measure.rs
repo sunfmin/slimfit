@@ -679,7 +679,10 @@ pub(crate) mod t {
 
     /// Picks, each with a reason.
     pub(crate) fn picks(names: &[&str]) -> Vec<Pick> {
-        names.iter().map(|n| Pick { name: n.to_string(), why: format!("why {n}"), outcome: None }).collect()
+        names
+            .iter()
+            .map(|n| Pick { name: n.to_string(), why: format!("why {n}"), outcome: None, first_outcome: None })
+            .collect()
     }
 
     /// The measurement with `names` picked, and the arguments the mutation

@@ -88,6 +88,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 kept: old.kept,
                 kept_files: old.kept_files,
                 mutants_from: old.mutants_from,
+                measured: ratchet::Measured::of(&m),
             };
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
@@ -197,6 +198,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &cfg,
                 &measure::Options { mutants: scope, fresh, dry_run: false, timed: !with_mutants },
             )?;
+            if m.with_mutants {
+                landing::remember_firsts(&repo, &m)?;
+            }
             let mut v = ratchet::check(&base, &m, &cfg.check);
             let (landing, unrecorded) = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
             v.violations.extend(unrecorded);
@@ -227,7 +231,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
             )?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
-            let record = record(&m, no_mutants, picker, author)?.map(|r| r.file()).transpose()?;
+            let record = record(&m, no_mutants, picker, author)?.map(|r| r.with_firsts(&repo).file()).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
@@ -239,6 +243,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 && !repo.join(path).exists()
             {
                 writes.put(path, text)?;
+                if !dry_run {
+                    landing::forget_firsts(&repo)?;
+                }
                 changed = true;
             }
             let next = if changed {
@@ -385,7 +392,11 @@ fn picks(names: Vec<String>, why: Vec<String>) -> Result<Vec<model::Pick>> {
     if !faults.is_empty() {
         return Err(fault::Faults(faults).into());
     }
-    Ok(names.into_iter().zip(why).map(|(name, why)| model::Pick { name, why, outcome: None }).collect())
+    Ok(names
+        .into_iter()
+        .zip(why)
+        .map(|(name, why)| model::Pick { name, why, outcome: None, first_outcome: None })
+        .collect())
 }
 
 /// The record `ratchet` writes of `m`: its picks, or, with `--no-mutants`,
@@ -528,6 +539,7 @@ mod gitignore_tests {
 mod answer_tests {
     use super::{fault::Fault, run};
     use crate::measure::t::{git, sample_repo};
+    use crate::model::MutantStatus;
     use serde_json::Value;
     use std::path::Path;
 
@@ -916,6 +928,133 @@ mod answer_tests {
         let (next, _) = slimfit(repo, "next --all --sample 20").unwrap();
         assert!(next["tasks"].as_array().unwrap().iter().all(|t| t["evidence"]["source"] != "sampled"), "{next:#}");
         assert!(next["notes"][0].as_str().unwrap().contains("of 0 mutants"), "{next:#}");
+    }
+
+    /// Three landings whose measured `uncovered_lines` rise (slimfit#68):
+    /// the ratcheted bound hides it, `report`'s history shows it in
+    /// `measured`, and `next` gives a `rising-trend` task naming the
+    /// landings and the uncovered span they added; `check` stays green.
+    #[test]
+    fn a_run_of_rises_shows_in_report_and_is_a_task() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        // The sample's coverage, its paths in the repository.
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        tests.push_str(" && sed 's#/REPO/##' \"$SLIMFIT_OUT/lcov.info\" > \"$SLIMFIT_OUT/l\" && mv \"$SLIMFIT_OUT/l\" \"$SLIMFIT_OUT/lcov.info\"");
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        // The first landing lacks `unused`'s body (lines 6-8), which the sample's coverage leaves unrun.
+        let lib = repo.join("src/lib.rs");
+        let text = std::fs::read_to_string(&lib).unwrap();
+        let body = "    let doubled = x * 2;\n    let shifted = doubled + 7;\n    shifted / 3\n";
+        std::fs::write(&lib, text.replace(body, "")).unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        let measured = crate::ratchet::load(repo).unwrap().measured["rust"].uncovered_lines;
+        // Each landing as its ratchet would have written it, two lines more uncovered each time.
+        let land = |uncovered: u64, message: &str| {
+            let mut b = crate::ratchet::load(repo).unwrap();
+            b.measured.get_mut("rust").unwrap().uncovered_lines = uncovered;
+            std::fs::write(repo.join(crate::ratchet::FILE), crate::ratchet::render(&b).unwrap()).unwrap();
+            git(repo, &["add", "-A"]);
+            git(repo, &["commit", "-qm", message]);
+        };
+        land(measured - 4, "landing 1");
+        std::fs::write(&lib, &text).unwrap();
+        land(measured - 2, "landing 2");
+        let (out, _) = slimfit(repo, "ratchet").unwrap();
+        assert!(out["changed"].as_bool().unwrap(), "{out:#}");
+        git(repo, &["commit", "-qam", "landing 3"]);
+        let b = crate::ratchet::load(repo).unwrap();
+        // The bound keeps the first count; what was measured rose past it with `unused` back.
+        let last = b.measured["rust"].uncovered_lines;
+        assert_eq!(b.suites["rust"].uncovered_lines, measured);
+        assert!(last >= measured, "{b:?}");
+
+        let (report, _) = slimfit(repo, "report").unwrap();
+        let history = report["history"].as_array().unwrap();
+        let seen: Vec<Value> =
+            history.iter().map(|p| p["suites"]["rust"]["measured"]["uncovered_lines"].clone()).collect();
+        assert_eq!(seen, [Value::Null, (measured - 4).into(), (measured - 2).into(), last.into()], "{report:#}");
+
+        let (next, _) = slimfit(repo, "next --all --kind rising-trend").unwrap();
+        let tasks = next["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1, "{next:#}");
+        let e = &tasks[0]["evidence"];
+        assert_eq!(e["metric"], "uncovered_lines", "{e:#}");
+        let landed: Vec<&str> =
+            e["landings"].as_array().unwrap().iter().map(|l| l["subject"].as_str().unwrap()).collect();
+        assert_eq!(landed, ["landing 1", "landing 2", "landing 3"]);
+        let span =
+            serde_json::json!([{ "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused" }]);
+        assert_eq!(e["spans"], span, "{e:#}");
+        assert!(tasks[0]["steps"].as_str().unwrap().contains("`git show <commit>`"), "{next:#}");
+        // A task, never a bound.
+        let (held, code) = slimfit(repo, "check").unwrap();
+        assert_eq!((code, held["verdict"]["ok"].as_bool()), (crate::EXIT_OK, Some(true)), "{held:#}");
+    }
+
+    /// A pick that survives its first run and is then killed (slimfit#68):
+    /// its record keeps `survived` as its first outcome beside the `killed`
+    /// it ends with, though the run the record is made of only saw it
+    /// killed; `report` counts it as a first-run survivor of a second
+    /// agent's picks.
+    #[test]
+    fn a_pick_killed_after_it_survived_keeps_its_first_outcome() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        // The mutation tool's outcomes, which the author's new test changes.
+        let tool_dir = tempfile::tempdir().unwrap();
+        let outcomes = tool_dir.path().join("outcomes.json");
+        let reports = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust/reports");
+        let real = std::fs::read_to_string(reports.join("outcomes.json")).unwrap();
+        std::fs::write(&outcomes, &real).unwrap();
+        let tool = cfg.suites[0].overrides.mutants_command.as_mut().unwrap();
+        *tool = tool.replace(&format!("{}/outcomes.json", reports.to_string_lossy()), &outcomes.to_string_lossy());
+        cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        let p = repo.join("src/lib.rs");
+        std::fs::write(&p, std::fs::read_to_string(&p).unwrap() + "\npub fn a_one() -> u8 {\n    1\n}\n").unwrap();
+        let pick = "src/lib.rs:12:5: replace is_adult -> bool with true";
+        let (out, code) = slimfit_args(repo, &["check", "--mutants", pick, "--why", "the age bound"]).unwrap();
+        assert_eq!(
+            (code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()),
+            (crate::EXIT_VIOLATION, Some("survived"))
+        );
+        // The author's test kills it: the tree and the tool's outcome change.
+        let mut caught: Value = serde_json::from_str(&real).unwrap();
+        for o in caught["outcomes"].as_array_mut().unwrap() {
+            if o["scenario"]["Mutant"]["name"] == pick {
+                o["summary"] = "CaughtMutant".into();
+            }
+        }
+        std::fs::write(&outcomes, caught.to_string()).unwrap();
+        std::fs::write(repo.join("src/minor.rs"), "// a minor is no adult\n").unwrap();
+        let (out, code) = slimfit_args(repo, &["check", "--mutants", pick, "--why", "the age bound"]).unwrap();
+        assert_eq!(
+            (code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()),
+            (crate::EXIT_OK, Some("killed")),
+            "{out:#}"
+        );
+        let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();
+        let record: crate::landing::Record =
+            serde_json::from_str(&std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap())
+                .unwrap();
+        let p = &record.picks["rust"][0];
+        assert_eq!((p.outcome, p.first_outcome), (Some(MutantStatus::Killed), Some(MutantStatus::Survived)));
+        // Written into its record, the first outcomes start afresh for the next change.
+        assert!(!repo.join(crate::landing::FIRSTS).exists());
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "a, recorded"]);
+        let (report, _) = slimfit(repo, "report --points 1").unwrap();
+        let picker = &report["history"][0]["mutants_survival"]["picker"];
+        let counted = ["survived", "first_survived", "first_unknown"].map(|k| picker[k].as_u64().unwrap());
+        assert_eq!(counted, [0, 1, 0], "{picker:#}");
     }
 
     /// No task left of a kind, and nothing to ratchet, are answers: exit 0.
