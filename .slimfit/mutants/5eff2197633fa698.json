@@ -1,0 +1,34 @@
+{
+  "tree": "b119fe9f509bf9a074bc8d716052c0d2cbc37616+d1fba762150c532c",
+  "picker": "claude-code:a6b29f8213088c9b4:claude-opus-5-5",
+  "author": "claude-code:c9ce1768-08d7-4b3a-af45-86cd919ad0d4:claude-opus-5-5",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure.rs:306:89: replace > with >= in Run<'a>::texts",
+        "why": "The guard that treats an empty file as no report (a shell redirect leaves one behind) is subtle and probably only checked through stand-ins, if at all.",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:293:9: replace Run<'a>::clear -> Result<()> with Ok(())",
+        "why": "Clearing stale reports is now a helper called in three places; a test only fails if a leftover report gets read as this run's, which is likely untested.",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:247:17: replace == with != in Run<'a>::prefix",
+        "why": "The root \".\" check moved into Run; samples rooted at \".\" may never reach the non-root branch, so flipping it could go unnoticed.",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:338:9: replace Run<'a>::reach -> Result<Option<Vec<formats::TestReach>>> with Ok(Some(vec![]))",
+        "why": "The only reach test checks None against one entry, so an empty Some (every mutant then runs no selected tests) may still pass.",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:233:71: replace && with || in mutate_picks",
+        "why": "This matches a pick to its reported mutant by file, line and description; with a single mutant per test run, loosening the match to || would still find the right one.",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
