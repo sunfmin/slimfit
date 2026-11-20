@@ -17,3 +17,8 @@ toml = "1.2.1"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# slimfit#66's instruction count over a test's process tree (examples/treecount).
+[[example]]
+name = "treecount"
+path = "examples/treecount/main.rs"

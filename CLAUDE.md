@@ -16,6 +16,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release (`packaging/release.sh cut`) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited.
 - `testdata/<language>/`: one sample project per language, with real reports in `reports/`. Every sample holds the same five situations (see `src/fixtures.rs`).
 - `src/tools.rs`: where the tools write reports on their own, shared with the stand-ins.
+- `examples/treecount/`: slimfit#66's measurement, not part of slimfit: instructions retired over each test's whole process tree (a hook injected into every process, system binaries that run others run as re-signed copies), as nextest's runner. `tests/treecount.rs` holds that a child's work is counted.
 - `examples/standin/`: one stand-in for every tool the presets drive, linked under each tool's name first on PATH. It takes arguments as the real tool does, writes the sample's real reports, records each call and injects faults, all in one JSON state file. `tests/standins.rs` runs the real binary through it on each sample. A preset change updates the stand-in in the same commit.
 
 ## Checks
