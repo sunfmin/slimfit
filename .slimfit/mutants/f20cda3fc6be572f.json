@@ -1,0 +1,15 @@
+{
+  "tree": "1656f6ee3fec57e6c32c3b7a710a92e3c19a43fe+d1fba762150c532c",
+  "picker": "codex:01a1f821-9e06-76e1-adf5-6a6fca74ae64:default",
+  "author": "claude-code:2fdd9f2a-bb46-5ad6-b827-e42eb132f834:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/mutants.rs:70:5: replace candidates -> Result<BTreeMap<String, Vec<Candidate>>> with Ok(BTreeMap::new())",
+        "why": "The added test exercises Listed::alone directly, so it would still pass if the public candidate listing silently dropped every suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

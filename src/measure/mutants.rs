@@ -64,11 +64,12 @@ pub(super) struct Listed {
 }
 
 /// The candidates the agent picks from, per suite whose tool can pick:
-/// what `check --mutants` with no names answers. Nothing builds.
+/// what `check --mutants` with no names answers, those that run alone
+/// ([`Listed::alone`]). Nothing builds.
 pub fn candidates(repo: &Path, cfg: &Config, tree: &landing::Tree) -> Result<BTreeMap<String, Vec<Candidate>>> {
     let scratch = Scratch::new(repo, false)?;
     let listed = listed(repo, cfg, tree, &scratch.0)?;
-    Ok(listed.into_iter().map(|(s, l)| (s, l.candidates)).collect())
+    Ok(listed.into_iter().map(|(s, l)| (s, l.alone())).collect())
 }
 
 /// What each suite whose tool can pick lists of the change (ADR 0008): its
@@ -333,10 +334,15 @@ fn line_alone<'a>(listed: &'a Listed, c: &Candidate, picked: &BTreeSet<&str>) ->
     Err(held.into_iter().collect())
 }
 
-/// Whether `c` can run without a field deletion beside it: what a sample
-/// may draw.
-pub(super) fn runs_alone(listed: &Listed, c: &Candidate) -> bool {
-    line_alone(listed, c, &BTreeSet::from([c.name.as_str()])).is_ok()
+impl Listed {
+    /// The candidates that run picked alone, none of them refused for a
+    /// field deletion beside it: what the picker is given, and what a sample
+    /// draws from. One left out runs only picked with the field deletions on
+    /// its lines, which the listing leaves out too when they share a line.
+    pub(super) fn alone(&self) -> Vec<Candidate> {
+        let alone = |c: &&Candidate| line_alone(self, c, &BTreeSet::from([c.name.as_str()])).is_ok();
+        self.candidates.iter().filter(alone).cloned().collect()
+    }
 }
 
 /// `name` as a regular expression that matches it alone.
@@ -498,8 +504,21 @@ mod t {
         let refused = crate::fault::of(run_diff(&root, "", &listed, &picks(&[TIMES])).unwrap_err());
         assert!(refused[0].fault.starts_with(&format!("`{TIMES}` cannot run alone")), "{refused:?}");
         assert!(refused[0].fault.ends_with(&format!(": `{X}`")) && refused.len() == 1, "{refused:?}");
-        let alone: Vec<&str> =
-            listed.candidates.iter().filter(|c| runs_alone(&listed, c)).map(|c| c.name.as_str()).collect();
+        let alone: Vec<String> = listed.alone().into_iter().map(|c| c.name).collect();
         assert_eq!(alone, [CORNER, X, Y]);
+    }
+
+    /// `shifted` sets two fields on one line: neither field deletion runs
+    /// without the other, so neither is listed, nor what else is on that
+    /// line; every candidate listed runs when picked alone.
+    #[test]
+    fn the_listing_holds_only_what_runs_picked_alone() {
+        let (root, listed) = fields();
+        let alone = listed.alone();
+        assert!(listed.candidates.iter().filter(|c| c.field && c.line == 9).count() == 2);
+        assert!(alone.iter().all(|c| c.function != "shifted"), "{alone:?}");
+        for c in &alone {
+            run_diff(&root, "", &listed, &picks(&[&c.name])).unwrap();
+        }
     }
 }

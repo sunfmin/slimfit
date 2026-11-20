@@ -5,7 +5,7 @@
 //! as picks run; `report` sets its survival beside the picks'. No `check`
 //! or `ratchet` reads it.
 
-use super::mutants::{Listed, Stop, list_suite, mutate_picks, runs_alone, stops};
+use super::mutants::{Listed, Stop, list_suite, mutate_picks, stops};
 use super::{OUT, Run, Scratch};
 use crate::config::Config;
 use crate::git;
@@ -177,9 +177,8 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
         listed.insert(name.clone(), list_suite(repo, &tree.suite(cfg, &name)?.suite, (&from, &to), lines, &out)?);
     }
     // A mutant that cannot run without a field deletion beside it is not drawn.
-    let alone = |l: &Listed| l.candidates.iter().filter(|c| runs_alone(l, c)).cloned().collect::<Vec<_>>();
     let pool: Vec<(String, Candidate)> =
-        listed.iter().flat_map(|(s, l)| alone(l).into_iter().map(move |c| (s.clone(), c))).collect();
+        listed.iter().flat_map(|(s, l)| l.alone().into_iter().map(move |c| (s.clone(), c))).collect();
     let picked = picked_since(repo, &from, &head)?;
     let order = draw(&pool, &picked, &head);
     let cached: Option<(usize, Sample)> =
