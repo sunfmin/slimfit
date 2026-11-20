@@ -64,17 +64,17 @@ pub(super) struct Listed {
 
 /// The candidates the agent picks from, per suite whose tool can pick:
 /// what `check --mutants` with no names answers. Nothing builds.
-pub fn candidates(repo: &Path, cfg: &Config) -> Result<BTreeMap<String, Vec<Candidate>>> {
+pub fn candidates(repo: &Path, cfg: &Config, tree: &landing::Tree) -> Result<BTreeMap<String, Vec<Candidate>>> {
     let scratch = Scratch::new(repo, false)?;
-    let listed = listed(repo, cfg, &git::head(repo)?, &scratch.0)?;
+    let listed = listed(repo, cfg, tree, &scratch.0)?;
     Ok(listed.into_iter().map(|(s, l)| (s, l.candidates)).collect())
 }
 
 /// What each suite whose tool can pick lists of the change (ADR 0008): its
 /// files that add a source line, as a diff the tool lists the mutants of.
 /// Refuses with no branch to land on, rather than list more than the change.
-fn listed(repo: &Path, cfg: &Config, head: &git::Head, scratch: &Path) -> Result<BTreeMap<String, Listed>> {
-    let Some(l) = landing::find(repo, &cfg.check, head)? else {
+fn listed(repo: &Path, cfg: &Config, tree: &landing::Tree, scratch: &Path) -> Result<BTreeMap<String, Listed>> {
+    let Some(l) = tree.landing(repo, &cfg.check)? else {
         return Err(fault(
             format!(
                 "no branch to take the change from: slimfit.toml sets no [check] target and the repository has \
@@ -87,7 +87,7 @@ fn listed(repo: &Path, cfg: &Config, head: &git::Head, scratch: &Path) -> Result
     };
     eprintln!("slimfit: the change is what HEAD adds since its merge base with {}, {}", l.target, l.from);
     let mut out = BTreeMap::new();
-    for (name, lines) in landing::required(repo, cfg, &l.added)? {
+    for (name, lines) in landing::required(repo, cfg, &tree.wt.files, &l.added)? {
         let listed = list_suite(repo, cfg, (&l.from, &l.to), &name, lines, scratch);
         out.insert(name.clone(), listed.map_err(|e| fault::within(&format!("suite {name}"), e))?);
     }
@@ -142,9 +142,15 @@ impl Change {
     /// The change's mutants listed by each suite's tool, and the picks among
     /// them; refuses, before anything runs, a suite whose tool cannot pick,
     /// a name no suite lists, and a pick named twice.
-    pub(super) fn pick(repo: &Path, cfg: &Config, head: &git::Head, scratch: &Path, picks: &[Pick]) -> Result<Self> {
+    pub(super) fn pick(
+        repo: &Path,
+        cfg: &Config,
+        tree: &landing::Tree,
+        scratch: &Path,
+        picks: &[Pick],
+    ) -> Result<Self> {
         refuse_unpickable(cfg)?;
-        choose(listed(repo, cfg, head, scratch)?, picks).map(Self)
+        choose(listed(repo, cfg, tree, scratch)?, picks).map(Self)
     }
 
     /// The picks of suite `name`: none when it adds no source line.

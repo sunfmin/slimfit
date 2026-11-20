@@ -23,16 +23,38 @@ fn run_with_index(repo: &Path, index: Option<&Path>, args: &[&str]) -> Result<St
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-pub fn toplevel(dir: &Path) -> Result<std::path::PathBuf> {
+/// The repository `dir` is in, by its HEAD: one `rev-parse`, as each spawn
+/// costs CPU time (ADR 0010).
+pub fn open(dir: &Path) -> Result<Head> {
     let fix = "run slimfit inside the repository, or pass `--repo <its path>`; a project with no repository yet \
                needs `git init` and a first commit";
     if !dir.is_dir() {
         return Err(fault(format!("{} is not a directory", dir.display()), fix));
     }
-    match run(dir, &["rev-parse", "--show-toplevel"]) {
-        Ok(s) => Ok(s.trim().into()),
-        Err(e) => Err(fault(format!("{} is not inside a git repository ({e:#})", dir.display()), fix)),
-    }
+    const PATHS: [&str; 7] = [
+        "rev-parse",
+        "--show-toplevel",
+        "--path-format=absolute",
+        "--git-path",
+        "index",
+        "--git-path",
+        "slimfit-index",
+    ];
+    let with_head = [&PATHS[..], &["--verify", "HEAD"]].concat();
+    // Before the first commit `--verify HEAD` fails the whole call.
+    let (out, born) = match run(dir, &with_head) {
+        Ok(out) => (out, true),
+        Err(_) => match run(dir, &PATHS) {
+            Ok(out) => (out, false),
+            Err(e) => return Err(fault(format!("{} is not inside a git repository ({e:#})", dir.display()), fix)),
+        },
+    };
+    let mut lines = out.lines().map(str::trim);
+    let top = lines.next().context("the repository's top level")?.into();
+    let index = lines.next().context("git's index path")?.into();
+    let scratch = lines.next().context("a scratch index path")?.into();
+    let commit = if born { Some(lines.next().context("HEAD")?.to_string()) } else { None };
+    Ok(Head { top, commit, index, scratch })
 }
 
 /// Tracked files plus untracked ones git does not ignore, relative to
@@ -48,12 +70,6 @@ fn listing(repo: &Path) -> Result<Vec<(bool, String)>> {
         .collect()
 }
 
-/// The files of the working tree (tracked, and untracked ones git does not
-/// ignore), relative to `repo`.
-pub fn files(repo: &Path) -> Result<Vec<String>> {
-    Ok(listing(repo)?.into_iter().map(|(_, f)| f).collect())
-}
-
 /// The working tree, read with three git commands: each spawn costs CPU
 /// time, which `test_seconds` counts (ADR 0010).
 pub struct Worktree {
@@ -65,13 +81,14 @@ pub struct Worktree {
     pub key: String,
 }
 
-pub fn worktree(repo: &Path) -> Result<Worktree> {
+/// The working tree of `head`'s repository.
+pub fn worktree(head: &Head) -> Result<Worktree> {
+    let repo = head.top.as_path();
     use std::hash::{Hash, Hasher};
     let outside = |f: &String| !f.starts_with(".slimfit/");
     let listing = listing(repo)?;
     let untracked: Vec<String> = listing.iter().filter(|(t, f)| !t && outside(f)).map(|(_, f)| f.clone()).collect();
     let files: Vec<String> = listing.into_iter().map(|(_, f)| f).collect();
-    let head = head(repo)?;
     // Before the first commit every file is a local change.
     let changed = match &head.commit {
         Some(commit) => differing(repo, commit, &untracked)?,
@@ -90,7 +107,7 @@ pub fn worktree(repo: &Path) -> Result<Worktree> {
             .hash(&mut h);
     }
     let key = format!("{}+{:016x}", head.commit.as_deref().unwrap_or("unborn"), h.finish());
-    Ok(Worktree { files, head, key })
+    Ok(Worktree { files, head: head.clone(), key })
 }
 
 /// Files of the working tree that differ from `commit` (both sides of a
@@ -118,29 +135,16 @@ pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
     Ok(run_with_index(repo, Some(&head.scratch), &["write-tree"])?.trim().to_string())
 }
 
-/// HEAD, and where git keeps the index and slimfit its copy of it: one
-/// `rev-parse`, as each spawn costs (ADR 0010).
+/// A repository by its HEAD, and where git keeps the index and slimfit its
+/// copy of it.
+#[derive(Clone)]
 pub struct Head {
+    /// The repository's top level.
+    pub top: std::path::PathBuf,
     /// `None` before the first commit.
     pub commit: Option<String>,
     index: std::path::PathBuf,
     scratch: std::path::PathBuf,
-}
-
-pub fn head(repo: &Path) -> Result<Head> {
-    const PATHS: [&str; 6] =
-        ["rev-parse", "--path-format=absolute", "--git-path", "index", "--git-path", "slimfit-index"];
-    let with_head = [&PATHS[..], &["--verify", "HEAD"]].concat();
-    // Before the first commit `--verify HEAD` fails the whole call.
-    let (out, born) = match run(repo, &with_head) {
-        Ok(out) => (out, true),
-        Err(_) => (run(repo, &PATHS)?, false),
-    };
-    let mut lines = out.lines().map(str::trim);
-    let index = lines.next().context("git's index path")?.into();
-    let scratch = lines.next().context("a scratch index path")?.into();
-    let commit = if born { Some(lines.next().context("HEAD")?.to_string()) } else { None };
-    Ok(Head { commit, index, scratch })
 }
 
 /// Where HEAD forks from `target`: `None` when the repository has no such
