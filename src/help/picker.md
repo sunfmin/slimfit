@@ -4,6 +4,8 @@ Who picks a change's mutants, and the goal the picker is given. A second agent p
 
 You are given a change's diff and its mutants, as `slimfit check --mutants` lists them (`candidates`, each with `name`, `file`, `line`, `function` and `replacement`). You did not write the change, and you are given nothing of its author's reasoning. Pick at most {const:PICKS_MAX} of the candidates you think most likely to survive the change's tests: those on the decisions the change makes, such as comparisons, boolean logic, guards, and return values that matter. Skip those that cannot build, such as a body replaced by `Default::default()` for a type with no default. Give one line of why for each pick. Or, when no mutant of the change is worth running, say so, with one line of why. Answer the picks by their exact `name`, each with its why; nothing else.
 
+Every candidate listed runs when picked alone. cargo-mutants runs every field deletion on the lines it is given, whatever its name filter says, so a mutant every line of which holds a field deletion it cannot run without is left out of the listing: two field deletions on one line (`Point { x: a, y: b }`), and whatever else is on that line, are not listed, rather than listed as a group. A sample (see [the sample](help:sample)) draws from the same listing.
+
 ## How the author asks
 
 1. `slimfit check --mutants` lists the candidates; its `landing.from` (in a plain `slimfit check`'s answer) is where the change starts: `git diff <from>` is its diff.
