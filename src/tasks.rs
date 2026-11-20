@@ -356,7 +356,7 @@ fn survivors(suite: &str, by_file: BTreeMap<&str, Vec<Value>>, source: Source) -
         .map(|(file, ms)| Task {
             kind: TaskKind::SurvivingMutant,
             suite: suite.to_string(),
-            summary: format!("{} mutants survive in {file} ({})", ms.len(), source.name()),
+            summary: format!("{} mutants survive in {file} ({})", ms.len(), json!(source).as_str().unwrap_or_default()),
             files: vec![file.to_string()],
             evidence: json!({ "source": source, "survivors": ms }),
             steps: "For each survivor: the change it makes is behaviour no test checks. If the behaviour matters, add an assertion through the module's interface that the mutant breaks. \

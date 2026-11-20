@@ -150,17 +150,6 @@ pub enum Source {
     Sampled,
 }
 
-impl Source {
-    /// Its name, as the output writes it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Source::Picker => "picker",
-            Source::Author => "author",
-            Source::Sampled => "sampled",
-        }
-    }
-}
-
 /// A run of uncovered lines in one file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Span {
