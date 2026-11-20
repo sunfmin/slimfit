@@ -54,11 +54,11 @@ pub fn refuse_unpickable(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-/// The change's mutants in one suite: its diff of the landing, and what its
-/// tool lists of it.
+/// The change's mutants in one suite: the source lines it adds, and what
+/// its tool lists of them.
 #[derive(Debug, Default)]
 pub(super) struct Listed {
-    pub(super) patch: String,
+    pub(super) lines: landing::Lines,
     pub(super) candidates: Vec<Candidate>,
 }
 
@@ -105,7 +105,7 @@ pub(super) fn list_suite(
     scratch: &Path,
 ) -> Result<Listed> {
     let suite = cfg.suites.iter().find(|s| s.name == name).expect("a configured suite").resolve();
-    let files: Vec<String> = lines.into_keys().collect();
+    let files: Vec<String> = lines.keys().cloned().collect();
     if files.is_empty() {
         return Ok(Listed::default());
     }
@@ -132,7 +132,7 @@ pub(super) fn list_suite(
     };
     let prefix = prefix(&suite);
     candidates.iter_mut().for_each(|c| c.file = format!("{prefix}{}", c.file));
-    Ok(Listed { patch, candidates })
+    Ok(Listed { lines, candidates })
 }
 
 /// The change's picks, per suite: each suite's share, taken as it is measured.
@@ -141,7 +141,8 @@ pub(super) struct Change(BTreeMap<String, Picked>);
 impl Change {
     /// The change's mutants listed by each suite's tool, and the picks among
     /// them; refuses, before anything runs, a suite whose tool cannot pick,
-    /// a name no suite lists, and a pick named twice.
+    /// a name no suite lists, a pick named twice, and one that cannot run
+    /// without a field deletion not picked.
     pub(super) fn pick(repo: &Path, cfg: &Config, head: &git::Head, scratch: &Path, picks: &[Pick]) -> Result<Self> {
         refuse_unpickable(cfg)?;
         choose(listed(repo, cfg, head, scratch)?, picks).map(Self)
@@ -182,6 +183,9 @@ fn choose(listed: BTreeMap<String, Listed>, picks: &[Pick]) -> Result<BTreeMap<S
             }),
         }
     }
+    for s in out.values() {
+        faults.extend(run_lines(&s.listed, &s.picks).err().into_iter().flatten());
+    }
     if !faults.is_empty() {
         return Err(Faults(faults).into());
     }
@@ -201,29 +205,47 @@ impl Picked {
         resolver: &Resolver,
         tested: &mut SuiteMeasurement,
     ) -> Result<()> {
-        mutate_picks(root, out, suite, resolver, &self.listed, &self.picks, tested)?.record(tested);
+        mutate_picks((root, out), suite, resolver, &self.listed, &self.picks, tested, None)?.record(tested);
         Ok(())
     }
 }
 
+/// A sample's stop: its picks are its draw, `ranks` their ranks in it, and
+/// once `viable` of those drawn before a pick have built (`known`: in an
+/// earlier run), it is not built (see [`crate::select::Budget`]).
+pub(super) struct Stop {
+    pub(super) viable: usize,
+    pub(super) ranks: Vec<usize>,
+    pub(super) known: Vec<usize>,
+}
+
+/// Whether a run of `suite` on `tested` can [`Stop`]: its mutants run
+/// through the shim.
+pub(super) fn stops(suite: &Suite, tested: &SuiteMeasurement, out: &Path) -> bool {
+    suite.mutants_tests == MutantTests::Reached
+        && tested.reach.is_some()
+        && crate::select::real_nextest(&out.join("shim")).is_some()
+}
+
 /// Runs the suite's picked mutants of the change, and reads each pick's
-/// outcome. `tested` is this tree's test run: which tests each mutant runs
-/// is chosen from it.
+/// outcome, in `root` (the suite's) with `out` its scratch directory.
+/// `tested` is this tree's test run: which tests each mutant runs is
+/// chosen from it.
 pub(super) fn mutate_picks(
-    root: &Path,
-    out: &Path,
+    (root, out): (&Path, &Path),
     suite: &Suite,
     resolver: &Resolver,
     listed: &Listed,
     picks: &[Pick],
     tested: &SuiteMeasurement,
+    stop: Option<&Stop>,
 ) -> Result<Mutation> {
     // A suite none of whose mutants is picked runs none: no `-F` would run them all.
     if picks.is_empty() {
         return Ok(Mutation { mutants: Vec::new(), mutated: Mutated::default() });
     }
     let diff = out.join("change.diff");
-    std::fs::write(&diff, &listed.patch)?;
+    std::fs::write(&diff, run_diff(root, &prefix(suite), listed, picks)?)?;
     eprintln!("slimfit: {}: running the {} picked mutant(s) of the change", suite.name, picks.len());
     let mut command =
         format!("{} {} {}", suite.mutants_command, suite.mutants_diff_flag, quoted(&diff.to_string_lossy()));
@@ -231,7 +253,7 @@ pub(super) fn mutate_picks(
         command.push_str(&format!(" {} {}", suite.mutants_pick_flag, quoted(&anchored(&p.name))));
     }
     let env = match suite.mutants_tests {
-        MutantTests::Reached => selecting(root, out, suite, &prefix(suite), tested, &command)?,
+        MutantTests::Reached => selecting(root, out, suite, tested, &command, picks, stop)?,
         MutantTests::All => Vec::new(),
     };
     let run = mutate(root, out, suite, resolver, &command, &env)?;
@@ -244,6 +266,80 @@ pub(super) fn mutate_picks(
     let mutants: Vec<Mutant> = picks.iter().filter_map(|p| ran(&p.name)).cloned().collect();
     let picks = picks.iter().map(|p| Pick { outcome: ran(&p.name).map(|m| m.status), ..p.clone() }).collect();
     Ok(Mutation { mutated: Mutated { picks, change: MutantCounts::of(&mutants) }, mutants })
+}
+
+/// The diff a run of `picks` is limited to: one line of each, chosen so
+/// that no field deletion not picked touches it, a line the change adds
+/// where there is one. cargo-mutants 27 runs every field deletion on its
+/// diff's lines whatever its name filter says (it never asks the filter of
+/// them), so the change's whole diff would run them all. Refuses a pick
+/// every line of which a field deletion not picked touches.
+pub(super) fn run_diff(root: &Path, prefix: &str, listed: &Listed, picks: &[Pick]) -> Result<String> {
+    let mut diff = String::new();
+    for (file, at) in run_lines(listed, picks).map_err(Faults)? {
+        let file = file.strip_prefix(prefix).unwrap_or(file);
+        let text = std::fs::read_to_string(root.join(file))?;
+        let text: Vec<&str> = text.lines().collect();
+        diff.push_str(&format!("--- a/{file}\n+++ b/{file}\n"));
+        for (k, l) in at.into_iter().enumerate() {
+            let line = text.get(l as usize - 1).copied().unwrap_or_default();
+            diff.push_str(&format!("@@ -{},0 +{l},1 @@\n+{line}\n", l as usize - 1 - k));
+        }
+    }
+    Ok(diff)
+}
+
+/// The lines of [`run_diff`], per file; or a fault per pick that cannot run alone.
+fn run_lines<'a>(
+    listed: &'a Listed,
+    picks: &[Pick],
+) -> Result<BTreeMap<&'a str, BTreeSet<u32>>, Vec<crate::fault::Fault>> {
+    let picked: BTreeSet<&str> = picks.iter().map(|p| p.name.as_str()).collect();
+    let mut lines: BTreeMap<&str, BTreeSet<u32>> = BTreeMap::new();
+    let mut faults = Vec::new();
+    for p in picks {
+        let Some(c) = listed.candidates.iter().find(|c| c.name == p.name) else { continue };
+        match line_alone(listed, c, &picked) {
+            Ok(l) => {
+                lines.entry(c.file.as_str()).or_default().insert(l);
+            }
+            Err(held) => faults.push(crate::fault::Fault {
+                fault: format!(
+                    "`{}` cannot run alone: cargo-mutants runs every field deletion on the lines it is given, \
+                     whatever its name filter says, and on each of its lines is one not picked: {}",
+                    c.name,
+                    held.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+                ),
+                fix: "pick those field deletions too, or another mutant".into(),
+            }),
+        }
+    }
+    if faults.is_empty() { Ok(lines) } else { Err(faults) }
+}
+
+/// A line of `c` no field deletion outside `picked` touches, one the
+/// change adds where there is one; or the field deletions that hold every
+/// line of it.
+fn line_alone<'a>(listed: &'a Listed, c: &Candidate, picked: &BTreeSet<&str>) -> Result<u32, Vec<&'a str>> {
+    let holding = |l: u32| {
+        listed.candidates.iter().filter(move |o| {
+            o.field && o.file == c.file && o.line <= l && l <= o.end.max(o.line) && !picked.contains(o.name.as_str())
+        })
+    };
+    let span = c.line..=c.end.max(c.line);
+    let free: Vec<u32> = span.clone().filter(|l| holding(*l).next().is_none()).collect();
+    let added = |l: &&u32| listed.lines.get(&c.file).is_some_and(|a| a.contains_key(l));
+    if let Some(l) = free.iter().find(added).or(free.first()) {
+        return Ok(*l);
+    }
+    let held: BTreeSet<&str> = span.flat_map(|l| holding(l).map(|o| o.name.as_str())).collect();
+    Err(held.into_iter().collect())
+}
+
+/// Whether `c` can run without a field deletion beside it: what a sample
+/// may draw.
+pub(super) fn runs_alone(listed: &Listed, c: &Candidate) -> bool {
+    line_alone(listed, c, &BTreeSet::from([c.name.as_str()])).is_ok()
 }
 
 /// `name` as a regular expression that matches it alone.
@@ -267,10 +363,12 @@ fn selecting(
     root: &Path,
     out: &Path,
     suite: &Suite,
-    prefix: &str,
     tested: &SuiteMeasurement,
     command: &str,
+    picks: &[Pick],
+    stop: Option<&Stop>,
 ) -> Result<Vec<(String, std::ffi::OsString)>> {
+    let prefix = &prefix(suite);
     let every = |why: String| {
         eprintln!("slimfit: {}: {why}: every mutant runs every test", suite.name);
         Ok(Vec::new())
@@ -284,10 +382,19 @@ fn selecting(
     let listing = format!("{command} --list --json > {}", quoted(&list.to_string_lossy()));
     let (log, ok) = shell(root, out, &listing, "mutants-list", &[])?;
     let listed = std::fs::read_to_string(&list).unwrap_or_default();
-    let plan = match crate::select::plan(root, &listed, |f| format!("{prefix}{f}"), reach, &tested.tests) {
+    let mut plan = match crate::select::plan(root, &listed, |f| format!("{prefix}{f}"), reach, &tested.tests) {
         Ok(p) if ok => p,
         _ => return every(format!("cargo-mutants listed no mutants (log {})", log.display())),
     };
+    let rank = |name: &str| picks.iter().position(|p| p.name == name);
+    let others: Vec<String> = formats::read_mutants_list(&listed)?.into_iter().map(|c| c.name).collect();
+    for name in others.iter().filter(|n| rank(n).is_none()) {
+        eprintln!("slimfit: {}: cargo-mutants also runs `{name}`, which is not picked", suite.name);
+    }
+    if let Some(s) = stop {
+        let mutants = crate::select::drawn(&listed, |n| Some(s.ranks[rank(n)?]))?;
+        plan.budget = Some(crate::select::Budget { viable: s.viable, known: s.known.clone(), mutants });
+    }
     let unknown = plan.functions.iter().filter(|f| f.tests.is_none()).count();
     eprintln!(
         "slimfit: {}: each mutant runs only the tests that ran its function ({} function(s), {unknown} of them \
@@ -357,5 +464,56 @@ impl Mutation {
 impl From<Vec<Mutant>> for Mutation {
     fn from(mutants: Vec<Mutant>) -> Self {
         Self { mutants, mutated: Mutated::default() }
+    }
+}
+
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    /// The real list of a crate whose struct literals cargo-mutants lists
+    /// field deletions of (`testdata/rust-fields`), the whole file a change.
+    fn fields() -> (std::path::PathBuf, Listed) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust-fields");
+        let list = std::fs::read_to_string(root.join("reports/mutants.list.json")).unwrap();
+        let text = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let added = text.lines().enumerate().map(|(i, l)| (i as u32 + 1, l.to_string())).collect();
+        let listed = Listed {
+            lines: [("src/lib.rs".into(), added)].into(),
+            candidates: formats::read_mutants_list(&list).unwrap(),
+        };
+        (root, listed)
+    }
+
+    fn picks(names: &[&str]) -> Vec<Pick> {
+        names.iter().map(|n| Pick { name: n.to_string(), why: String::new(), outcome: None }).collect()
+    }
+
+    const CORNER: &str = "src/lib.rs:13:5: replace corner -> Point with Default::default()";
+    const X: &str = "src/lib.rs:14:9: delete field x from struct Point expression in corner";
+    const Y: &str = "src/lib.rs:15:9: delete field y from struct Point expression in corner";
+    const TIMES: &str = "src/lib.rs:14:14: replace * with + in corner";
+
+    /// cargo-mutants runs every field deletion on the lines it is given, so
+    /// a run is given one line of each pick that no field deletion not
+    /// picked touches: `corner`'s body is 13-17, and 13 is free; a pick on
+    /// a field deletion's line runs only with it picked too, else is refused
+    /// naming it. A mutant no line of which is free of another's field
+    /// deletion is not drawn.
+    #[test]
+    fn a_run_holds_no_field_deletion_not_picked() {
+        let (root, listed) = fields();
+        let hunks = |names: &[&str]| -> Vec<String> {
+            let diff = run_diff(&root, "", &listed, &picks(names)).unwrap();
+            diff.lines().filter(|l| l.starts_with('@')).map(String::from).collect()
+        };
+        assert_eq!(hunks(&[CORNER, Y]), ["@@ -12,0 +13,1 @@", "@@ -13,0 +15,1 @@"]);
+        assert_eq!(hunks(&[TIMES, X]), ["@@ -13,0 +14,1 @@"]);
+        let refused = crate::fault::of(run_diff(&root, "", &listed, &picks(&[TIMES])).unwrap_err());
+        assert!(refused[0].fault.starts_with(&format!("`{TIMES}` cannot run alone")), "{refused:?}");
+        assert!(refused[0].fault.ends_with(&format!(": `{X}`")) && refused.len() == 1, "{refused:?}");
+        let alone: Vec<&str> =
+            listed.candidates.iter().filter(|c| runs_alone(&listed, c)).map(|c| c.name.as_str()).collect();
+        assert_eq!(alone, [CORNER, X, Y]);
     }
 }

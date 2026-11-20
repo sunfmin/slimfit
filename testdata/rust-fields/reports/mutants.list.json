@@ -1,0 +1,322 @@
+[
+  {
+    "diff": "--- src/lib.rs\n+++ replace shifted -> Point with Default::default()\n@@ -1,17 +1,17 @@\n #[derive(Debug, Default, PartialEq)]\n pub struct Point {\n     pub x: i64,\n     pub y: i64,\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n-    Point { x: d + 1, y: d, ..Default::default() }\n+    Default::default() /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n         y: d,\n         ..Default::default()\n     }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "shifted",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 10
+        },
+        "start": {
+          "column": 1,
+          "line": 8
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:9:5: replace shifted -> Point with Default::default()",
+    "package": "calc",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 51,
+        "line": 9
+      },
+      "start": {
+        "column": 5,
+        "line": 9
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete field x from struct Point expression in shifted\n@@ -1,17 +1,17 @@\n #[derive(Debug, Default, PartialEq)]\n pub struct Point {\n     pub x: i64,\n     pub y: i64,\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n-    Point { x: d + 1, y: d, ..Default::default() }\n+    Point {  /* ~ changed by cargo-mutants ~ */ y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n         y: d,\n         ..Default::default()\n     }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "shifted",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 10
+        },
+        "start": {
+          "column": 1,
+          "line": 8
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/lib.rs:9:13: delete field x from struct Point expression in shifted",
+    "package": "calc",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 22,
+        "line": 9
+      },
+      "start": {
+        "column": 13,
+        "line": 9
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete field y from struct Point expression in shifted\n@@ -1,17 +1,17 @@\n #[derive(Debug, Default, PartialEq)]\n pub struct Point {\n     pub x: i64,\n     pub y: i64,\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n-    Point { x: d + 1, y: d, ..Default::default() }\n+    Point { x: d + 1,  /* ~ changed by cargo-mutants ~ */ ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n         y: d,\n         ..Default::default()\n     }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "shifted",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 10
+        },
+        "start": {
+          "column": 1,
+          "line": 8
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/lib.rs:9:23: delete field y from struct Point expression in shifted",
+    "package": "calc",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 9
+      },
+      "start": {
+        "column": 23,
+        "line": 9
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with - in shifted\n@@ -1,17 +1,17 @@\n #[derive(Debug, Default, PartialEq)]\n pub struct Point {\n     pub x: i64,\n     pub y: i64,\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n-    Point { x: d + 1, y: d, ..Default::default() }\n+    Point { x: d - /* ~ changed by cargo-mutants ~ */ 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n         y: d,\n         ..Default::default()\n     }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "shifted",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 10
+        },
+        "start": {
+          "column": 1,
+          "line": 8
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:9:18: replace + with - in shifted",
+    "package": "calc",
+    "replacement": "-",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 9
+      },
+      "start": {
+        "column": 18,
+        "line": 9
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace + with * in shifted\n@@ -1,17 +1,17 @@\n #[derive(Debug, Default, PartialEq)]\n pub struct Point {\n     pub x: i64,\n     pub y: i64,\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n-    Point { x: d + 1, y: d, ..Default::default() }\n+    Point { x: d * /* ~ changed by cargo-mutants ~ */ 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n         y: d,\n         ..Default::default()\n     }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "shifted",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 10
+        },
+        "start": {
+          "column": 1,
+          "line": 8
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:9:18: replace + with * in shifted",
+    "package": "calc",
+    "replacement": "*",
+    "span": {
+      "end": {
+        "column": 19,
+        "line": 9
+      },
+      "start": {
+        "column": 18,
+        "line": 9
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace corner -> Point with Default::default()\n@@ -5,14 +5,10 @@\n     pub z: i64,\n }\n \n pub fn shifted(d: i64) -> Point {\n     Point { x: d + 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n-    Point {\n-        x: d * 2,\n-        y: d,\n-        ..Default::default()\n-    }\n+    Default::default() /* ~ changed by cargo-mutants ~ */\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "corner",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 18
+        },
+        "start": {
+          "column": 1,
+          "line": 12
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:13:5: replace corner -> Point with Default::default()",
+    "package": "calc",
+    "replacement": "Default::default()",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 17
+      },
+      "start": {
+        "column": 5,
+        "line": 13
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete field x from struct Point expression in corner\n@@ -6,13 +6,13 @@\n }\n \n pub fn shifted(d: i64) -> Point {\n     Point { x: d + 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n-        x: d * 2,\n+         /* ~ changed by cargo-mutants ~ */\n         y: d,\n         ..Default::default()\n     }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "corner",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 18
+        },
+        "start": {
+          "column": 1,
+          "line": 12
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/lib.rs:14:9: delete field x from struct Point expression in corner",
+    "package": "calc",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 18,
+        "line": 14
+      },
+      "start": {
+        "column": 9,
+        "line": 14
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete field y from struct Point expression in corner\n@@ -7,12 +7,12 @@\n \n pub fn shifted(d: i64) -> Point {\n     Point { x: d + 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n         x: d * 2,\n-        y: d,\n+         /* ~ changed by cargo-mutants ~ */\n         ..Default::default()\n     }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "corner",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 18
+        },
+        "start": {
+          "column": 1,
+          "line": 12
+        }
+      }
+    },
+    "genre": "StructField",
+    "name": "src/lib.rs:15:9: delete field y from struct Point expression in corner",
+    "package": "calc",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 15
+      },
+      "start": {
+        "column": 9,
+        "line": 15
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with + in corner\n@@ -6,13 +6,13 @@\n }\n \n pub fn shifted(d: i64) -> Point {\n     Point { x: d + 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n-        x: d * 2,\n+        x: d + /* ~ changed by cargo-mutants ~ */ 2,\n         y: d,\n         ..Default::default()\n     }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "corner",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 18
+        },
+        "start": {
+          "column": 1,
+          "line": 12
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:14:14: replace * with + in corner",
+    "package": "calc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 14
+      },
+      "start": {
+        "column": 14,
+        "line": 14
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with / in corner\n@@ -6,13 +6,13 @@\n }\n \n pub fn shifted(d: i64) -> Point {\n     Point { x: d + 1, y: d, ..Default::default() }\n }\n \n pub fn corner(d: i64) -> Point {\n     Point {\n-        x: d * 2,\n+        x: d / /* ~ changed by cargo-mutants ~ */ 2,\n         y: d,\n         ..Default::default()\n     }\n }\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "corner",
+      "return_type": "-> Point",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 18
+        },
+        "start": {
+          "column": 1,
+          "line": 12
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:14:14: replace * with / in corner",
+    "package": "calc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 14
+      },
+      "start": {
+        "column": 14,
+        "line": 14
+      }
+    }
+  }
+]
