@@ -1,0 +1,27 @@
+{
+  "tree": "0d68fa012b5ef20208bb30f8491e142c6c63e4c0+d1fba762150c532c",
+  "picker": "codex:01a1f813-fbae-7420-b19a-984111c3774e:default",
+  "author": "claude-code:8b335180-270e-555f-8786-2b882efb1bb4:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:304:50: delete field fresh from struct measure::Options expression in run",
+        "why": "Report history assertions can pass even when --fresh silently reuses the current measurement.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:260:65: replace && with || in run",
+        "why": "Keeping a second file in the same suite would erase the first file's verdict, which a single-file test would miss.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:290:55: replace && with || in run",
+        "why": "Keeping a second test in the same suite would erase the first test's verdict, which a single-test keep would miss.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
