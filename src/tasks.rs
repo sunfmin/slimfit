@@ -157,26 +157,27 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
 /// mutants (none due once `picked` ran: `ratchet` records them), with what
 /// its tool lists of the change to pick from.
 fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
-    let (_, unrecorded) = crate::landing::hold(repo, cfg, tree, picked)?;
+    let unrecorded = crate::landing::hold(repo, cfg, tree, picked)?.map(|h| h.unrecorded).unwrap_or_default();
     if unrecorded.is_empty() {
         return Ok(vec![]);
     }
     let mut candidates = crate::measure::candidates(repo, cfg, tree)?;
     Ok(unrecorded
         .into_iter()
-        .map(|v| {
-            let listed = candidates.remove(&v.suite).unwrap_or_default();
+        .map(|(suite, u)| {
+            let lines = u.lines as f64;
+            let listed = candidates.remove(&suite).unwrap_or_default();
             let files: BTreeSet<String> = listed.iter().map(|c| c.file.clone()).collect();
             Task {
                 kind: TaskKind::PickMutants,
                 summary: format!(
                     "the change adds {} source line(s) and no record of its mutants: have a second agent pick the few worth running, of {}",
-                    v.current,
+                    lines,
                     listed.len()
                 ),
-                suite: v.suite,
+                suite,
                 files: files.into_iter().collect(),
-                evidence: json!({ "lines": v.current, "candidates": listed }),
+                evidence: json!({ "lines": lines, "candidates": listed }),
                 steps: format!(
                     "Do not pick yourself: you wrote the change, so you would pick what your tests already hold. \
                      Ask a second agent, giving it only the goal (`slimfit help picker`), the change's diff and \
@@ -441,9 +442,7 @@ fn rising(repo: &Path, check: &crate::config::CheckConfig, s: &SuiteMeasurement,
 
 /// The uncovered spans holding a line of `added`, and their files.
 fn grown_spans(s: &SuiteMeasurement, added: &crate::landing::Lines) -> (Value, Vec<String>) {
-    let adds =
-        |sp: &&crate::model::Span| added.get(&sp.file).is_some_and(|l| l.range(sp.start..=sp.end).next().is_some());
-    let spans: Vec<_> = s.uncovered.iter().filter(adds).collect();
+    let spans: Vec<_> = s.uncovered.iter().filter(|sp| sp.holds_any(added)).collect();
     let files: BTreeSet<String> = spans.iter().map(|sp| sp.file.clone()).collect();
     (json!(spans), files.into_iter().collect())
 }

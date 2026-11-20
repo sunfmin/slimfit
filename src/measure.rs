@@ -788,7 +788,7 @@ pub(crate) mod t {
         );
         assert_eq!(mutated(&m).change, MutantCounts { killed: 1, survived: 1, unviable: 0 });
         assert_eq!(m.suites[0].mutants.len(), 2);
-        let v = crate::ratchet::check(&Baseline::default(), &m, &Default::default());
+        let v = crate::ratchet::check(&Baseline::default(), &m, &Default::default(), None);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::SurvivedMutants]);
 
         // No cached test run of the tree: `--mutants` ran the tests, untimed.
@@ -800,7 +800,7 @@ pub(crate) mod t {
         let held = crate::config::CheckConfig::default();
         let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
         let base = Baseline { suites: [("rust".to_string(), tight)].into(), ..Baseline::default() };
-        assert!(crate::ratchet::check(&base, &m, &held).test_seconds.is_empty());
+        assert!(crate::ratchet::check(&base, &m, &held, None).test_seconds.is_empty());
         let loosen = [Bound::SurvivedMutants];
         let next = crate::ratchet::ratchet(&base, &m, &held, &loosen, Some("t")).unwrap();
         assert_eq!(next.suites["rust"].test_seconds, 0.001);
@@ -811,7 +811,7 @@ pub(crate) mod t {
         assert_eq!(ran(), 2);
         assert!(!timed.suites[0].untimed && timed.with_mutants);
         assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
-        let v = crate::ratchet::check(&base, &timed, &held);
+        let v = crate::ratchet::check(&base, &timed, &held, None);
         let failed: Vec<_> = v.violations.iter().map(|v| v.metric).collect();
         assert!(failed == [Bound::SurvivedMutants] && v.test_seconds[0].current == 0.625, "{v:?}");
         // Cached now, timed: nothing runs again.

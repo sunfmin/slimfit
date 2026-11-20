@@ -4,6 +4,7 @@
 
 use crate::config::CheckConfig;
 use crate::fault::{Fault, Faults, fault};
+use crate::landing::Held;
 use crate::model::{Measurement, Metrics, ReachTest, Span, SuiteMeasurement};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -248,7 +249,7 @@ pub struct Trend {
     pub baseline: Option<f64>,
     pub current: f64,
     /// For `uncovered_lines` that rose: the uncovered spans holding a line
-    /// the change adds ([`Verdict::name_new_spans`]).
+    /// the change adds.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub new_spans: Vec<Span>,
 }
@@ -270,14 +271,12 @@ pub const TREND_HELP: &str = "each with `suite`, `baseline` (`null` for a suite 
 pub const NEW_SPANS_HELP: &str = "where it rose, `new_spans`: each uncovered span that holds a line the change \
      adds since `landing.from`, with `file`, `start`, `end`, `lines` and `function`, when known (none without a landing)";
 
-impl Verdict {
-    /// Names, in each suite's `uncovered_lines` that rose, the uncovered
-    /// spans holding a line of `added` (the landing's lines, by file).
-    pub fn name_new_spans(&mut self, m: &Measurement, added: &crate::landing::Lines) {
-        for t in self.uncovered_lines.iter_mut().filter(|t| t.rose()) {
-            let Some(s) = m.suites.iter().find(|s| s.suite == t.suite) else { continue };
-            let adds = |sp: &&Span| added.get(&sp.file).is_some_and(|l| l.range(sp.start..=sp.end).next().is_some());
-            t.new_spans = s.uncovered.iter().filter(adds).cloned().collect();
+impl Trend {
+    /// Names, when it rose, the uncovered spans of `s` holding a line of
+    /// `added` (the landing's lines, by file).
+    fn name_new_spans(&mut self, s: &SuiteMeasurement, added: &crate::landing::Lines) {
+        if self.rose() {
+            self.new_spans = s.uncovered.iter().filter(|sp| sp.holds_any(added)).cloned().collect();
         }
     }
 }
@@ -321,14 +320,15 @@ impl Bound {
         }
     }
 
-    /// What a measurement holds of it; none when it was not measured: the
+    /// What a measurement holds of it, and the landing `held` (none when
+    /// there is no branch it lands on); none when it was not measured: the
     /// time of tests run inside `--mutants`, the survivors of a run without
-    /// picks, and `unrecorded_mutants`, which the landing measures.
-    fn current(self, s: &SuiteMeasurement) -> Option<f64> {
+    /// picks, and `unrecorded_mutants` without a landing.
+    fn current(self, s: &SuiteMeasurement, held: Option<&Held>) -> Option<f64> {
         match self {
             Bound::TestSeconds if s.untimed => None,
             Bound::SurvivedMutants => survivors(s),
-            Bound::UnrecordedMutants => None,
+            Bound::UnrecordedMutants => held.map(|h| h.unrecorded.get(&s.suite).map_or(0.0, |u| u.lines as f64)),
             _ => self.kept(Some(&s.metrics)),
         }
     }
@@ -384,7 +384,7 @@ fn list(kind: &str) -> String {
     format!("`slimfit next --all --kind {kind}` lists them")
 }
 
-fn fix(b: Bound, s: &SuiteMeasurement) -> String {
+fn fix(b: Bound, s: &SuiteMeasurement, held: Option<&Held>) -> String {
     match b {
         Bound::Failures => {
             let failing: Vec<&str> = s.tests.iter().filter(|t| !t.passed).map(|t| t.id.as_str()).take(10).collect();
@@ -396,7 +396,19 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             "picked mutants of the change survive: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
         ),
-        Bound::UnrecordedMutants => PICK_THE_MUTANTS.into(),
+        Bound::UnrecordedMutants => {
+            let h = held.expect("unrecorded_mutants is measured of a landing");
+            let u = &h.unrecorded[&s.suite];
+            let missing = if h.records.is_empty() {
+                "no record of its mutants"
+            } else {
+                "no record of its mutants that names a picker other than its author"
+            };
+            format!(
+                "the change adds {} source line(s) since {} ({}), the first at {}, and {missing}: {PICK_THE_MUTANTS}",
+                u.lines, h.from, h.target, u.first
+            )
+        }
     }
 }
 
@@ -422,7 +434,9 @@ pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --
 pub const TIME_THE_TESTS: &str =
     "run a plain `slimfit check` (not at background priority): it runs the tests again and keeps the mutants";
 
-pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
+/// The verdict of `m` against `base`, and of the landing `held` when there
+/// is a branch it lands on: its records, and the uncovered spans it adds.
+pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig, held: Option<&Held>) -> Verdict {
     let mut v = Verdict {
         ok: true,
         violations: vec![],
@@ -439,11 +453,17 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
             v.new_suites.push(s.suite.clone());
         }
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
-            let Some(cur) = bound.current(s) else { continue };
+            let Some(cur) = bound.current(s, held) else { continue };
             let was = bound.kept(kept);
             match bound {
                 Bound::TestSeconds => v.test_seconds.push(Trend::of(&s.suite, was, cur)),
-                Bound::UncoveredLines => v.uncovered_lines.push(Trend::of(&s.suite, was, cur)),
+                Bound::UncoveredLines => {
+                    let mut t = Trend::of(&s.suite, was, cur);
+                    if let Some(h) = held {
+                        t.name_new_spans(s, &h.added);
+                    }
+                    v.uncovered_lines.push(t);
+                }
                 _ => {}
             }
             if let Some(lim) = bound.limit()
@@ -455,7 +475,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
                     baseline: was.unwrap_or(0.0),
                     limit: lim,
                     current: cur,
-                    fix: fix(bound, s),
+                    fix: fix(bound, s, held),
                 });
             } else if let Some(was) = was.filter(|w| bound.gain(cfg, *w, cur)) {
                 v.improved.push(Change { suite: s.suite.clone(), metric: bound, baseline: was, current: cur });
@@ -477,7 +497,7 @@ pub fn ratchet(
     loosen: &[Bound],
     reason: Option<&str>,
 ) -> Result<Baseline> {
-    let verdict = check(base, m, cfg);
+    let verdict = check(base, m, cfg, None);
     let loosened = |b: Bound| loosen.contains(&b) && b.never_loosened().is_none();
     let mut faults: Vec<Fault> = verdict
         .violations
@@ -529,7 +549,7 @@ pub fn ratchet(
         let old = base.suites.get(&s.suite);
         let mut metrics = s.metrics.clone();
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
-            let (was, cur) = (bound.kept(old), bound.current(s));
+            let (was, cur) = (bound.kept(old), bound.current(s, None));
             if loosened(bound)
                 && let (Some(from), Some(to)) = (was, cur)
                 && to > from
@@ -685,12 +705,12 @@ mod t {
     #[test]
     fn a_trend_that_falls_is_an_improvement_and_a_suite_new_to_the_baseline_still_fails() {
         let cfg = CheckConfig::default();
-        let v = check(&base(m(10, 10.0)), &measurement(m(8, 9.0), Some(0)), &cfg);
+        let v = check(&base(m(10, 10.0)), &measurement(m(8, 9.0), Some(0)), &cfg, None);
         assert!(v.ok, "{v:?}");
         let improved = [Bound::TestSeconds, Bound::UncoveredLines];
         assert_eq!(v.improved.iter().map(|c| c.metric).collect::<Vec<_>>(), improved);
         // A suite new to the baseline is recorded, but its failures still fail.
-        let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0) }, None), &cfg);
+        let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0) }, None), &cfg, None);
         assert_eq!((v.new_suites, v.violations.len()), (vec!["s".to_string()], 1));
         assert_eq!(v.test_seconds, [Trend::of("s", None, 1.0)]);
         assert_eq!(v.uncovered_lines, [Trend::of("s", None, 1.0)]);
@@ -708,18 +728,20 @@ mod t {
         let span = |file: &str, start, end| Span { file: file.into(), start, end, lines: 2, function: None };
         let mut more = measurement(m(14, 10.0), None);
         more.suites[0].uncovered = vec![span("a.rs", 3, 4), span("a.rs", 8, 9), span("b.rs", 1, 2)];
-        let mut v = check(&base(m(10, 10.0)), &more, &cfg);
-        assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
         let added: crate::landing::Lines =
             [("a.rs".to_string(), [(9, "x".to_string()), (20, "y".to_string())].into())].into();
-        v.name_new_spans(&more, &added);
+        let held = Held { added, ..Held::default() };
+        // Without a landing, no span is named.
+        let v = check(&base(m(10, 10.0)), &more, &cfg, None);
+        assert!(v.ok && v.uncovered_lines[0].new_spans.is_empty(), "{v:?}");
+        let v = check(&base(m(10, 10.0)), &more, &cfg, Some(&held));
+        assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
         assert_eq!(
             v.uncovered_lines,
             [Trend { new_spans: vec![span("a.rs", 8, 9)], ..Trend::of("s", Some(10.0), 14.0) }]
         );
         // Not risen: no span named, though the change adds one.
-        let mut same = check(&base(m(14, 10.0)), &more, &cfg);
-        same.name_new_spans(&more, &added);
+        let same = check(&base(m(14, 10.0)), &more, &cfg, Some(&held));
         assert!(same.uncovered_lines[0].new_spans.is_empty(), "{same:?}");
         let kept = |cur: u64| ratchet(&base(m(10, 10.0)), &measurement(m(cur, 10.0), None), &cfg, &[], None);
         assert_eq!([14, 9, 8].map(|c| kept(c).unwrap().suites["s"].uncovered_lines), [10, 10, 8]);
@@ -741,7 +763,7 @@ mod t {
     fn test_seconds_is_a_trend_not_a_bound() {
         let cfg = CheckConfig::default();
         let slow = measurement(m(10, 100.0), None);
-        let v = check(&base(m(10, 10.0)), &slow, &cfg);
+        let v = check(&base(m(10, 10.0)), &slow, &cfg, None);
         assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
         assert_eq!(v.test_seconds, [Trend::of("s", Some(10.0), 100.0)]);
         assert_eq!(ratchet(&base(m(10, 10.0)), &slow, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
@@ -752,6 +774,48 @@ mod t {
         assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("--kind slow-test"), "{f:?}");
     }
 
+    /// A landing that adds source lines with no record fails the check as
+    /// `unrecorded_mutants`, its fix naming the first line and what is
+    /// missing; once held (no suite unrecorded), or with no landing, it
+    /// passes, and it never counts as improved.
+    #[test]
+    fn a_landing_without_a_record_fails_as_unrecorded_mutants() {
+        let cfg = CheckConfig::default();
+        let ten = measurement(m(10, 10.0), None);
+        let unrecorded = [("s".to_string(), crate::landing::Unrecorded { lines: 3, first: "a.rs:7".into() })];
+        let held = |records: Vec<String>| Held {
+            target: "origin/HEAD".into(),
+            from: "abc".into(),
+            lines: 3,
+            records,
+            unrecorded: unrecorded.clone().into(),
+            ..Held::default()
+        };
+        let v = check(&base(m(10, 10.0)), &ten, &cfg, Some(&held(vec![])));
+        assert!(!v.ok, "{v:?}");
+        let u = &v.violations[0];
+        assert_eq!(
+            (v.violations.len(), u.metric, u.baseline, u.limit, u.current),
+            (1, Bound::UnrecordedMutants, 0.0, 0.0, 3.0)
+        );
+        assert!(
+            u.fix.starts_with(
+                "the change adds 3 source line(s) since abc (origin/HEAD), the first at a.rs:7, and no record of its \
+                 mutants: list the change's mutants"
+            ),
+            "{u:?}"
+        );
+        let v = check(&base(m(10, 10.0)), &ten, &cfg, Some(&held(vec!["r.json".into()])));
+        assert!(
+            v.violations[0].fix.contains("and no record of its mutants that names a picker other than its author: ")
+        );
+        let recorded = Held { unrecorded: Default::default(), ..held(vec![]) };
+        for h in [Some(&recorded), None] {
+            let v = check(&base(m(10, 10.0)), &ten, &cfg, h);
+            assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
+        }
+    }
+
     /// No baseline keeps a mutant count: a survivor in the change fails the
     /// check, in a new suite too, until it is killed or loosened with a
     /// reason; `unrecorded_mutants` is never loosened.
@@ -760,7 +824,7 @@ mod t {
         let cfg = CheckConfig::default();
         let two = measurement(m(10, 10.0), Some(2));
         for b in [base(m(10, 10.0)), Baseline::default()] {
-            let v = check(&b, &two, &cfg);
+            let v = check(&b, &two, &cfg, None);
             assert_eq!(
                 v.violations.iter().map(|v| (v.metric, v.limit, v.current)).collect::<Vec<_>>(),
                 [(Bound::SurvivedMutants, 0.0, 2.0)]
@@ -795,7 +859,7 @@ mod t {
         let cfg = CheckConfig::default();
         let mut slow = measurement(m(10, 31.1), Some(0));
         slow.suites[0].untimed = true;
-        let v = check(&base(m(10, 10.0)), &slow, &cfg);
+        let v = check(&base(m(10, 10.0)), &slow, &cfg, None);
         assert!(v.ok && v.improved.is_empty(), "{v:?}");
         assert_eq!((v.time_unchecked, v.test_seconds), (vec!["s".to_string()], vec![]));
         let mut fast = slow.clone();
@@ -811,7 +875,7 @@ mod t {
             );
         };
         refused(&Baseline::default(), &[]);
-        assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg).time_unchecked.is_empty());
+        assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg, None).time_unchecked.is_empty());
     }
 
     /// Failing tests fail the check whatever the baseline records; once
@@ -820,10 +884,10 @@ mod t {
     fn failures_are_held_to_none_and_their_fix_is_a_gain() {
         let cfg = CheckConfig::default();
         let failing = base(Metrics { failures: 2, ..m(10, 10.0) });
-        let v = check(&failing, &measurement(Metrics { failures: 1, ..m(10, 10.0) }, None), &cfg);
+        let v = check(&failing, &measurement(Metrics { failures: 1, ..m(10, 10.0) }, None), &cfg, None);
         assert_eq!(v.violations.iter().map(|v| (v.metric, v.limit)).collect::<Vec<_>>(), [(Bound::Failures, 0.0)]);
         let fixed = measurement(m(10, 10.0), None);
-        let v = check(&failing, &fixed, &cfg);
+        let v = check(&failing, &fixed, &cfg, None);
         assert_eq!(v.improved, [Change { suite: "s".into(), metric: Bound::Failures, baseline: 2.0, current: 0.0 }]);
         assert_eq!(ratchet(&failing, &fixed, &cfg, &[], None).unwrap().suites["s"].failures, 0);
         let f = crate::fault::of(ratchet(&failing, &fixed, &cfg, &[Bound::Failures], Some("x")).unwrap_err());

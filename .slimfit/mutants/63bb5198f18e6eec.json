@@ -1,0 +1,27 @@
+{
+  "tree": "c27d9edb5392d950e5b9cd3522e2837cb28c610b+d1fba762150c532c",
+  "picker": "codex:01a1f810-c363-7231-91ee-4c6878cdd6ae:default",
+  "author": "claude-code:3e06f851-f83d-5238-b1ae-e1d7948b40d5:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/landing.rs:389:23: replace || with && in hold",
+        "why": "Requiring both a fresh pick run and a valid record could escape tests that construct Held directly and bypass the two independent ways to satisfy the gate.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:160:5: replace pick_mutants -> Result<Vec<Task>> with Ok(vec![])",
+        "why": "The verdict tests can pass even if `slimfit next` silently drops the picker task for an unrecorded suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:445:5: replace grown_spans -> (Value, Vec<String>) with (Default::default(), vec![])",
+        "why": "The verdict test checks `new_spans`, so it can pass while the task output loses its span evidence and file list.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

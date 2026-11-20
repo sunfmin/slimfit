@@ -174,6 +174,13 @@ pub struct Span {
     pub function: Option<String>,
 }
 
+impl Span {
+    /// Whether it holds a line of `lines` (by file).
+    pub fn holds_any(&self, lines: &crate::landing::Lines) -> bool {
+        lines.get(&self.file).is_some_and(|l| l.range(self.start..=self.end).next().is_some())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SuiteMeasurement {
     pub suite: String,
