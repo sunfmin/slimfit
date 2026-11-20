@@ -41,6 +41,34 @@ pub struct Baseline {
     pub measured: BTreeMap<String, Measured>,
 }
 
+impl Baseline {
+    /// The baseline that follows `old` with `suites`' bounds, written from
+    /// measurement `m`: the only place one is built from another. The
+    /// verdicts carry over (loosenings, kept files, `mutants_from`, and each
+    /// keep verdict whose test is unchanged); the trends are `m`'s.
+    pub fn next(old: &Baseline, suites: BTreeMap<String, Metrics>, m: &Measurement) -> Baseline {
+        // A keep verdict whose test changed, or is gone, holds no more.
+        let kept = old
+            .kept
+            .iter()
+            .filter(|k| {
+                let Some(s) = m.suites.iter().find(|s| s.suite == k.suite) else { return true };
+                let Some(reach) = &s.reach else { return true };
+                reach.tests.iter().any(|t| k.holds(&s.suite, t))
+            })
+            .cloned()
+            .collect();
+        Baseline {
+            suites,
+            loosened: old.loosened.clone(),
+            kept,
+            kept_files: old.kept_files.clone(),
+            mutants_from: old.mutants_from.clone(),
+            measured: Measured::of(m),
+        }
+    }
+}
+
 /// A suite's trends as measured, not as ratcheted: `uncovered_lines`, and
 /// `test_seconds` when the tests were timed (not run inside `--mutants`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -495,25 +523,8 @@ pub fn ratchet(
     if !faults.is_empty() {
         return Err(Faults(faults).into());
     }
-    // A keep verdict whose test changed, or is gone, holds no more.
-    let kept = base
-        .kept
-        .iter()
-        .filter(|k| {
-            let Some(s) = m.suites.iter().find(|s| s.suite == k.suite) else { return true };
-            let Some(reach) = &s.reach else { return true };
-            reach.tests.iter().any(|t| k.holds(&s.suite, t))
-        })
-        .cloned()
-        .collect();
-    let mut next = Baseline {
-        suites: BTreeMap::new(),
-        loosened: base.loosened.clone(),
-        kept,
-        kept_files: base.kept_files.clone(),
-        mutants_from: base.mutants_from.clone(),
-        measured: Measured::of(m),
-    };
+    let mut loosenings = Vec::new();
+    let mut suites = BTreeMap::new();
     for s in &m.suites {
         let old = base.suites.get(&s.suite);
         let mut metrics = s.metrics.clone();
@@ -523,7 +534,7 @@ pub fn ratchet(
                 && let (Some(from), Some(to)) = (was, cur)
                 && to > from
             {
-                next.loosened.push(Loosening {
+                loosenings.push(Loosening {
                     suite: s.suite.clone(),
                     metric: bound,
                     from,
@@ -535,8 +546,10 @@ pub fn ratchet(
             let gained = cur.filter(|c| loosened(bound) || bound.gain(cfg, was, *c));
             bound.keep(&mut metrics, gained.unwrap_or(was));
         }
-        next.suites.insert(s.suite.clone(), metrics);
+        suites.insert(s.suite.clone(), metrics);
     }
+    let mut next = Baseline::next(base, suites, m);
+    next.loosened.extend(loosenings);
     Ok(next)
 }
 
@@ -603,6 +616,62 @@ mod t {
         };
         let holds = |lines, total| k.holds("s", "f.rs", lines, total);
         assert_eq!((holds(149, 13), holds(150, 13), holds(149, 14)), (true, false, false));
+    }
+
+    /// The next baseline carries the old one's verdicts over (a keep verdict
+    /// only while its test's text is unchanged, or the test was not seen)
+    /// and takes the bounds it is given and the trends of the measurement.
+    #[test]
+    fn next_carries_the_verdicts_over_and_takes_the_measurements_trends() {
+        use crate::model::{Reach, TestSource};
+        let test = |name: &str, hash: &str| ReachTest {
+            binary: "b".into(),
+            name: name.into(),
+            source: Some(TestSource { file: "t.rs".into(), line: 1, hash: hash.into() }),
+        };
+        let kept = |suite: &str, name: &str| Kept {
+            suite: suite.into(),
+            test: format!("b::{name}"),
+            hash: "h".into(),
+            reason: "r".into(),
+        };
+        let old = Baseline {
+            suites: [("s".to_string(), m(10, 10.0)), ("gone".to_string(), m(1, 1.0))].into(),
+            loosened: vec![Loosening {
+                suite: "s".into(),
+                metric: Bound::SurvivedMutants,
+                from: 0.0,
+                to: 1.0,
+                reason: "equivalent".into(),
+            }],
+            kept: vec![kept("s", "same"), kept("s", "edited"), kept("s", "deleted"), kept("unseen", "x")],
+            kept_files: vec![KeptFile {
+                suite: "s".into(),
+                file: "src/a.rs".into(),
+                prod_lines: 10,
+                commits_90d: 1,
+                commits_total: 2,
+                reason: "deep".into(),
+            }],
+            mutants_from: Some("abc".into()),
+            measured: [("gone".to_string(), Measured::default())].into(),
+        };
+        let mut cur = measurement(m(8, 4.0), None);
+        let tests = vec![test("same", "h"), test("edited", "h2")];
+        cur.suites[0].reach = Some(Reach { tests, functions: BTreeMap::new(), lines: None });
+        let suites: BTreeMap<String, Metrics> = [("s".to_string(), m(9, 5.0))].into();
+        let next = Baseline::next(&old, suites.clone(), &cur);
+        let names: Vec<&str> = next.kept.iter().map(|k| k.test.as_str()).collect();
+        assert_eq!(names, ["b::same", "b::x"]);
+        assert_eq!(
+            (&next.loosened, &next.kept_files, &next.mutants_from),
+            (&old.loosened, &old.kept_files, &old.mutants_from)
+        );
+        assert_eq!(next.suites, suites);
+        assert_eq!(next.measured, Measured::of(&cur));
+        // Nothing to carry over from: none of the old verdicts.
+        let fresh = Baseline::next(&Baseline::default(), suites.clone(), &cur);
+        assert_eq!(fresh, Baseline { suites, measured: Measured::of(&cur), ..Baseline::default() });
     }
 
     fn base(metrics: Metrics) -> Baseline {
