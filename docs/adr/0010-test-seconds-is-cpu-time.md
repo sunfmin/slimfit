@@ -13,8 +13,10 @@ day. CPU time (user + sys) is the work the tests do: waiting for a core
 does not add to it. It is cheap and objective, as a hard bound must be
 (ADR 0009). The measurements are in slimfit#43's comments.
 
-Invariant: `test_seconds` holds on a busy host, and counts the tests, not
-the build.
+Invariant: `test_seconds` counts the tests, not the build; it bounds
+nothing. Its first form was "it holds on a busy host": on a host with two
+perf levels it does not, so since slimfit#59 it is a trend and a task
+source, not a bound (ADR 0009, point 1, has the numbers).
 
 ## Decision
 
@@ -66,8 +68,10 @@ test (ADR 0007) is wall time, so it is set from wall time.
   host's problem this bound is for; the slow-test steps still name sleeps.
 - On a host with fast and slow cores (Apple silicon) the same work takes
   more CPU time on a slow core, and with every core busy more of it lands
-  there: CPU time still rises under full load, far less than wall time,
-  within `time_tolerance` + `time_slack`. A run at background priority runs
+  there: CPU time rises under load, far less than wall time but past any
+  tolerance a bound could keep (slimfit#58: 12.005 s against 8.816 s for an
+  unchanged tree at a load of 22). Hence slimfit#59: `check` never fails on
+  it, and `time_tolerance` / `time_slack` are gone. A run at background priority runs
   on the slow cores only, so a test run inside `--mutants` stays `untimed`
   (slimfit#39).
 - Where the tree is measured, a test's CPU is its share, not its own:

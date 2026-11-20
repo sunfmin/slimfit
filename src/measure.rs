@@ -807,12 +807,11 @@ pub(crate) mod t {
         // The sample's test command records the slow test's CPU time.
         assert_eq!(m.suites[0].metrics.test_seconds, 0.625);
         assert_eq!(std::fs::read_to_string(&runs).unwrap(), "build\nrun\n");
-        // A baseline it would exceed: no violation, and the ratchet keeps it.
-        let held = crate::config::CheckConfig { time_slack: 0.0, ..Default::default() };
+        // A baseline far under it: not answered, and the ratchet keeps it.
+        let held = crate::config::CheckConfig::default();
         let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
         let base = Baseline { suites: [("rust".to_string(), tight)].into(), ..Baseline::default() };
-        let v = crate::ratchet::check(&base, &m, &held);
-        assert!(!v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
+        assert!(crate::ratchet::check(&base, &m, &held).test_seconds.is_empty());
         let loosen = [Bound::SurvivedMutants];
         let next = crate::ratchet::ratchet(&base, &m, &held, &loosen, Some("t")).unwrap();
         assert_eq!(next.suites["rust"].test_seconds, 0.001);
@@ -825,7 +824,7 @@ pub(crate) mod t {
         assert!(!timed.suites[0].untimed && timed.with_mutants);
         assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
         let v = crate::ratchet::check(&base, &timed, &held);
-        assert!(v.violations.iter().any(|v| v.metric == Bound::TestSeconds), "{v:?}");
+        assert!(v.ok && v.test_seconds[0].current == 0.625, "{v:?}");
         // Cached now, timed: nothing runs again, `--mutants` included.
         assert_eq!((measure(true), run(repo, &cfg, &[KILLED]).unwrap().1, ran()), (timed, None, 2));
     }

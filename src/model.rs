@@ -65,8 +65,8 @@ pub struct Metrics {
     pub test_lines: u64,
     pub tests: u64,
     pub failures: u64,
-    /// The tests' CPU time: what it counts is the `test_seconds` bound's
-    /// help (`ratchet::Bound`), its one home.
+    /// The tests' CPU time, a trend and no bound: what it counts is the
+    /// `test_seconds` row's help (`ratchet::Bound`), its one home.
     pub test_seconds: f64,
     pub covered_lines: u64,
     pub uncovered_lines: u64,

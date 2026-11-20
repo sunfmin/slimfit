@@ -99,9 +99,10 @@ pub struct Loosening {
     pub reason: String,
 }
 
-/// The bounded metrics. Line counts are recorded but not bounded: code may
-/// grow, as long as every new line is covered and every new mutant killed.
-/// Each variant's help is the rule `check` holds it to.
+/// The metrics `check` holds against the baseline. Line counts are recorded
+/// but not bounded: code may grow, as long as every new line is covered and
+/// every new mutant killed. `test_seconds` is held as a trend, not a bound
+/// (ADR 0009, 0010). Each variant's help is the rule `check` holds it to.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum, agent_help::Help)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
@@ -109,7 +110,7 @@ pub enum Bound {
     /// Failing tests: none, whatever the baseline records (`init` records failing tests as they are); never loosened.
     #[value(verbatim_doc_comment)]
     Failures,
-    /// The CPU time (user + sys) the tests' own processes spent, in seconds, build excluded: each test's own process and those it starts where the test command records it (the Rust preset's runner), otherwise the test command's process tree after the suite's `build_command`. A busy host barely moves it, as it does wall time (see [host load](help:host-load)). At most baseline × (1 + `time_tolerance`) + `time_slack` (`slimfit.toml`'s `[check]`; by default {const:TIME_TOLERANCE} and {const:TIME_SLACK} seconds).
+    /// The CPU time (user + sys) the tests' own processes spent, in seconds, build excluded: each test's own process and those it starts where the test command records it (the Rust preset's runner), otherwise the test command's process tree after the suite's `build_command`. A trend, not a bound: `check` answers it against the baseline and never fails on it, since on a host with fast and slow cores it moves with load (see [host load](help:host-load)); `slimfit ratchet` keeps the lower of the two, `slimfit report` shows it over time and `slow-test` tasks rank by it; never loosened, as there is nothing to loosen. What bounds a gate's time is the gate's own limit (see [factorium](help:factorium)).
     #[value(verbatim_doc_comment)]
     TestSeconds,
     /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
@@ -177,7 +178,22 @@ pub struct Verdict {
     /// Suites whose `test_seconds` was not checked: their tests ran inside
     /// `--mutants` (see [`SuiteMeasurement::untimed`]).
     pub time_unchecked: Vec<String>,
+    /// Each timed suite's `test_seconds` against the baseline's: a trend,
+    /// which fails nothing.
+    pub test_seconds: Vec<Trend>,
 }
+
+/// A metric shown against the baseline, which fails nothing.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Trend {
+    pub suite: String,
+    /// None for a suite new to the baseline.
+    pub baseline: Option<f64>,
+    pub current: f64,
+}
+
+/// What a [`Trend`] prints, as the command pages name it.
+pub const TREND_HELP: &str = "each with `suite`, `baseline` (`null` for a suite with no baseline yet) and `current`";
 
 pub fn load(repo: &Path) -> Result<Baseline> {
     match std::fs::read_to_string(repo.join(FILE)) {
@@ -241,10 +257,10 @@ impl Bound {
     }
 
     /// The most it may be, given what the baseline keeps; none when that
-    /// depends on a baseline there is not.
+    /// depends on a baseline there is not, and for a trend.
     fn limit(self, cfg: &CheckConfig, kept: Option<f64>) -> Option<f64> {
         match self {
-            Bound::TestSeconds => kept.map(|b| b * (1.0 + cfg.time_tolerance) + cfg.time_slack),
+            Bound::TestSeconds => None,
             Bound::UncoveredLines => kept.map(|b| b + cfg.coverage_slack as f64),
             Bound::Failures | Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
         }
@@ -268,6 +284,7 @@ impl Bound {
             Bound::UnrecordedMutants => Some(format!(
                 "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
             )),
+            Bound::TestSeconds => Some(SLOW_TESTS.into()),
             _ => None,
         }
     }
@@ -287,10 +304,7 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             let failing: Vec<&str> = s.tests.iter().filter(|t| !t.passed).map(|t| t.id.as_str()).take(10).collect();
             format!("make these tests pass: {}; {}", failing.join(", "), list("failing-test"))
         }
-        Bound::TestSeconds => format!(
-            "the tests got slower: make the new slow tests cheaper, or move them behind a faster adapter; {}",
-            list("slow-test")
-        ),
+        Bound::TestSeconds => SLOW_TESTS.into(),
         Bound::UncoveredLines => format!(
             "new lines run under no test: cover each through its module's interface, or delete it; {}",
             list("uncovered")
@@ -302,6 +316,10 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
         Bound::UnrecordedMutants => PICK_THE_MUTANTS.into(),
     }
 }
+
+/// What to do about `test_seconds`, which bounds nothing.
+const SLOW_TESTS: &str = "test_seconds is a trend, not a bound: `slimfit check` never fails on it; to lower it, \
+     make the slow tests cheaper (`slimfit next --all --kind slow-test` lists them)";
 
 /// What clears `unrecorded_mutants`: the rule of every change to source.
 pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --mutants`), pick at most 5 worth \
@@ -322,6 +340,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         new_suites: vec![],
         mutants_unchecked: !m.with_mutants,
         time_unchecked: m.suites.iter().filter(|s| s.untimed).map(|s| s.suite.clone()).collect(),
+        test_seconds: vec![],
     };
     for s in &m.suites {
         let kept = base.suites.get(&s.suite);
@@ -331,8 +350,12 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
             let Some(cur) = bound.current(s) else { continue };
             let was = bound.kept(kept);
-            let Some(lim) = bound.limit(cfg, was) else { continue };
-            if cur > lim + 1e-9 {
+            if bound == Bound::TestSeconds {
+                v.test_seconds.push(Trend { suite: s.suite.clone(), baseline: was, current: cur });
+            }
+            if let Some(lim) = bound.limit(cfg, was)
+                && cur > lim + 1e-9
+            {
                 v.violations.push(Violation {
                     suite: s.suite.clone(),
                     metric: bound,
@@ -387,7 +410,7 @@ pub fn ratchet(
     }
     // `test_seconds` is set only from a test run at a gate's priority.
     for s in m.suites.iter().filter(|s| s.untimed) {
-        if loosen.contains(&Bound::TestSeconds) || !base.suites.contains_key(&s.suite) {
+        if !base.suites.contains_key(&s.suite) {
             faults.push(Fault {
                 fault: format!(
                     "{}: its tests ran inside `--mutants`, at background priority: its test_seconds is no bound",
@@ -531,12 +554,28 @@ mod t {
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::UncoveredLines]);
         assert!(v.violations[0].fix.ends_with("`slimfit next --all --kind uncovered` lists them"));
         assert_eq!(v.improved.iter().map(|c| c.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
-        let v = check(&base(m(10, 10.0)), &measurement(m(10, 13.1), None), &cfg);
-        assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
-        assert!(v.mutants_unchecked);
         // A suite new to the baseline is recorded, but its failures still fail.
         let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0) }, None), &cfg);
         assert_eq!((v.new_suites, v.violations.len()), (vec!["s".to_string()], 1));
+        assert_eq!(v.test_seconds, [Trend { suite: "s".into(), baseline: None, current: 1.0 }]);
+    }
+
+    /// `test_seconds` far over the baseline fails nothing: the check is
+    /// green and answers it; the ratchet keeps the lower time, and refuses
+    /// to loosen what bounds nothing (slimfit#59).
+    #[test]
+    fn test_seconds_is_a_trend_not_a_bound() {
+        let cfg = CheckConfig::default();
+        let slow = measurement(m(10, 100.0), None);
+        let v = check(&base(m(10, 10.0)), &slow, &cfg);
+        assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
+        assert_eq!(v.test_seconds, [Trend { suite: "s".into(), baseline: Some(10.0), current: 100.0 }]);
+        assert_eq!(ratchet(&base(m(10, 10.0)), &slow, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
+        let fast = measurement(m(10, 4.0), None);
+        assert_eq!(ratchet(&base(m(10, 10.0)), &fast, &cfg, &[], None).unwrap().suites["s"].test_seconds, 4.0);
+        let f =
+            crate::fault::of(ratchet(&base(m(10, 10.0)), &slow, &cfg, &[Bound::TestSeconds], Some("x")).unwrap_err());
+        assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("--kind slow-test"), "{f:?}");
     }
 
     /// No baseline keeps a mutant count: a survivor in the change fails the
@@ -584,20 +623,19 @@ mod t {
         slow.suites[0].untimed = true;
         let v = check(&base(m(10, 10.0)), &slow, &cfg);
         assert!(v.ok && v.improved.is_empty(), "{v:?}");
-        assert_eq!(v.time_unchecked, ["s"]);
+        assert_eq!((v.time_unchecked, v.test_seconds), (vec!["s".to_string()], vec![]));
         let mut fast = slow.clone();
         fast.suites[0].metrics.test_seconds = 1.0;
         for cur in [&slow, &fast] {
             assert_eq!(ratchet(&base(m(10, 10.0)), cur, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
         }
         let refused = |b: &Baseline, loosen: &[Bound]| {
-            let f = crate::fault::of(ratchet(b, &slow, &cfg, loosen, Some("busy")).unwrap_err());
+            let f = crate::fault::of(ratchet(b, &slow, &cfg, loosen, None).unwrap_err());
             assert!(
                 f[0].fault.contains("ran inside `--mutants`") && f[0].fix.contains("plain `slimfit check`"),
                 "{f:?}"
             );
         };
-        refused(&base(m(10, 10.0)), &[Bound::TestSeconds]);
         refused(&Baseline::default(), &[]);
         assert!(check(&base(m(10, 10.0)), &measurement(m(10, 31.1), None), &cfg).time_unchecked.is_empty());
     }
@@ -640,7 +678,7 @@ mod t {
         assert!(fixes(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None))[0].starts_with("add `--reason"));
         // Every refusal at once: each violated bound, and the missing reason.
         let worse = measurement(Metrics { failures: 1, ..m(12, 20.0) }, None);
-        let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::TestSeconds], None));
+        let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::SurvivedMutants], None));
         assert_eq!(f.len(), 3, "{f:?}");
         assert!(f[0].starts_with("make these tests pass") && !f[0].contains("--loosen failures"), "{f:?}");
         assert!(f[1].contains("--loosen uncovered_lines") && f[2].starts_with("add `--reason"), "{f:?}");

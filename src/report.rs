@@ -100,7 +100,7 @@ pub struct Lines {
 
 /// What a history point's suite prints, as the command pages name it.
 pub const LINES_HELP: &str = "`prod` and `test` lines, and what the baseline committed then held: `tests`, \
-     `test_seconds` and `uncovered_lines` (its bounds) and `kept` (redundant-test verdicts kept) and `kept_files` (deepen verdicts kept)";
+     `test_seconds` (its trend) and `uncovered_lines` (its bound) and `kept` (redundant-test verdicts kept) and `kept_files` (deepen verdicts kept)";
 
 /// The baseline's numbers for `suite` in `baseline` (a commit's
 /// `.slimfit/baseline.json`), read field by field: a baseline written by an
