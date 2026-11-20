@@ -749,6 +749,11 @@ mod t {
         let time = &rising(nowhere, &check, &s, &landed(&[(1, 1.0), (1, 1.0), (1, 2.0)]))[0];
         assert_eq!(time.evidence["tests"][0]["test"], "t::slow");
         assert_eq!(time.evidence["landings"][2]["commit"], "c2");
+        // Where the run records each test's file, only the tests in the files the landings changed.
+        let known = suite([("fast", 0.1, vec![1]), ("slow", 0.9, vec![2])]);
+        let added: crate::landing::Lines = [("tests/fast.rs".to_string(), [(1, "x".to_string())].into())].into();
+        let (tests, files) = grown_tests(&known, &added);
+        assert_eq!((tests, files), (json!([{ "test": "t::fast", "seconds": 0.1 }]), vec!["tests/fast.rs".to_string()]));
     }
 
     /// A failing test is a task, with the log to read; a passing one is not.
