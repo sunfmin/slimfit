@@ -28,8 +28,8 @@ pub const SAMPLE_DAYS: u32 = 7;
 /// replace, in the draw's order, the ones that do not build, all in one run.
 pub const DRAWN: usize = 2;
 
-/// What a sample costs, measured on slimfit itself (evidence: slimfit#55).
-pub const COST: &str = "a sample of 5, drawn from 585 mutants of 7 days of changes, took 310s wall and 570s CPU (user + sys), its test run included, at background priority on a host at load 8-13; cargo-mutants 27 ran 15 more than the 5 drawn, field deletions its name filter does not hold back";
+/// What a sample costs, measured on slimfit itself (evidence: slimfit#60).
+pub const COST: &str = "a sample of 5, drawn from 574 mutants of 7 days of changes, took 38.5s wall and 115s CPU (user + sys), its test run included, on a host at load 6-11: one cargo-mutants run of the 10 drawn built 8 (one did not build, 2 more than the sample kept) and skipped 2";
 
 /// git's empty tree: where changes start in a repository younger than the window.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
