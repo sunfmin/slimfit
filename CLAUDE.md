@@ -20,7 +20,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 
 ## Checks
 
-- `./gate.sh` (fast): fmt, clippy, then slimfit checks itself (tests, coverage and time against `.slimfit/baseline.json`).
+- `./gate.sh` (fast): fmt, clippy, then slimfit checks itself (tests and the mutants record; coverage and time as trends against `.slimfit/baseline.json`).
 - `./slow.sh`: the fast gate; `E2E_LANGS` adds `./e2e.sh` on those languages' real toolchains (`E2E_MUTANTS=1` adds the Rust sample's mutants of a change, on request).
 - No gate and no commit runs mutation testing on slimfit itself: mutants are never in a gate (`slimfit --help`, rule 2), and run only on a change, picked: nothing mutates the whole codebase (ADR 0006), nor every mutant of a change (ADR 0008). Every change to source picks its mutants before it lands: `slimfit check --mutants` lists them; pick at most 5 on the decisions the change makes and run them with `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`, then `slimfit ratchet`, and the commit carries the record it writes in `.slimfit/mutants/` (or `slimfit ratchet --no-mutants "<why>"` when nothing is worth one); the gate's plain `slimfit check` fails without a record (ADR 0008). A surviving pick is killed, or loosened with a reason, and that commit carries the ratcheted `.slimfit/baseline.json`.
 - A new report format or preset change needs real output from the real tool in `testdata/<language>/reports/`, never a hand-written one. Replace absolute paths with `/REPO`.
