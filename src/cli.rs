@@ -199,7 +199,7 @@ pub(crate) enum Cmd {
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; and `time_unchecked`, the suites whose `test_seconds` was not held: their tests ran inside `--mutants` (see [host load](help:host-load)).
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; `time_unchecked`, the suites whose `test_seconds` was not measured as a gate does: their tests ran inside `--mutants` (see [host load](help:host-load)); and `test_seconds`, each timed suite's against the baseline, {const:TREND}: a trend, which never fails the check.
     /// - `landing`: the change the gate holds to a record of its mutants (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `picks` (the picked mutants it ran, {const:PICK}) and `change` (the picks by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
@@ -357,7 +357,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - `history` counts lines with today's `slimfit.toml` (and a Rust suite's test crates by today's Cargo manifests): a commit from before a suite existed counts it as it is configured now.
-    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are the bounds the baseline held at that commit, not a measurement of it; `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
+    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds`, the lowest time ratcheted so far; it changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
@@ -437,8 +437,6 @@ fn help() -> Help {
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
-        .constant("TIME_TOLERANCE", check.time_tolerance)
-        .constant("TIME_SLACK", check.time_slack)
         .constant("BUSY_LOAD", doctor::BUSY)
         .constant("COVERAGE_SLACK", check.coverage_slack)
         .constant("LISTED_PER_KIND", tasks::LISTED_PER_KIND)
@@ -447,6 +445,7 @@ fn help() -> Help {
         .constant("COMMON_LINES", format!("{:.0}%", tasks::COMMON_LINES * 100.0))
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
+        .constant("TREND", ratchet::TREND_HELP)
         .constant("LANDING", landing::HELD_HELP)
         .constant("RECORDS", landing::RECORDS_HELP)
         .constant("HISTORY_SUITE", report::LINES_HELP)

@@ -21,9 +21,6 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CheckConfig {
-    /// `test_seconds` may exceed the baseline by this fraction, plus `time_slack`.
-    pub time_tolerance: f64,
-    pub time_slack: f64,
     /// Lines by which `uncovered_lines` may move either way and still count
     /// as unchanged: coverage that depends on timing flaps (docs/adr/0001).
     pub coverage_slack: u64,
@@ -35,7 +32,7 @@ pub struct CheckConfig {
 
 impl Default for CheckConfig {
     fn default() -> Self {
-        Self { time_tolerance: 0.2, time_slack: 1.0, coverage_slack: 1, target: None }
+        Self { coverage_slack: 1, target: None }
     }
 }
 

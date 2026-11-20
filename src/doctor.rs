@@ -25,7 +25,7 @@ pub enum Kind {
     WholeCodebaseMutants,
     /// There is no branch changes land on: `slimfit.toml` sets no `[check] target` and the repository has no `origin/HEAD`. `check` then cannot hold a change to a record of its mutants, and `--mutants` refuses (see [what the gate holds](help:mutants-scope)). Fix: set `target` under `[check]` to that branch, or `git remote set-head origin --auto`.
     NoTarget,
-    /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what runs now runs slow, so wall times measured now (a gate's, a mutants run's) are high. `test_seconds` is CPU time and barely moves. Fix: time costs when the host is quiet.
+    /// The host is busy, by its 1-minute load (see [host load](help:host-load)): what runs now runs slow, so wall times measured now (a gate's, a mutants run's) are high. `test_seconds` is CPU time and rises less, and bounds nothing. Fix: time costs when the host is quiet.
     HostBusy,
     /// A tool a suite's commands run is not installed on this host: the command that needs it fails. Fix: install it as the finding says.
     ToolMissing,
