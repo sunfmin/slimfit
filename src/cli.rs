@@ -13,7 +13,7 @@ use std::path::PathBuf;
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
 /// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker picks at most {const:PICKS_MAX}; you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
-/// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike.
+/// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike. A test that covers a line asserts what the line decides: one that only runs it is no fix, and no bound asks for it (`check` fails on no coverage number).
 ///
 /// ## The loop
 ///
@@ -195,11 +195,11 @@ pub(crate) enum Cmd {
     ///
     /// {table:bound}
     ///
-    /// Line counts are recorded and reported, not bounded. To raise a bound, see `slimfit ratchet --help`.
+    /// It fails only on `failures`, `survived_mutants` and `unrecorded_mutants`. `test_seconds` and `uncovered_lines` are trends: answered against the baseline and ratcheted down, never a failure; their tasks (`slow-test`, `uncovered`) and `slimfit report` are how they improve. Line counts are recorded and reported, not bounded. To raise a bound, see `slimfit ratchet --help`.
     ///
     /// ## What it answers
     ///
-    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; `time_unchecked`, the suites whose `test_seconds` was not measured as a gate does: their tests ran inside `--mutants` (see [host load](help:host-load)); and `test_seconds`, each timed suite's against the baseline, {const:TREND}: a trend, which never fails the check.
+    /// - `verdict`: `ok`, true when no bound is violated; `violations`, {const:VIOLATION}; `improved`, the bounds that got better (`slimfit ratchet` locks them in), each with `suite`, `metric`, `baseline` and `current`; `new_suites`, suites with no baseline yet; `mutants_unchecked`, true when mutants were not measured; `time_unchecked`, the suites whose `test_seconds` was not measured as a gate does: their tests ran inside `--mutants` (see [host load](help:host-load)); `test_seconds`, each timed suite's against the baseline, {const:TREND}: a trend, which never fails the check; and `uncovered_lines`, each suite's against the baseline, likewise, and {const:NEW_SPANS}: what the change leaves untested, for you to judge, never a failure.
     /// - `landing`: the change the gate holds to a record of its mutants (see [what the gate holds](help:mutants-scope)): {const:LANDING}; `null` when there is no branch it lands on (`slimfit doctor` finds `no_target`).
     /// - `metrics`: per suite, {const:METRICS}.
     /// - `mutated`: per suite, `picks` (the picked mutants it ran, {const:PICK}) and `change` (the picks by outcome: `killed`, `survived`, `unviable`); `null` without mutants (see [mutants scope](help:mutants-scope)).
@@ -271,7 +271,7 @@ pub(crate) enum Cmd {
     Ratchet {
         #[command(flatten)]
         at: At,
-        /// Allow this bound to rise (repeatable); needs `--reason`.
+        /// Allow this bound to rise (repeatable); needs `--reason`. Only `survived_mutants` rises so: the others are refused, `failures` and `unrecorded_mutants` as never loosened, `test_seconds` and `uncovered_lines` as trends, with nothing to loosen.
         #[arg(long, value_enum, verbatim_doc_comment)]
         loosen: Vec<ratchet::Bound>,
         /// Why the bound may rise, kept in the baseline: one sentence of why, with the issue it came from. Measurements go in a comment on that issue, not here.
@@ -364,7 +364,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - `history` counts lines with today's `slimfit.toml` (and a Rust suite's test crates by today's Cargo manifests): a commit from before a suite existed counts it as it is configured now.
-    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds`, the lowest time ratcheted so far; it changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
+    /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds` and `uncovered_lines`, the lowest ratcheted so far (a rise a change brought shows in that change's `check`, not here); `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
@@ -459,6 +459,7 @@ fn help() -> Help {
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)
         .constant("TREND", ratchet::TREND_HELP)
+        .constant("NEW_SPANS", ratchet::NEW_SPANS_HELP)
         .constant("LANDING", landing::HELD_HELP)
         .constant("RECORDS", landing::RECORDS_HELP)
         .constant("HISTORY_SUITE", report::LINES_HELP)
@@ -619,7 +620,13 @@ mod tests {
         assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
-        let held = crate::landing::Held { target: String::new(), from: String::new(), lines: 0, records: vec![] };
+        let held = crate::landing::Held {
+            target: String::new(),
+            from: String::new(),
+            lines: 0,
+            records: vec![],
+            added: Default::default(),
+        };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
         assert_eq!(named(crate::report::RATE_HELP)[..4], keys(&crate::report::Rate::default())[..]);

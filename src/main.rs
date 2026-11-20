@@ -192,6 +192,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut v = ratchet::check(&base, &m, &cfg.check);
             let (landing, unrecorded) = landing::hold(&repo, &cfg, m.with_mutants)?;
             v.violations.extend(unrecorded);
+            if let Some(l) = &landing {
+                v.name_new_spans(&m, &l.added);
+            }
             v.ok = v.violations.is_empty();
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
@@ -764,6 +767,53 @@ mod answer_tests {
             cut(&elsewhere);
             assert_eq!(held(crate::EXIT_VIOLATION), (target.clone(), 6));
         }
+    }
+
+    /// A change that adds uncovered lines leaves `check` green (slimfit#67):
+    /// its answer says how far `uncovered_lines` rose and names the spans
+    /// holding a line the change adds, and only those; `ratchet` keeps the
+    /// lower count, and refuses to loosen what bounds nothing.
+    #[test]
+    fn new_uncovered_lines_are_named_not_failed() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.check.target = Some("target".into());
+        // The sample's coverage, its paths in the repository.
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        tests.push_str(" && sed 's#/REPO/##' \"$SLIMFIT_OUT/lcov.info\" > \"$SLIMFIT_OUT/l\" && mv \"$SLIMFIT_OUT/l\" \"$SLIMFIT_OUT/lcov.info\"");
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        // The target lacks `unused`'s body (lines 6-8), which the sample's coverage leaves unrun.
+        let lib = repo.join("src/lib.rs");
+        let text = std::fs::read_to_string(&lib).unwrap();
+        let body = "    let doubled = x * 2;\n    let shifted = doubled + 7;\n    shifted / 3\n";
+        std::fs::write(&lib, text.replace(body, "")).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "target"]);
+        git(repo, &["branch", "target"]);
+        std::fs::write(&lib, &text).unwrap();
+        let (out, _) =
+            slimfit_args(repo, &["ratchet", "--no-mutants", "arithmetic", "--picker", "p", "--author", "a"]).unwrap();
+        assert!(out["record"].is_string(), "{out:#}");
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "a"]);
+        let p = repo.join(crate::ratchet::FILE);
+        let mut b: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let measured = b["suites"]["rust"]["uncovered_lines"].as_u64().unwrap();
+        b["suites"]["rust"]["uncovered_lines"] = 0.into();
+        std::fs::write(&p, b.to_string()).unwrap();
+        let (out, code) = slimfit(repo, "check").unwrap();
+        assert_eq!((code, &out["verdict"]["violations"]), (crate::EXIT_OK, &serde_json::json!([])), "{out:#}");
+        let t = &out["verdict"]["uncovered_lines"][0];
+        assert_eq!((t["baseline"].as_f64(), t["current"].as_f64()), (Some(0.0), Some(measured as f64)), "{t:#}");
+        let span =
+            serde_json::json!([{ "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused" }]);
+        assert_eq!(t["new_spans"], span, "{t:#}");
+        // Kept low, and not loosened: there is no bound to raise.
+        slimfit(repo, "ratchet").unwrap();
+        assert_eq!(crate::ratchet::load(repo).unwrap().suites["rust"].uncovered_lines, 0);
+        let f = faults(repo, "ratchet --loosen uncovered_lines --reason r");
+        assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("asserts what the lines decide"), "{f:?}");
     }
 
     /// A sample of a landed change's mutants, out of the loop: no name the

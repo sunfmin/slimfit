@@ -97,7 +97,10 @@ fn assert_the_five_situations(s: &SuiteMeasurement, source: &str, adult_line: u3
 
     let unused = s.uncovered.iter().find(|sp| sp.file == source && sp.lines >= 3);
     assert!(unused.is_some(), "{}: `unused` is uncovered: {:?}", s.suite, s.uncovered);
-    assert!(kinds.contains(&TaskKind::Uncovered));
+    // Its fix asserts what the lines decide, or deletes them; running them is none (slimfit#67).
+    let steps = &tasks.iter().find(|t| t.kind == TaskKind::Uncovered).expect("an uncovered task").steps;
+    assert!(steps.contains("asserts what these lines decide") && steps.contains("delete it"), "{steps}");
+    assert!(steps.contains("A test that only runs the lines, asserting nothing they decide, is no fix"), "{steps}");
 
     let slow = s.tests.iter().find(|t| t.id.to_lowercase().contains("slow")).expect("slow test");
     assert!(slow.cpu >= 0.5, "{}: slow test timed: {slow:?}", s.suite);

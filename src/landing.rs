@@ -188,6 +188,10 @@ pub struct Held {
     pub lines: usize,
     /// The records of picked mutants it adds.
     pub records: Vec<String>,
+    /// Every line it adds, by file: what `check` names the change's new
+    /// uncovered spans from. Not printed.
+    #[serde(skip)]
+    pub added: Lines,
 }
 
 /// What a [`Held`] prints, as the command pages name it.
@@ -240,7 +244,7 @@ pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Ve
             ),
         });
     }
-    Ok((Some(Held { target: l.target, from: l.from, lines, records }), violations))
+    Ok((Some(Held { target: l.target, from: l.from, lines, records, added: l.added }), violations))
 }
 
 /// The lines each file gains in a unified diff (new-side numbers, with
