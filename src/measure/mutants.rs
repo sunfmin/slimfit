@@ -15,8 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// How much mutation testing a measurement runs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Mutants {
+    #[default]
     None,
     /// The mutants of the change the agent picked, by the names the
     /// suite's tool lists them by, each with why (ADR 0008): the tool runs

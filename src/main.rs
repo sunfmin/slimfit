@@ -14,6 +14,7 @@ mod ratchet;
 mod report;
 mod rust_source;
 mod select;
+mod session;
 mod tasks;
 mod tools;
 mod workspace;
@@ -24,6 +25,7 @@ mod version;
 use anyhow::Result;
 use cli::{Cmd, EXIT_ERROR, EXIT_OK, EXIT_VIOLATION};
 use serde_json::json;
+use session::Session;
 
 agent_help::binary!("slimfit");
 
@@ -73,28 +75,16 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             };
             writes
                 .put(".gitignore", &gitignore(&std::fs::read_to_string(repo.join(".gitignore")).unwrap_or_default()))?;
-            let (cfg, old) = both(cfg, ratchet::load(&repo))?;
-            // Read after the writes above: the tree is measured as it is now.
-            let tree = landing::Tree::read(&head)?;
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run, timed: false },
-            )?;
-            let base = ratchet::Baseline {
-                suites: m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect(),
-                loosened: old.loosened,
-                kept: old.kept,
-                kept_files: old.kept_files,
-                mutants_from: old.mutants_from,
-                measured: ratchet::Measured::of(&m),
-            };
+            // Opened after the writes above: the tree is measured as it is now.
+            let s = Session::of(&head, cfg)?;
+            let m = s.measure(measure::Options { fresh: true, dry_run, ..Default::default() })?;
+            let suites = m.suites.iter().map(|s| (s.suite.clone(), s.metrics.clone())).collect();
+            let base = ratchet::Baseline::next(&s.base, suites, &m);
             writes.put(ratchet::FILE, &ratchet::render(&base)?)?;
             Ok((
                 writes.answer(json!({
                     "config": if created { "written" } else { "kept" },
-                    "suites": cfg.suites.iter().map(|s| s.resolve()).collect::<Vec<_>>(),
+                    "suites": s.cfg.suites.iter().map(|s| s.resolve()).collect::<Vec<_>>(),
                     "baseline": base.suites,
                     "next": "commit slimfit.toml, .slimfit/baseline.json and .gitignore; then `slimfit next`",
                 })),
@@ -102,19 +92,14 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Next { all, kind, fresh, sample, .. } => {
-            let (cfg, base) = loaded(&repo)?;
-            let tree = landing::Tree::read(&head)?;
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
-            )?;
-            let mut list = tasks::all(&repo, &tree, &cfg, &m, &base)?;
+            let s = Session::open(&repo)?;
+            let (cfg, tree) = (&s.cfg, &s.tree);
+            let m = s.measure(measure::Options { fresh, ..Default::default() })?;
+            let mut list = tasks::all(&repo, tree, cfg, &m, &s.base)?;
             let mut notes = Vec::new();
             if let Some(n) = sample {
-                measure::refuse_unpickable(&cfg)?;
-                let s = measure::sample::sample(&repo, &tree, &cfg, &m, n)?;
+                measure::refuse_unpickable(cfg)?;
+                let s = measure::sample::sample(&repo, tree, cfg, &m, n)?;
                 let c = s.sample.counts();
                 notes.push(format!(
                     "sampled at {} from the changes since {}: {} killed, {} survived, {} unviable, of {} mutants no \
@@ -164,15 +149,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Check { mutants: Some(names), why, .. } if names.is_empty() => {
-            let (cfg, _) = loaded(&repo)?;
+            let s = Session::open(&repo)?;
             if !why.is_empty() {
                 return Err(fault::fault(
                     "--why without a mutant's name",
                     "give each pick's name to `--mutants`, in the order of `--why`",
                 ));
             }
-            measure::refuse_unpickable(&cfg)?;
-            let candidates = measure::candidates(&repo, &cfg, &landing::Tree::read(&head)?)?;
+            measure::refuse_unpickable(&s.cfg)?;
+            let candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
             let next = if candidates.values().all(Vec::is_empty) {
                 "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
                  worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
@@ -187,22 +172,17 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             Ok((json!({ "candidates": candidates, "next": next }), EXIT_OK))
         }
         Cmd::Check { mutants, why, fresh, .. } => {
-            let (cfg, base) = loaded(&repo)?;
-            let tree = landing::Tree::read(&head)?;
+            let s = Session::open(&repo)?;
             let picks = picks(mutants.unwrap_or_default(), why)?;
             let with_mutants = !picks.is_empty();
             let scope = if with_mutants { measure::Mutants::Picks(picks) } else { measure::Mutants::None };
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: scope, fresh, dry_run: false, timed: !with_mutants },
-            )?;
+            let m =
+                s.measure(measure::Options { mutants: scope, fresh, timed: !with_mutants, ..Default::default() })?;
             if m.with_mutants {
                 landing::remember_firsts(&repo, &m)?;
             }
-            let landing = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
-            let v = ratchet::check(&base, &m, &cfg.check, landing.as_ref());
+            let landing = landing::hold(&repo, &s.cfg, &s.tree, m.with_mutants)?;
+            let v = ratchet::check(&s.base, &m, &s.cfg.check, landing.as_ref());
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
             } else if !v.improved.is_empty() || !v.new_suites.is_empty() || with_mutants {
@@ -217,20 +197,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
-            let (cfg, old) = loaded(&repo)?;
-            let tree = landing::Tree::read(&head)?;
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
-            )?;
-            let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
+            let s = Session::open(&repo)?;
+            let old = &s.base;
+            let m = s.measure(measure::Options { fresh, dry_run, ..Default::default() })?;
+            let new = ratchet::ratchet(old, &m, &s.cfg.check, &loosen, reason.as_deref())?;
             let record = record(&m, no_mutants, picker, author)?.map(|r| r.with_firsts(&repo).file()).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
-            if new != old {
+            if new != *old {
                 writes.put(ratchet::FILE, &ratchet::render(&new)?)?;
                 changed = true;
             }
@@ -260,8 +235,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Keep { test, reason, .. } => {
-            let (cfg, mut base) = loaded(&repo)?;
-            let tree = landing::Tree::read(&head)?;
+            let mut s = Session::open(&repo)?;
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
                     "keep without --reason",
@@ -276,10 +250,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 })
             };
-            if let Some((suite, prod_lines)) = tasks::source_suite(&tree, &cfg, &test)? {
+            if let Some((suite, prod_lines)) = tasks::source_suite(&s.tree, &s.cfg, &test)? {
                 let (commits_90d, commits_total) = tasks::churn(&repo, &test);
-                base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
-                base.kept_files.push(ratchet::KeptFile {
+                s.base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
+                s.base.kept_files.push(ratchet::KeptFile {
                     suite,
                     file: test,
                     prod_lines,
@@ -287,15 +261,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     commits_total,
                     reason,
                 });
-                std::fs::write(repo.join(ratchet::FILE), ratchet::render(&base)?)?;
-                return Ok((answer(&base), EXIT_OK));
+                std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
+                return Ok((answer(&s.base), EXIT_OK));
             }
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false, timed: false },
-            )?;
+            let m = s.measure(Default::default())?;
             let found = m.suites.iter().find_map(|s| {
                 let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == test)?;
                 Some((s.suite.clone(), t.source.clone()))
@@ -313,10 +282,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "delete or merge it instead, as the task's steps say",
                 ));
             };
-            base.kept.retain(|k| !(k.suite == suite && k.test == test));
-            base.kept.push(ratchet::Kept { suite, test, hash: source.hash, reason });
-            std::fs::write(repo.join(ratchet::FILE), ratchet::render(&base)?)?;
-            Ok((answer(&base), EXIT_OK))
+            s.base.kept.retain(|k| !(k.suite == suite && k.test == test));
+            s.base.kept.push(ratchet::Kept { suite, test, hash: source.hash, reason });
+            std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
+            Ok((answer(&s.base), EXIT_OK))
         }
         Cmd::Doctor { .. } => {
             let host = doctor::Host::current();
@@ -326,21 +295,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
         Cmd::Report { commits, points, fresh, .. } => {
-            let (cfg, base) = loaded(&repo)?;
-            let tree = landing::Tree::read(&head)?;
-            let m = measure::current(
-                &repo,
-                &tree,
-                &cfg,
-                &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
-            )?;
-            let history = report::history(&repo, &cfg, commits, points)?;
+            let s = Session::open(&repo)?;
+            let m = s.measure(measure::Options { fresh, ..Default::default() })?;
+            let history = report::history(&repo, &s.cfg, commits, points)?;
             let records = landing::records(&repo)?;
             Ok((
                 json!({
                     "current": metrics_of(&m),
-                    "baseline": base.suites,
-                    "loosened": base.loosened,
+                    "baseline": s.base.suites,
+                    "loosened": s.base.loosened,
                     "history": history,
                     "mutants_records": records,
                     "next": "slimfit next",
@@ -348,19 +311,6 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-    }
-}
-
-/// slimfit.toml and the baseline, or the faults of both.
-fn loaded(repo: &std::path::Path) -> Result<(config::Config, ratchet::Baseline)> {
-    both(config::load(repo), ratchet::load(repo))
-}
-
-/// Both, or the faults of both.
-fn both(c: Result<config::Config>, b: Result<ratchet::Baseline>) -> Result<(config::Config, ratchet::Baseline)> {
-    match (c, b) {
-        (Ok(c), Ok(b)) => Ok((c, b)),
-        (c, b) => Err(fault::Faults(c.err().into_iter().chain(b.err()).flat_map(fault::of).collect()).into()),
     }
 }
 
@@ -559,6 +509,9 @@ mod answer_tests {
         let dir = tempfile::tempdir().unwrap();
         let f = faults(dir.path(), "next");
         assert!(f[0].fault.contains("is not inside a git repository") && f[0].fix == gone[0].fix, "{f:?}");
+        // `init` records no mutants: it takes no `--no-mutants`.
+        let f = faults(dir.path(), "init --no-mutants why");
+        assert!(f[0].fault.contains("unexpected argument '--no-mutants'"), "{f:?}");
         let f = faults(dir.path(), "nxt");
         assert_eq!(f[0].fault, "unrecognized subcommand 'nxt'");
         assert!(f[0].fix.starts_with("correct the command line (tip: some similar subcommands exist: 'init', 'next')"));
@@ -778,7 +731,7 @@ mod answer_tests {
         assert_eq!((from.as_str(), n), (before.as_str(), 0));
         // A ratchet keeps the cut.
         slimfit(repo, "ratchet").unwrap();
-        assert_eq!(crate::ratchet::load(repo).unwrap().mutants_from.as_deref(), Some(before.as_str()));
+        assert_eq!(crate::session::Session::open(repo).unwrap().base.mutants_from.as_deref(), Some(before.as_str()));
         // A line added after the cut is the change's, with no record: check fails.
         add("src/lib.rs", "\npub fn after_the_rule() -> u8 {\n    2\n}\n");
         assert_eq!(held(crate::EXIT_VIOLATION), (before.clone(), 3));
@@ -832,7 +785,7 @@ mod answer_tests {
         assert_eq!(t["new_spans"], span, "{t:#}");
         // Kept low, and not loosened: there is no bound to raise.
         slimfit(repo, "ratchet").unwrap();
-        assert_eq!(crate::ratchet::load(repo).unwrap().suites["rust"].uncovered_lines, 0);
+        assert_eq!(crate::session::Session::open(repo).unwrap().base.suites["rust"].uncovered_lines, 0);
         let f = faults(repo, "ratchet --loosen uncovered_lines --reason r");
         assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("asserts what the lines decide"), "{f:?}");
     }
@@ -944,10 +897,10 @@ mod answer_tests {
         let body = "    let doubled = x * 2;\n    let shifted = doubled + 7;\n    shifted / 3\n";
         std::fs::write(&lib, text.replace(body, "")).unwrap();
         slimfit(repo, "ratchet").unwrap();
-        let measured = crate::ratchet::load(repo).unwrap().measured["rust"].uncovered_lines;
+        let measured = crate::session::Session::open(repo).unwrap().base.measured["rust"].uncovered_lines;
         // Each landing as its ratchet would have written it, two lines more uncovered each time.
         let land = |uncovered: u64, message: &str| {
-            let mut b = crate::ratchet::load(repo).unwrap();
+            let mut b = crate::session::Session::open(repo).unwrap().base;
             b.measured.get_mut("rust").unwrap().uncovered_lines = uncovered;
             std::fs::write(repo.join(crate::ratchet::FILE), crate::ratchet::render(&b).unwrap()).unwrap();
             git(repo, &["add", "-A"]);
@@ -959,7 +912,7 @@ mod answer_tests {
         let (out, _) = slimfit(repo, "ratchet").unwrap();
         assert!(out["changed"].as_bool().unwrap(), "{out:#}");
         git(repo, &["commit", "-qam", "landing 3"]);
-        let b = crate::ratchet::load(repo).unwrap();
+        let b = crate::session::Session::open(repo).unwrap().base;
         // The bound keeps the first count; what was measured rose past it with `unused` back.
         let last = b.measured["rust"].uncovered_lines;
         assert_eq!(b.suites["rust"].uncovered_lines, measured);

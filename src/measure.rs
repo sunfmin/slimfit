@@ -34,6 +34,7 @@ pub fn refusals_help() -> String {
 /// The cache's pitfall, as the command pages say it.
 pub const CACHE_HELP: &str = "The measurement is cached in `.slimfit/out/` and reused while HEAD and the contents of every file git does not ignore are unchanged. A change outside them is not seen: a tool's new version, an environment variable, a flaky test. `--fresh` measures again.";
 
+#[derive(Default)]
 pub struct Options {
     pub mutants: Mutants,
     pub fresh: bool,
