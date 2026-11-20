@@ -205,7 +205,7 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
             format!("no {}: slimfit is not set up in this repository", config::FILE),
             "time it first (`slimfit help costs`), then `slimfit init`".into(),
         ));
-        let files = crate::git::worktree(repo).map(|w| w.files).unwrap_or_default();
+        let files = crate::git::open(repo).and_then(|h| crate::git::worktree(&h)).map(|w| w.files).unwrap_or_default();
         config::detect(&files).iter().map(|s| s.resolve()).collect()
     } else {
         match config::load(repo) {

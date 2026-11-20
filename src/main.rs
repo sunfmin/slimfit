@@ -47,13 +47,14 @@ fn main() {
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
     let (repo, command) = cli::read(args)?;
     let start = repo.unwrap_or(std::env::current_dir()?);
-    let repo = git::toplevel(&start)?;
+    let head = git::open(&start)?;
+    let repo = head.top.clone();
     match command {
         Cmd::Init { dry_run, .. } => {
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let created = !repo.join(config::FILE).exists();
             let cfg = if created {
-                let suites = config::detect(&git::worktree(&repo)?.files);
+                let suites = config::detect(&git::worktree(&head)?.files);
                 if suites.is_empty() {
                     return Err(fault::fault(
                         format!("no {} project found in {}", cli::languages("or"), repo.display()),
@@ -73,8 +74,11 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             writes
                 .put(".gitignore", &gitignore(&std::fs::read_to_string(repo.join(".gitignore")).unwrap_or_default()))?;
             let (cfg, old) = both(cfg, ratchet::load(&repo))?;
+            // Read after the writes above: the tree is measured as it is now.
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run, timed: false },
             )?;
@@ -98,16 +102,18 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Next { all, kind, fresh, sample, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
-            let mut list = tasks::all(&repo, &cfg, &m, &base)?;
+            let mut list = tasks::all(&repo, &tree, &cfg, &m, &base)?;
             let mut notes = Vec::new();
             if let Some(n) = sample {
                 measure::refuse_unpickable(&cfg)?;
-                let s = measure::sample::sample(&repo, &cfg, &m, n)?;
+                let s = measure::sample::sample(&repo, &tree, &cfg, &m, n)?;
                 let c = s.sample.counts();
                 notes.push(format!(
                     "sampled at {} from the changes since {}: {} killed, {} survived, {} unviable, of {} mutants no \
@@ -165,7 +171,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 ));
             }
             measure::refuse_unpickable(&cfg)?;
-            let candidates = measure::candidates(&repo, &cfg)?;
+            let candidates = measure::candidates(&repo, &cfg, &landing::Tree::read(&head)?)?;
             let next = if candidates.values().all(Vec::is_empty) {
                 "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
                  worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
@@ -181,16 +187,18 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Check { mutants, why, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let picks = picks(mutants.unwrap_or_default(), why)?;
             let with_mutants = !picks.is_empty();
             let scope = if with_mutants { measure::Mutants::Picks(picks) } else { measure::Mutants::None };
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: scope, fresh, dry_run: false, timed: !with_mutants },
             )?;
             let mut v = ratchet::check(&base, &m, &cfg.check);
-            let (landing, unrecorded) = landing::hold(&repo, &cfg, m.with_mutants)?;
+            let (landing, unrecorded) = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
             v.violations.extend(unrecorded);
             if let Some(l) = &landing {
                 v.name_new_spans(&m, &l.added);
@@ -211,8 +219,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
             let (cfg, old) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
             )?;
@@ -249,6 +259,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Keep { test, reason, .. } => {
             let (cfg, mut base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
                     "keep without --reason",
@@ -263,7 +274,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 })
             };
-            if let Some((suite, prod_lines)) = tasks::source_suite(&repo, &cfg, &test)? {
+            if let Some((suite, prod_lines)) = tasks::source_suite(&repo, &tree, &cfg, &test)? {
                 let (commits_90d, commits_total) = tasks::churn(&repo, &test);
                 base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
                 base.kept_files.push(ratchet::KeptFile {
@@ -279,6 +290,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             }
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false, timed: false },
             )?;
@@ -313,8 +325,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
         Cmd::Report { commits, points, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;

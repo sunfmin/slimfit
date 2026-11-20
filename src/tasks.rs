@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::git;
+use crate::landing::Tree;
 use crate::loc::{Classifier, Kind};
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
 use crate::ratchet::{Baseline, Kept, KeptFile};
@@ -115,12 +116,12 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
         .collect()
 }
 
-pub fn all(repo: &Path, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
-    let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
-    let files = git::files(repo)?;
+pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
+    let mut out = pick_mutants(repo, tree, cfg, m.with_mutants)?;
+    let files = &tree.wt.files;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
-        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, &files)?, &s.suite, &base.kept_files)?);
+        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, files)?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -151,12 +152,12 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
 /// A task per suite whose change adds source lines and no record of its
 /// mutants (none due once `picked` ran: `ratchet` records them), with what
 /// its tool lists of the change to pick from.
-fn pick_mutants(repo: &Path, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
-    let (_, unrecorded) = crate::landing::hold(repo, cfg, picked)?;
+fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
+    let (_, unrecorded) = crate::landing::hold(repo, cfg, tree, picked)?;
     if unrecorded.is_empty() {
         return Ok(vec![]);
     }
-    let mut candidates = crate::measure::candidates(repo, cfg)?;
+    let mut candidates = crate::measure::candidates(repo, cfg, tree)?;
     Ok(unrecorded
         .into_iter()
         .map(|v| {
@@ -410,11 +411,11 @@ pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
 
 /// The suite that counts `path` (relative to the repo) as an existing
 /// source file, with its prod lines: where a deepen task's file belongs.
-pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
+pub fn source_suite(repo: &Path, tree: &Tree, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
     let Ok(text) = std::fs::read_to_string(repo.join(path)) else { return Ok(None) };
-    let files = git::files(repo)?;
+    let files = &tree.wt.files;
     for sc in &cfg.suites {
-        let c = Classifier::of_worktree(&sc.resolve(), repo, &files)?;
+        let c = Classifier::of_worktree(&sc.resolve(), repo, files)?;
         if let Some((Kind::Source, l)) = c.file(path, &text) {
             return Ok(Some((sc.name.clone(), l.prod)));
         }
@@ -535,7 +536,8 @@ mod t {
             git(repo, &["commit", "-qm", &format!("c {i}")]);
         }
         let suite = crate::config::preset(crate::config::Preset::Rust);
-        let c = Classifier::of_worktree(&suite, repo, &git::files(repo).unwrap()).unwrap();
+        let c =
+            Classifier::of_worktree(&suite, repo, &git::worktree(&git::open(repo).unwrap()).unwrap().files).unwrap();
         let proposed: Vec<_> = deepen(repo, &c, "s", &[]).unwrap().into_iter().map(|t| t.files).collect();
         assert_eq!(proposed, [["src/big.rs"]]);
     }

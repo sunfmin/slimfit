@@ -163,17 +163,17 @@ fn picked_since(repo: &Path, from: &str, head: &str) -> Result<BTreeSet<String>>
 /// picks run, each with its function's tests, on `m`, this tree's test run.
 /// A drawn mutant that does not build is replaced by the next in the draw,
 /// among `n` × [`DRAWN`] run at once. Cached in `.slimfit/out/` per tip and `n`.
-pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sampled> {
+pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, n: usize) -> Result<Sampled> {
     let head = git::run(repo, &["rev-parse", "HEAD"])?.trim().to_string();
     let cache = repo.join(OUT).join("sample.json");
     let scratch = Scratch::new(repo, false)?;
     let from = from(repo, &head)?;
     eprintln!("slimfit: sampling {n} mutant(s) of the changes from {from} to {head}");
     // The tree the tool mutates: the working tree, as a change's listing takes it.
-    let to = git::write_tree(repo, &git::head(repo)?)?;
+    let to = git::write_tree(repo, &tree.wt.head)?;
     let added = landing::added_lines(&git::diff(repo, &from, &to, ".", &[])?, "");
     let mut listed: BTreeMap<String, Listed> = BTreeMap::new();
-    for (name, lines) in landing::required(repo, cfg, &added)? {
+    for (name, lines) in landing::required(repo, cfg, &tree.wt.files, &added)? {
         let out = scratch.0.join("sample");
         listed.insert(name.clone(), list_suite(repo, cfg, (&from, &to), &name, lines, &out)?);
     }
@@ -189,7 +189,7 @@ pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sa
         Some((_, s)) => s,
         None => {
             let s = run(
-                repo,
+                (repo, &tree.wt.files),
                 cfg,
                 m,
                 &listed,
@@ -216,9 +216,9 @@ fn built(outcome: &Option<MutantStatus>) -> bool {
 /// run, and keeps the first `n` in the order that built, with those before
 /// them that did not. A run that can stop builds none once `n` drawn before
 /// it have built; one that cannot (every test runs: no shim) holds only the
-/// first `n`, none replaced.
+/// first `n`, none replaced. `files`: the working tree's.
 fn run(
-    repo: &Path,
+    (repo, files): (&Path, &[String]),
     cfg: &Config,
     m: &Measurement,
     listed: &BTreeMap<String, Listed>,
@@ -226,7 +226,6 @@ fn run(
     n: usize,
     mut sample: Sample,
 ) -> Result<Sample> {
-    let files = git::files(repo)?;
     let drawn = &order[..order.len().min(n * DRAWN)];
     let suites: BTreeSet<&String> = drawn.iter().map(|(s, _)| s).collect();
     let mut ran: BTreeMap<usize, Option<MutantStatus>> = BTreeMap::new();
@@ -242,8 +241,8 @@ fn run(
             .unzip();
         let known = ran.iter().filter(|(_, o)| built(o)).map(|(r, _)| *r).collect();
         let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });
-        let totals = Classifier::of_worktree(&suite, repo, &files)?
-            .count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
+        let totals =
+            Classifier::of_worktree(&suite, repo, files)?.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
         let resolver = Resolver::new(repo, &totals);
         let mutated = mutate_picks(&run, &resolver, &listed[s], &picks, tested, stop.as_ref())?;
         ran.extend(ranks.into_iter().zip(mutated.mutated.picks.into_iter().map(|p| p.outcome)));

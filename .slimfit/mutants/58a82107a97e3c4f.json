@@ -1,0 +1,34 @@
+{
+  "tree": "dfa34bb2c579d023334e0e6975d2f4b7dd5ce3d5+d1fba762150c532c",
+  "picker": "acfe60fa79e75b8d9",
+  "author": "slimfit-63-1",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/landing.rs:145:9: replace Tree::landing -> Result<Option<&Landing>> with Ok(None)",
+        "why": "the memoized landing feeds both hold and candidates: tests must see a tree with a landing",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:228:5: replace hold -> Result<(Option<Held>, Vec<Violation>)> with Ok((None, vec![]))",
+        "why": "hold now takes the shared Tree: some test must need its unrecorded-mutants violation",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:65:43: replace == with != in current",
+        "why": "the cache key comes from a Tree read by the caller: a hit or miss on it must be observed",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:156:5: replace pick_mutants -> Result<Vec<Task>> with Ok(vec![])",
+        "why": "pick_mutants goes through the shared tree for hold and candidates: next's pick-mutants task must be tested",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:412:5: replace source_suite -> Result<Option<(String, u64)>> with Ok(None)",
+        "why": "source_suite takes its files from the tree: keep's suite lookup must be tested",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
