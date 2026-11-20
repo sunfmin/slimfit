@@ -25,8 +25,13 @@ fn attrs(e: &BytesStart) -> HashMap<String, String> {
 
 pub fn walk(text: &str, mut f: impl FnMut(Node)) -> Result<()> {
     let mut reader = Reader::from_str(text);
+    // Blank text right after a reference is content (`&lt; &gt;`); elsewhere
+    // it is only indentation.
+    let mut after_ref = false;
     loop {
-        match reader.read_event()? {
+        let event = reader.read_event()?;
+        let was_after_ref = std::mem::replace(&mut after_ref, matches!(event, Event::GeneralRef(_)));
+        match event {
             Event::Start(e) => f(Node::Open { name: e.local_name().into_inner().to_string(), attrs: attrs(&e) }),
             Event::Empty(e) => {
                 let name = e.local_name().into_inner().to_string();
@@ -35,7 +40,7 @@ pub fn walk(text: &str, mut f: impl FnMut(Node)) -> Result<()> {
             }
             Event::Text(t) => {
                 let s = t.xml_content(XmlVersion::default());
-                if !s.trim().is_empty() {
+                if was_after_ref || !s.trim().is_empty() {
                     f(Node::Text(s.into_owned()));
                 }
             }
