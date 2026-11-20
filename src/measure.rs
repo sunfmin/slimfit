@@ -683,12 +683,29 @@ pub(crate) mod t {
     /// is named is refused before anything runs; the tool runs only the
     /// picks, each by its anchored name, and each pick gets its outcome.
     /// The same picks of the same tree do not run again.
+    ///
+    /// `--mutants` with no cached test run of the tree runs the tests at its
+    /// own (background) priority: that run is `untimed`, and holds no
+    /// `test_seconds`. A plain, timed measurement of the same tree runs the
+    /// tests again and keeps the mutants; then the time is held.
     #[test]
     fn only_the_picked_mutants_of_the_landing_run() {
         let (dir, mut cfg) = sample_repo();
         // Every test on every mutant: which tests run is not this test's.
         cfg.suites[0].overrides.mutants_tests = Some(MutantTests::All);
         let repo = dir.path();
+        // Each test run is counted.
+        let counter = tempfile::tempdir().unwrap();
+        let runs = counter.path().join("test-runs");
+        let test = format!("echo run >> '{}'; {}", runs.display(), cfg.suites[0].resolve().test_command);
+        cfg.suites[0].overrides.test_command = Some(test);
+        // A build of its own, before the tests: its CPU time is not theirs.
+        let build = format!("echo build >> '{}'; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done", runs.display());
+        cfg.suites[0].overrides.build_command = Some(build);
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().filter(|l| *l == "run").count());
+        let measure = |cfg: &Config, timed| {
+            current(repo, cfg, &Options { mutants: Mutants::None, fresh: false, dry_run: false, timed }).unwrap()
+        };
         let refused = |cfg: &Config, names: &[&str]| {
             let faults = crate::fault::of(run(repo, cfg, names).unwrap_err());
             assert!(!repo.join(OUT).join("rust/args").exists(), "a mutant ran");
@@ -749,14 +766,42 @@ pub(crate) mod t {
         assert_eq!(m.suites[0].mutants.len(), 2);
         let v = crate::ratchet::check(&Baseline::default(), &m, &Default::default());
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::SurvivedMutants]);
-        // The same picks again: nothing runs, a new reason is kept.
+
+        // No cached test run of the tree: `--mutants` ran the tests, untimed.
+        assert!(m.suites[0].untimed && ran() == 1);
+        // The sample's test command records the slow test's CPU time.
+        assert_eq!(m.suites[0].metrics.test_seconds, 0.625);
+        assert_eq!(std::fs::read_to_string(&runs).unwrap(), "build\nrun\n");
+        // A baseline far under it: not answered, and the ratchet keeps it.
+        let held = crate::config::CheckConfig::default();
+        let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
+        let base = Baseline { suites: [("rust".to_string(), tight)].into(), ..Baseline::default() };
+        assert!(crate::ratchet::check(&base, &m, &held).test_seconds.is_empty());
+        let loosen = [Bound::SurvivedMutants];
+        let next = crate::ratchet::ratchet(&base, &m, &held, &loosen, Some("t")).unwrap();
+        assert_eq!(next.suites["rust"].test_seconds, 0.001);
+        // Measurements that take no time from it reuse it as it is.
+        assert_eq!((measure(&cfg, false), ran()), (m.clone(), 1));
+        // A plain check times the tests again, and keeps the mutants.
+        let timed = measure(&cfg, true);
+        assert_eq!(ran(), 2);
+        assert!(!timed.suites[0].untimed && timed.with_mutants);
+        assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
+        let v = crate::ratchet::check(&base, &timed, &held);
+        let failed: Vec<_> = v.violations.iter().map(|v| v.metric).collect();
+        assert!(failed == [Bound::SurvivedMutants] && v.test_seconds[0].current == 0.625, "{v:?}");
+        // Cached now, timed: nothing runs again.
+        assert_eq!((measure(&cfg, true), ran()), (timed, 2));
+
+        // The same picks again: nothing runs (the tests included), a new
+        // reason is kept.
         let mutants = Mutants::Picks(vec![
             Pick { why: "new".into(), ..picks(&[KILLED])[0].clone() },
             picks(&[MISSED])[0].clone(),
         ]);
-        std::fs::remove_file(repo.join(OUT).join("rust/args")).unwrap();
+        let _ = std::fs::remove_file(repo.join(OUT).join("rust/args"));
         let again = current(repo, &cfg, &Options { mutants, fresh: false, dry_run: false, timed: false }).unwrap();
-        assert!(!repo.join(OUT).join("rust/args").exists());
+        assert!(!repo.join(OUT).join("rust/args").exists() && ran() == 2);
         assert_eq!(mutated(&again).picks[0].why, "new");
         // Other picks of the same tree run.
         assert!(run(repo, &cfg, &[KILLED]).unwrap().1.is_some());
@@ -776,57 +821,6 @@ pub(crate) mod t {
         assert_eq!(candidates(repo, &cfg).unwrap()["rust"][0].file, "sub/src/lib.rs");
         let patch = std::fs::read_to_string(repo.join(OUT).join("rust/change.diff")).unwrap();
         assert!(patch.contains("+++ b/src/lib.rs"), "{patch}");
-    }
-
-    /// `--mutants` with no cached test run of the tree runs the tests at its
-    /// own (background) priority: that run is `untimed`, and holds no
-    /// `test_seconds`. A plain, timed measurement of the same tree runs the
-    /// tests again and keeps the mutants; then the time is held.
-    #[test]
-    fn a_test_run_inside_mutants_is_timed_again_by_a_plain_check() {
-        let (dir, mut cfg) = sample_repo();
-        let repo = dir.path();
-        git(repo, &["branch", "base"]);
-        cfg.check.target = Some("base".into());
-        cfg.suites[0].overrides.mutants_tests = Some(MutantTests::All);
-        let counter = tempfile::tempdir().unwrap();
-        let runs = counter.path().join("test-runs");
-        let test = format!("echo run >> '{}'; {}", runs.display(), cfg.suites[0].resolve().test_command);
-        cfg.suites[0].overrides.test_command = Some(test);
-        // A build of its own, before the tests: its CPU time is not theirs.
-        let build = format!("echo build >> '{}'; i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done", runs.display());
-        cfg.suites[0].overrides.build_command = Some(build);
-        std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
-        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().filter(|l| *l == "run").count());
-        let measure = |timed| {
-            current(repo, &cfg, &Options { mutants: Mutants::None, fresh: false, dry_run: false, timed }).unwrap()
-        };
-
-        let (m, args) = run(repo, &cfg, &[KILLED]).unwrap();
-        assert!(args.is_some() && m.suites[0].untimed && ran() == 1);
-        // The sample's test command records the slow test's CPU time.
-        assert_eq!(m.suites[0].metrics.test_seconds, 0.625);
-        assert_eq!(std::fs::read_to_string(&runs).unwrap(), "build\nrun\n");
-        // A baseline far under it: not answered, and the ratchet keeps it.
-        let held = crate::config::CheckConfig::default();
-        let tight = Metrics { test_seconds: 0.001, ..m.suites[0].metrics.clone() };
-        let base = Baseline { suites: [("rust".to_string(), tight)].into(), ..Baseline::default() };
-        assert!(crate::ratchet::check(&base, &m, &held).test_seconds.is_empty());
-        let loosen = [Bound::SurvivedMutants];
-        let next = crate::ratchet::ratchet(&base, &m, &held, &loosen, Some("t")).unwrap();
-        assert_eq!(next.suites["rust"].test_seconds, 0.001);
-        // Measurements that take no time from it reuse it as it is.
-        assert_eq!((measure(false), ran()), (m.clone(), 1));
-
-        // A plain check times the tests again, and keeps the mutants.
-        let timed = measure(true);
-        assert_eq!(ran(), 2);
-        assert!(!timed.suites[0].untimed && timed.with_mutants);
-        assert_eq!((&timed.suites[0].mutants, &timed.suites[0].mutated), (&m.suites[0].mutants, &m.suites[0].mutated));
-        let v = crate::ratchet::check(&base, &timed, &held);
-        assert!(v.ok && v.test_seconds[0].current == 0.625, "{v:?}");
-        // Cached now, timed: nothing runs again, `--mutants` included.
-        assert_eq!((measure(true), run(repo, &cfg, &[KILLED]).unwrap().1, ran()), (timed, None, 2));
     }
 
     /// Each test's CPU time is its own where the test command recorded it
