@@ -201,13 +201,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             if m.with_mutants {
                 landing::remember_firsts(&repo, &m)?;
             }
-            let mut v = ratchet::check(&base, &m, &cfg.check);
-            let (landing, unrecorded) = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
-            v.violations.extend(unrecorded);
-            if let Some(l) = &landing {
-                v.name_new_spans(&m, &l.added);
-            }
-            v.ok = v.violations.is_empty();
+            let landing = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
+            let v = ratchet::check(&base, &m, &cfg.check, landing.as_ref());
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
             } else if !v.improved.is_empty() || !v.new_suites.is_empty() || with_mutants {

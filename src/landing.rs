@@ -9,7 +9,6 @@ use crate::git;
 use crate::loc::{Classifier, FileLines, Kind, Totals};
 use crate::measure::Resolver;
 use crate::model::{Measurement, MutantStatus, Pick};
-use crate::ratchet::{Bound, PICK_THE_MUTANTS, Violation};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
@@ -333,7 +332,7 @@ pub fn required(cfg: &Config, tree: &Tree, added: &Lines) -> Result<BTreeMap<Str
 }
 
 /// What `check` found of the landing it holds.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Held {
     /// The branch it lands on, as named.
     pub target: String,
@@ -348,6 +347,18 @@ pub struct Held {
     /// uncovered spans from. Not printed.
     #[serde(skip)]
     pub added: Lines,
+    /// Per suite that adds source lines with no record that holds them:
+    /// what `unrecorded_mutants` measures. Not printed.
+    #[serde(skip)]
+    pub unrecorded: BTreeMap<String, Unrecorded>,
+}
+
+/// The source lines a suite adds that no record holds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unrecorded {
+    pub lines: usize,
+    /// The first of them, as `file:line`.
+    pub first: String,
 }
 
 /// What a [`Held`] prints, as the command pages name it.
@@ -355,18 +366,18 @@ pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's m
      point, mutants_from, when that is later), `lines` (the source lines the change adds whose mutants can be \
      picked) and `records` (the records of picked mutants it adds, in .slimfit/mutants/)";
 
-/// Holds the landing to its mutants: per suite, a violation when it adds
-/// source lines and the landing adds no record that names a picker other
+/// Holds the landing to its mutants: per suite that adds source lines, it
+/// is unrecorded when the landing adds no record that names a picker other
 /// than its author, nor did the measurement run picks (`picked`: `ratchet`
-/// records them, and refuses a record without such a picker). `None`, and no violation,
-/// when there is no branch it lands on.
-pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<(Option<Held>, Vec<Violation>)> {
+/// records them, and refuses a record without such a picker). `None` when
+/// there is no branch it lands on.
+pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Option<Held>> {
     let Some(l) = tree.landing(repo, &cfg.check)? else {
         eprintln!(
             "slimfit: slimfit.toml sets no [check] target and there is no {DEFAULT_TARGET}: the change is not held \
              to a record of its mutants (`slimfit doctor` says how to fix it)"
         );
-        return Ok((None, vec![]));
+        return Ok(None);
     };
     let records: Vec<String> =
         l.added.keys().filter(|f| f.starts_with(&format!("{DIR}/")) && f.ends_with(".json")).cloned().collect();
@@ -376,34 +387,22 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<(Opt
         serde_json::from_str::<Record>(&text).is_ok_and(|r| r.picked_by_another())
     };
     let held = picked || records.iter().any(named);
-    let missing = if records.is_empty() {
-        "no record of its mutants"
-    } else {
-        "no record of its mutants that names a picker other than its author"
-    };
-    let (mut lines, mut violations) = (0, vec![]);
+    let (mut lines, mut unrecorded) = (0, BTreeMap::new());
     for (suite, required) in required(cfg, tree, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
         lines += n;
         let Some((file, first)) = required.iter().next().filter(|_| !held) else { continue };
         let line = first.keys().next().expect("a file listed has a line");
-        violations.push(Violation {
-            suite,
-            metric: Bound::UnrecordedMutants,
-            baseline: 0.0,
-            limit: 0.0,
-            current: n as f64,
-            fix: format!(
-                "the change adds {n} source line(s) since {} ({}), the first at {file}:{line}, and {missing}: \
-                 {PICK_THE_MUTANTS}",
-                l.from, l.target
-            ),
-        });
+        unrecorded.insert(suite, Unrecorded { lines: n, first: format!("{file}:{line}") });
     }
-    Ok((
-        Some(Held { target: l.target.clone(), from: l.from.clone(), lines, records, added: l.added.clone() }),
-        violations,
-    ))
+    Ok(Some(Held {
+        target: l.target.clone(),
+        from: l.from.clone(),
+        lines,
+        records,
+        added: l.added.clone(),
+        unrecorded,
+    }))
 }
 
 /// The lines each file gains in a unified diff (new-side numbers, with
