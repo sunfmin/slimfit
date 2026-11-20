@@ -34,6 +34,8 @@ pub fn list(text: &str) -> Result<Vec<Candidate>> {
             line: line_of(&m["span"]["start"]["line"]),
             function: s(&m["function"]["function_name"]),
             replacement: s(&m["replacement"]),
+            end: line_of(&m["span"]["end"]["line"]),
+            field: m["genre"] == "StructField",
         })
         .collect())
 }

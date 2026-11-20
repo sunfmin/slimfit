@@ -465,7 +465,7 @@ fn help() -> Help {
         .constant("RATE", report::RATE_HELP)
         .constant("SAMPLE", measure::sample::SAMPLE_HELP)
         .constant("SAMPLE_DAYS", measure::sample::SAMPLE_DAYS)
-        .constant("SAMPLE_ROUNDS", measure::sample::ROUNDS)
+        .constant("SAMPLE_DRAWN", measure::sample::DRAWN)
         .constant("SAMPLE_COST", measure::sample::COST)
         .constant("CANDIDATE", model::CANDIDATE_HELP)
         .constant("PICK", model::PICK_HELP)
@@ -627,13 +627,7 @@ mod tests {
             named(crate::measure::sample::SAMPLE_HELP)[..4],
             keys(&crate::measure::sample::Sample::default())[..]
         );
-        let candidate = model::Candidate {
-            name: String::new(),
-            file: String::new(),
-            line: 0,
-            function: String::new(),
-            replacement: String::new(),
-        };
+        let candidate = model::Candidate::default();
         assert_eq!(named(model::CANDIDATE_HELP), keys(&candidate));
         let pick = model::Pick { name: String::new(), why: String::new(), outcome: None };
         assert_eq!(named(model::PICK_HELP)[..3], keys(&pick)[..]);

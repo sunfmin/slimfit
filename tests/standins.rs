@@ -561,8 +561,14 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // runs the tests that ran its function: cargo-mutants lists the
     // mutants, and with a real nextest to hand on to (the stand-in, as
     // `cargo-nextest`), slimfit writes the plan and its shim.
+    // Lines of `add`, `unused` and `is_adult` changed: cargo-mutants lists
+    // only the mutants whose span touches one.
     let lib = s.repo.join("src/lib.rs");
-    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "pub fn changed() -> i64 {\n    1\n}\n").unwrap();
+    let text = std::fs::read_to_string(&lib).unwrap();
+    let edit = |(i, l): (usize, &str)| {
+        if [2, 6, 12].contains(&(i + 1)) { format!("{l} // changed\n") } else { format!("{l}\n") }
+    };
+    std::fs::write(&lib, text.lines().enumerate().map(edit).collect::<String>()).unwrap();
     // No record of its mutants: the plain check fails.
     let held = run("check", &[], 1);
     let v = &held["verdict"]["violations"][0];
@@ -570,7 +576,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // The candidates: cargo-mutants lists the change's diff, and nothing builds.
     s.take();
     let listed = run("check", &["--mutants"], 0);
-    assert_eq!(listed["candidates"]["rust"].as_array().unwrap().len(), 17, "{listed:#}");
+    assert_eq!(listed["candidates"]["rust"].as_array().unwrap().len(), 13, "{listed:#}");
     let calls = s.take();
     let built = |c: &&state::Call| c.step.contains("nextest") || c.step == "cargo llvm-cov" && c.args[1] != "show-env";
     assert!(!calls.iter().any(|c| built(&c)), "{calls:#?}");
@@ -644,14 +650,51 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let diff = mutants.args.iter().position(|a| a == "--in-diff").map(|i| &mutants.args[i + 1]);
     assert!(diff.is_some_and(|d| d.ends_with("change.diff")), "{:?}", mutants.args);
     assert_eq!(mutants.args.iter().filter(|a| *a == "-F").count(), 3, "{:?}", mutants.args);
+    // The run's diff holds one line of each pick, the line it changes.
+    let diff = std::fs::read_to_string(s.repo.join(".slimfit/out/rust/change.diff")).unwrap();
+    let added: Vec<&str> = diff.lines().filter(|l| l.starts_with("@@ ")).collect();
+    assert_eq!(added, ["@@ -1,0 +2,1 @@", "@@ -4,0 +6,1 @@", "@@ -9,0 +12,1 @@"], "{diff}");
     let ratchet =
         run("ratchet", &["--loosen", "survived_mutants", "--reason", "test", "--picker", "p", "--author", "a"], 0);
     let record = ratchet["record"].as_str().unwrap();
     assert!(record.starts_with(".slimfit/mutants/") && s.repo.join(record).exists(), "{ratchet:#}");
     run("report", &["--points", "1"], 0);
+    sampled(s);
     // A second `fn slow` its path cannot tell apart: no text to keep it by.
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "fn slow() {}\n").unwrap();
     s.error(&["keep", "calc::tests::slow", "--reason", "r"], &["calc::tests::slow's own function was not found"]);
+}
+
+/// A sample of 2 draws 4 and runs them in one cargo-mutants run, which
+/// builds none once 2 drawn before it have built; the sample is the
+/// first 2 of the draw that built.
+fn sampled(s: &Sample) {
+    s.take();
+    let (code, next, stderr) = s.slimfit(&["next", "--all", "--sample", "2"]);
+    assert_eq!(code, 0, "{next:#}\n{stderr}");
+    let calls = s.take();
+    let runs: Vec<&state::Call> =
+        calls.iter().filter(|c| c.step == "cargo mutants" && !c.args.contains(&"--list".into())).collect();
+    assert_eq!(runs.len(), 1, "{calls:#?}");
+    let drawn: Vec<&str> =
+        runs[0].args.iter().skip(1).zip(&runs[0].args).filter(|(_, f)| *f == "-F").map(|(n, _)| n.as_str()).collect();
+    assert_eq!(drawn.len(), 4, "{:?}", runs[0].args);
+    // The shim hands a build on to the real nextest, or says why not; its log is cargo-mutants'.
+    let built = calls.iter().filter(|c| c.step == "cargo-nextest nextest" && c.args.contains(&"--no-run".into()));
+    let log = s.read(".slimfit/out/sample/rust/mutants.log");
+    let not_built = log.matches("not built, and not in the sample").count();
+    assert_eq!(log.matches("slimfit: drawn mutant ").count(), 4, "each build is found by its mutant: {log}");
+    assert!((2..=4).contains(&built.clone().count()) && built.count() + not_built == 4, "{log}");
+    let record = next["tasks"].as_array().unwrap().iter().find(|t| t["kind"] == "record-sample").unwrap();
+    let sample: Value = serde_json::from_str(record["evidence"]["text"].as_str().unwrap()).unwrap();
+    let kept: Vec<String> = sample["drawn"]["rust"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| format!("^{}$", d["name"].as_str().unwrap()))
+        .collect();
+    let escaped = |n: &&str| n.replace('\\', "");
+    assert_eq!(kept, drawn[..2].iter().map(escaped).collect::<Vec<_>>(), "{sample:#}");
 }
 
 /// slimfit run as `cargo-nextest` outside a mutants run (no plan, no real

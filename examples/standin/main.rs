@@ -27,8 +27,63 @@ struct Work {
     exit: i32,
     /// Done before the reports: e.g. the build directory a later step reads.
     prepare: Vec<Box<dyn FnOnce()>>,
-    /// cargo-mutants' `-F`: only the mutants of these names are in its reports.
-    named: Option<Vec<String>>,
+    /// cargo-mutants' `-F` and `--in-diff`: only the mutants these keep are in its reports.
+    named: Option<Kept>,
+}
+
+/// The mutants cargo-mutants keeps of its list: those whose span touches a
+/// line `--in-diff` adds (with `-F`, of the names given; cargo-mutants 27
+/// keeps a field deletion whatever its name).
+#[derive(Clone, Default)]
+struct Kept {
+    names: Option<Vec<String>>,
+    lines: Option<std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>>,
+    /// The real list: an outcome names no span, so its listed entry is kept or not.
+    list: Vec<serde_json::Value>,
+    /// Where the build phase writes the names of the mutants that did not build.
+    unviable: Option<PathBuf>,
+}
+
+impl Kept {
+    fn keeps(&self, m: &serde_json::Value) -> bool {
+        let name = m["name"].as_str().unwrap_or("");
+        let named = m["genre"] == "StructField" || self.names.as_ref().is_none_or(|n| n.iter().any(|w| w == name));
+        let span = |at: &str| m["span"][at]["line"].as_u64().unwrap_or(0);
+        let file = m["file"].as_str().unwrap_or("");
+        let touched = self
+            .lines
+            .as_ref()
+            .is_none_or(|l| l.get(file).is_some_and(|l| (span("start")..=span("end")).any(|n| l.contains(&n))));
+        named && touched
+    }
+}
+
+/// The lines a unified diff adds, per file; refused, as cargo-mutants
+/// refuses it, when one is not what the file in `dir` holds there.
+fn in_diff(
+    diff: &str,
+    dir: &Path,
+) -> Result<std::collections::BTreeMap<String, std::collections::BTreeSet<u64>>, Refusal> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<u64>> = Default::default();
+    let (mut file, mut at) = (String::new(), 0u64);
+    for l in diff.lines() {
+        if let Some(f) = l.strip_prefix("+++ ") {
+            file = f.strip_prefix("b/").unwrap_or(f).to_string();
+        } else if let Some(h) = l.strip_prefix("@@ ") {
+            let new = h.split(" +").nth(1).and_then(|n| n.split([',', ' ']).next()?.parse().ok());
+            at = new.ok_or(format!("--in-diff: a hunk header {l:?}"))?;
+        } else if let Some(added) = l.strip_prefix('+') {
+            let text = std::fs::read_to_string(dir.join(&file)).map_err(|e| format!("--in-diff: {file}: {e}"))?;
+            if text.lines().nth(at as usize - 1) != Some(added) {
+                return Err(format!("Diff content doesn't match source file: {file} line {at}"));
+            }
+            out.entry(file.clone()).or_default().insert(at);
+            at += 1;
+        } else if l.starts_with(' ') {
+            at += 1;
+        }
+    }
+    Ok(out)
 }
 
 type Refusal = String;
@@ -111,15 +166,27 @@ fn run(work: Work, reports: &Path, dir: &Path, fault: Fault, step: &str) {
 
 /// cargo-mutants' list (`--list --json`) or `outcomes.json`, with only the
 /// mutants named (and the baseline) left in.
-fn named(text: &str, names: &[String]) -> String {
+fn named(text: &str, kept: &Kept) -> String {
     let mut v: serde_json::Value = serde_json::from_str(text).unwrap();
-    let kept = |m: &serde_json::Value| m["name"].as_str().is_some_and(|n| names.iter().any(|w| w == n));
+    let listed = |name: &str| kept.list.iter().find(|m| m["name"] == name).is_some_and(|m| kept.keeps(m));
+    let unviable: Vec<String> = kept
+        .unviable
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map_or(vec![], |t| t.lines().map(String::from).collect());
     match v.as_array_mut() {
-        Some(list) => list.retain(kept),
-        None => v["outcomes"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|o| o["scenario"]["Mutant"].is_null() || kept(&o["scenario"]["Mutant"])),
+        Some(list) => list.retain(|m| kept.keeps(m)),
+        None => {
+            let outcomes = v["outcomes"].as_array_mut().unwrap();
+            outcomes.retain(|o| {
+                o["scenario"]["Mutant"].is_null() || listed(o["scenario"]["Mutant"]["name"].as_str().unwrap_or(""))
+            });
+            for o in outcomes.iter_mut() {
+                if unviable.iter().any(|u| o["scenario"]["Mutant"]["name"] == u.as_str()) {
+                    o["summary"] = "Unviable".into();
+                }
+            }
+        }
     }
     serde_json::to_string_pretty(&v).unwrap()
 }
@@ -220,26 +287,33 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
         }
         "mutants" => {
             let out = PathBuf::from(need(args, "--output")?);
-            if let Some(diff) = value(args, "--in-diff") {
-                std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
-            }
-            let names = names(args)?;
+            let lines = match value(args, "--in-diff") {
+                Some(diff) => {
+                    let text = std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
+                    Some(in_diff(&text, dir)?)
+                }
+                None => None,
+            };
+            let list = std::fs::read_to_string(reports.join("mutants.list.json")).unwrap_or("[]".into());
+            let list = serde_json::from_str(&list).unwrap_or_default();
+            let unviable = Some(out.join("standin-unviable"));
+            let kept = Kept { names: names(args)?, lines, list, unviable };
             if args.iter().any(|a| a == "--list") {
                 has(args, "--json")?;
-                return Ok(Work { stdout: Some("mutants.list.json".into()), named: names, ..Work::default() });
+                return Ok(Work { stdout: Some("mutants.list.json".into()), named: Some(kept), ..Work::default() });
             }
             let outcomes = out.join(CARGO_MUTANTS_OUTCOMES);
             // cargo-mutants exits 2 when a mutant was missed.
             let text = std::fs::read_to_string(reports.join("outcomes.json")).unwrap_or_default();
-            let missed = names.as_ref().map_or(text.clone(), |n| named(&text, n)).contains("\"MissedMutant\"");
+            let missed = named(&text, &kept).contains("\"MissedMutant\"");
             let (reports, dir) = (reports.to_path_buf(), dir.to_path_buf());
             let skip = value(args, "--baseline").is_some_and(|b| b == "skip");
-            let only = names.clone();
+            let only = kept.clone();
             Ok(Work {
                 copies: vec![("outcomes.json".into(), outcomes)],
                 exit: if missed { 2 } else { 0 },
-                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip, only.as_deref()))],
-                named: names,
+                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip, &only))],
+                named: Some(kept),
                 ..Work::default()
             })
         }
@@ -257,10 +331,12 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
 
 /// cargo-mutants' build and test phases, as `--test-tool nextest` runs them: in a build
 /// directory under `out`, unmutated first unless `skip`, then once per
-/// mutant of the real list (its first line marked as cargo-mutants marks
-/// it; only those `named`, when given), `cargo nextest run`. Only when
-/// there is a `cargo-nextest` to run.
-fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, named: Option<&[String]>) {
+/// mutant of the real list `kept` keeps, in the list's order, with the
+/// lines its diff takes out put back as its diff puts them in, `cargo
+/// nextest run --no-run`, then, if that built, `cargo nextest run`; the
+/// names of those that did not build are written to `kept.unviable`. Only
+/// when there is a `cargo-nextest` to run.
+fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, kept: &Kept) {
     let on_path =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| d.join("cargo-nextest").is_file());
     if !on_path {
@@ -269,18 +345,23 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, named: Optio
     let listed: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(reports.join("mutants.list.json")).unwrap()).unwrap();
     let build = out.join("standin-build");
-    // The build phase (`--no-run`), then the test phase.
+    let nextest = |phase: &[&str]| {
+        let status = std::process::Command::new("cargo")
+            .args(["nextest", "run"])
+            .args(phase)
+            .args(["--verbose", "--package=calc@0.1.0"])
+            .current_dir(&build)
+            .status()
+            .unwrap();
+        status.code().expect("cargo nextest run was killed") == 0
+    };
+    // The build phase (`--no-run`), then, if it built, the test phase.
     let test = || {
-        for phase in [&["--no-run"][..], &[]] {
-            let status = std::process::Command::new("cargo")
-                .args(["nextest", "run"])
-                .args(phase)
-                .args(["--verbose", "--package=calc@0.1.0"])
-                .current_dir(&build)
-                .status()
-                .unwrap();
-            assert!(status.code().is_some(), "cargo nextest run was killed");
+        let built = nextest(&["--no-run"]);
+        if built {
+            nextest(&[]);
         }
+        built
     };
     let copy = |file: &str| {
         std::fs::create_dir_all(build.join(file).parent().unwrap()).unwrap();
@@ -292,19 +373,45 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, named: Optio
     if !skip {
         test();
     }
-    let run = listed.as_array().unwrap().iter();
-    for m in run.filter(|m| named.is_none_or(|n| n.iter().any(|w| m["name"] == w.as_str()))) {
-        let (file, line) = (m["file"].as_str().unwrap(), m["span"]["start"]["line"].as_u64().unwrap() as usize);
+    let mut unviable = String::new();
+    for m in listed.as_array().unwrap().iter().filter(|m| kept.keeps(m)) {
+        let file = m["file"].as_str().unwrap();
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
-        let mutated: Vec<String> = text
-            .lines()
-            .enumerate()
-            .map(|(i, l)| if i + 1 == line { format!("{l} /* ~ changed by cargo-mutants ~ */") } else { l.into() })
-            .collect();
-        std::fs::write(build.join(file), mutated.join("\n") + "\n").unwrap();
-        test();
+        let mut lines: Vec<String> = text.lines().map(String::from).collect();
+        let (at, out, put) = changed(m["diff"].as_str().unwrap());
+        lines.splice(at - 1..at - 1 + out, put);
+        std::fs::write(build.join(file), lines.join("\n") + "\n").unwrap();
+        if !test() {
+            unviable.push_str(&format!("{}\n", m["name"].as_str().unwrap()));
+        }
         copy(file);
     }
+    if let Some(p) = &kept.unviable {
+        std::fs::write(p, unviable).unwrap();
+    }
+}
+
+/// What a mutant's diff (one hunk) changes: the first line it takes out,
+/// how many it takes out, and the lines it puts in.
+fn changed(diff: &str) -> (usize, usize, Vec<String>) {
+    let mut lines = diff.lines().skip_while(|l| !l.starts_with("@@ "));
+    let header = lines.next().unwrap();
+    let mut at: usize = header[4..].split([',', ' ']).next().unwrap().parse().unwrap();
+    let mut lines = lines.peekable();
+    while lines.next_if(|l| l.starts_with(' ')).is_some() {
+        at += 1;
+    }
+    let (mut out, mut put) = (0, Vec::new());
+    for l in lines {
+        if l.starts_with('-') {
+            out += 1;
+        } else if let Some(p) = l.strip_prefix('+') {
+            put.push(p.to_string());
+        } else {
+            break;
+        }
+    }
+    (at, out, put)
 }
 
 /// `cargo-nextest nextest run`: its tool configuration files must be
