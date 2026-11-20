@@ -2,7 +2,3 @@
 name = "rust"
 preset = "rust"
 root = "."
-
-[check]
-time_tolerance = 0.2
-time_slack = 1.0

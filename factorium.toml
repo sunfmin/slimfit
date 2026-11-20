@@ -10,3 +10,12 @@ slow_limit = 1800
 steps = ["packaging/release.sh cut $FACTORIUM_VERSION"]
 formula = "sunfmin/tap/slimfit"
 limit = 1800
+
+# slimfit's own tasks and an unbiased sample of landed changes' mutants
+# (`slimfit help sample`), filed as issues while the host is idle. No steps:
+# no check of slimfit's is too slow for its gates. Measured cold, at load
+# 18-25: `next --all` 113s, `next --all --sample 5` 565s wall (slimfit#56).
+[idle]
+tasks = "slimfit --version && slimfit next --all --sample 5"
+every = 86400
+limit = 3600

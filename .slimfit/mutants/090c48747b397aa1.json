@@ -1,0 +1,32 @@
+{
+  "tree": "df96dc7f1bf02ecb156c62f9590c9c2d7aab9068+9cda03aae963ae8f",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/ratchet.rs:287:13: delete match arm Bound::TestSeconds in Bound::never_loosened",
+        "why": "loosening test_seconds must be refused: it bounds nothing",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:353:22: replace == with != in check",
+        "why": "only test_seconds is answered as a trend",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:357:17: replace && with || in check",
+        "why": "a violation needs a limit and current over it",
+        "outcome": "unviable"
+      },
+      {
+        "name": "src/ratchet.rs:262:9: replace Bound::limit -> Option<f64> with Some(0.0)",
+        "why": "test_seconds has no limit: a limit would fail check again",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:413:12: delete ! in ratchet",
+        "why": "an untimed run sets no new suite's test_seconds, but keeps an existing one",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
