@@ -1,0 +1,19 @@
+{
+  "tree": "02d89983290caa7cff3dbfd6cc4f1d19f44ee562+d1fba762150c532c",
+  "picker": "claude-code:a5922aadea3caadaf:claude-opus-5-5",
+  "author": "claude-code:5482055f-cad2-4be6-8f78-c8fbea58c8f6:claude-opus-5-5",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/formats/xml.rs:43:34: replace || with && in walk",
+        "why": "drops blank text after a reference again",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/formats/xml.rs:43:37: delete ! in walk",
+        "why": "drops ordinary text not after a reference",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

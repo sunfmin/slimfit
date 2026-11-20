@@ -1,0 +1,29 @@
+{
+  "tip": "ebb39c99b49747cf5c3a419f191e798b545f17cd",
+  "from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
+  "pool": 579,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:411:5: replace source_suite -> Result<Option<(String, u64)>> with Ok(Some((\"xyzzy\".into(), 0)))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/rust_source.rs:42:13: replace < with <= in test_blocks",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:351:5: replace picks -> Result<Vec<model::Pick>> with Ok(vec![])",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:241:9: replace Bound::current -> Option<f64> with None",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/report.rs:157:63: replace || with && in history",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
