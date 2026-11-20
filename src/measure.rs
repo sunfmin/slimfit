@@ -109,11 +109,6 @@ pub fn current(repo: &Path, cfg: &Config, opts: &Options) -> Result<Measurement>
     Ok(m)
 }
 
-/// The suite's root as a prefix of repository paths: empty at the root.
-fn prefix(suite: &Suite) -> String {
-    if suite.root == "." { String::new() } else { format!("{}/", suite.root.trim_end_matches('/')) }
-}
-
 /// Where the suites' commands write: `.slimfit/out`, or in a dry run a
 /// directory outside the repo, removed when the measurement is done.
 struct Scratch(PathBuf, bool);
@@ -150,8 +145,7 @@ fn measure_suite(
     mutants: Option<Picked>,
     tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
-    let root = repo.join(&suite.root);
-    let out = scratch.join(&suite.name);
+    let run = Run::new(repo, suite, scratch.join(&suite.name));
     let classifier = Classifier::of_worktree(suite, repo, files)?;
     let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
     let resolver = Resolver::new(repo, &totals);
@@ -160,43 +154,37 @@ fn measure_suite(
     // keeping its mutants.
     let (mutants, kept) = match (tested, mutants) {
         (Some(mut s), Some(picked)) => {
-            std::fs::create_dir_all(&out)?;
-            picked.run(&root, &out, suite, &resolver, &mut s)?;
+            std::fs::create_dir_all(&run.out)?;
+            picked.run(&run, &resolver, &mut s)?;
             return Ok(s);
         }
         (tested, mutants) => (mutants, tested),
     };
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::create_dir_all(&out)?;
-
-    // Reports left by an earlier run would be read as this run's.
-    for old in report_paths(&root, &out, &suite.tests_report)?.into_iter().chain(report_paths(
-        &root,
-        &out,
-        &suite.coverage_report,
-    )?) {
-        std::fs::remove_file(old)?;
-    }
+    let _ = std::fs::remove_dir_all(&run.out);
+    std::fs::create_dir_all(&run.out)?;
+    run.clear(&suite.tests_report)?;
+    run.clear(&suite.coverage_report)?;
     // The build runs first, on its own: the test command's CPU time is then
     // the tests', not the compiler's (ADR 0010).
     if !suite.build_command.trim().is_empty() {
-        shell(&root, &out, &suite.build_command, "build", &[])?;
+        run.shell(&suite.build_command, "build", &[])?;
     }
     // Where the test command records each test's CPU time, if it does.
-    std::fs::create_dir_all(out.join(crate::tools::TEST_CPU))?;
+    let test_cpu = run.out.join(crate::tools::TEST_CPU);
+    std::fs::create_dir_all(&test_cpu)?;
     let started = Instant::now();
     let before = children_cpu();
-    let (log, _) = shell(&root, &out, &suite.test_command, "test", &[])?;
+    let (log, _) = run.shell(&suite.test_command, "test", &[])?;
     let tree_cpu = children_cpu() - before;
     let command_seconds = started.elapsed().as_secs_f64();
-    let tests = read_report(&root, &out, "tests_report", &suite.tests_report, &log, formats::read_tests)?;
-    let coverage = read_report(&root, &out, "coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
-    let reach = read_reach(&root, &out, suite)?;
+    let tests = run.read("tests_report", &suite.tests_report, &log, formats::read_tests)?;
+    let coverage = run.read("coverage_report", &suite.coverage_report, &log, formats::read_coverage)?;
+    let reach = run.reach()?;
 
-    let timing = Timing { command_seconds, tree_cpu, test_cpu: read_test_cpu(&out.join(crate::tools::TEST_CPU)) };
+    let timing = Timing { command_seconds, tree_cpu, test_cpu: read_test_cpu(&test_cpu) };
     let mut s = reduce(suite, &totals, &resolver, tests, coverage, reach, None, timing);
     if let Some(picked) = mutants {
-        picked.run(&root, &out, suite, &resolver, &mut s)?;
+        picked.run(&run, &resolver, &mut s)?;
         // At the priority mutants run at, not a gate's: see `untimed`.
         s.untimed = true;
     } else if let Some(k) = kept {
@@ -238,79 +226,131 @@ fn times_seconds(t: &str) -> Option<f64> {
     Some(m.parse::<f64>().ok()? * 60.0 + s.parse::<f64>().ok()?)
 }
 
-/// Which functions each test ran, when the suite's test run records it. A
-/// run that wrote none (a test command of its own, a runner of the repo's
-/// own) records nothing, and every mutant then runs every test.
-fn read_reach(root: &Path, out: &Path, suite: &Suite) -> Result<Option<Vec<formats::TestReach>>> {
-    if suite.reach_report.path.is_empty() {
-        return Ok(None);
+/// A run of one suite's commands: each runs with `sh -c` in the suite's
+/// root and writes its log in `out`, the suite's scratch directory, where
+/// `$SLIMFIT_OUT` points; the suite's reports are found and read from there.
+struct Run<'a> {
+    suite: &'a Suite,
+    root: PathBuf,
+    out: PathBuf,
+}
+
+impl<'a> Run<'a> {
+    /// The run of `suite` of `repo`, writing in `out`.
+    fn new(repo: &Path, suite: &'a Suite, out: PathBuf) -> Self {
+        Self { suite, root: repo.join(&suite.root), out }
     }
-    let paths: Vec<PathBuf> = report_paths(root, out, &suite.reach_report)?;
-    if paths.is_empty() {
-        eprintln!(
-            "slimfit: {}: the test run wrote no reach_report at {}: no test is known to run any function",
-            suite.name,
-            report_pattern(root, out, &suite.reach_report)
-        );
-        return Ok(None);
+
+    /// The suite's root as a prefix of repository paths: empty at the root.
+    fn prefix(&self) -> String {
+        let root = &self.suite.root;
+        if root == "." { String::new() } else { format!("{}/", root.trim_end_matches('/')) }
     }
-    let texts = paths.iter().map(std::fs::read_to_string).collect::<std::io::Result<Vec<_>>>()?;
-    formats::read_reach(suite.reach_report.format, &texts)
-        .map(Some)
-        .map_err(|e| unreadable("reach_report", suite.reach_report.format, e))
-}
 
-/// Runs `command` with `sh -c` in the suite root, with `env` added. A
-/// failing exit status is not an error: failing tests still write reports.
-/// The log is kept; the flag says whether the command exited 0.
-fn shell(
-    root: &Path,
-    out: &Path,
-    command: &str,
-    label: &str,
-    env: &[(String, std::ffi::OsString)],
-) -> Result<(PathBuf, bool)> {
-    if command.trim().is_empty() {
-        return Err(fault(
-            format!("no {label} command configured"),
-            format!("set `{label}_command` in the suite's [[suite]] in slimfit.toml"),
-        ));
+    /// Runs `command`, with `env` added. A failing exit status is not an
+    /// error: failing tests still write reports. The log is kept; the flag
+    /// says whether the command exited 0.
+    fn shell(&self, command: &str, label: &str, env: &[(String, std::ffi::OsString)]) -> Result<(PathBuf, bool)> {
+        if command.trim().is_empty() {
+            return Err(fault(
+                format!("no {label} command configured"),
+                format!("set `{label}_command` in the suite's [[suite]] in slimfit.toml"),
+            ));
+        }
+        let log = self.out.join(format!("{label}.log"));
+        let file = std::fs::File::create(&log)?;
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .current_dir(&self.root)
+            .env(crate::tools::OUT_ENV, &self.out)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdout(file.try_clone()?)
+            .stderr(file)
+            .status()
+            .with_context(|| format!("running {label} command: {command}"))?;
+        eprintln!("slimfit: {label} command exited {status}; log {}", log.display());
+        Ok((log, status.success()))
     }
-    let log = out.join(format!("{label}.log"));
-    let file = std::fs::File::create(&log)?;
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(root)
-        .env(crate::tools::OUT_ENV, out)
-        .envs(env.iter().map(|(k, v)| (k, v)))
-        .stdout(file.try_clone()?)
-        .stderr(file)
-        .status()
-        .with_context(|| format!("running {label} command: {command}"))?;
-    eprintln!("slimfit: {label} command exited {status}; log {}", log.display());
-    Ok((log, status.success()))
-}
 
-fn report_pattern<F>(root: &Path, out: &Path, report: &Report<F>) -> String {
-    let pattern = report.path.replace(&format!("${}", crate::tools::OUT_ENV), &out.to_string_lossy());
-    if Path::new(&pattern).is_absolute() { pattern } else { root.join(&pattern).to_string_lossy().into_owned() }
-}
+    /// Where `report` is: its path, `$SLIMFIT_OUT` replaced, under the root.
+    fn pattern<F>(&self, report: &Report<F>) -> String {
+        let pattern = report.path.replace(&format!("${}", crate::tools::OUT_ENV), &self.out.to_string_lossy());
+        if Path::new(&pattern).is_absolute() {
+            pattern
+        } else {
+            self.root.join(&pattern).to_string_lossy().into_owned()
+        }
+    }
 
-fn report_paths<F>(root: &Path, out: &Path, report: &Report<F>) -> Result<Vec<PathBuf>> {
-    expand(&report_pattern(root, out, report))
-}
+    fn paths<F>(&self, report: &Report<F>) -> Result<Vec<PathBuf>> {
+        expand(&self.pattern(report))
+    }
 
-/// The report `field` names, read in its format by `read`.
-fn read_report<F: Copy + serde::Serialize, T>(
-    root: &Path,
-    out: &Path,
-    field: &str,
-    report: &Report<F>,
-    log: &Path,
-    read: impl FnOnce(F, &[String]) -> Result<T>,
-) -> Result<T> {
-    read(report.format, &read_reports(root, out, field, report, log)?).map_err(|e| unreadable(field, report.format, e))
+    /// Removes the files of `report` an earlier run left: they would be
+    /// read as this run's.
+    fn clear<F>(&self, report: &Report<F>) -> Result<()> {
+        for old in self.paths(report)? {
+            std::fs::remove_file(old)?;
+        }
+        Ok(())
+    }
+
+    /// The texts of the report's files; `field` names it in slimfit.toml,
+    /// and `log` is the log of the command that should have written it.
+    fn texts<F>(&self, field: &str, report: &Report<F>, log: &Path) -> Result<Vec<String>> {
+        let pattern = self.pattern(report);
+        // An empty file is no report: a shell redirect creates one even when
+        // the tool behind it is missing.
+        let paths: Vec<PathBuf> =
+            expand(&pattern)?.into_iter().filter(|p| p.metadata().is_ok_and(|m| m.len() > 0)).collect();
+        if paths.is_empty() {
+            return Err(fault(
+                format!("no {field} at {pattern}; the command's log ends:\n{}", tail(log)),
+                format!(
+                    "fix the command's failure in its log {}; if it ran, make it write the report there, or set \
+                     `{field}` path in slimfit.toml to where it writes",
+                    log.display()
+                ),
+            ));
+        }
+        paths
+            .into_iter()
+            .map(|p| std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display())))
+            .collect()
+    }
+
+    /// The report `field` names, read in its format by `read`.
+    fn read<F: Copy + serde::Serialize, T>(
+        &self,
+        field: &str,
+        report: &Report<F>,
+        log: &Path,
+        read: impl FnOnce(F, &[String]) -> Result<T>,
+    ) -> Result<T> {
+        read(report.format, &self.texts(field, report, log)?).map_err(|e| unreadable(field, report.format, e))
+    }
+
+    /// Which functions each test ran, when the suite's test run records it.
+    /// A run that wrote none (a test command of its own, a runner of the
+    /// repo's own) records nothing, and every mutant then runs every test.
+    fn reach(&self) -> Result<Option<Vec<formats::TestReach>>> {
+        let report = &self.suite.reach_report;
+        if report.path.is_empty() {
+            return Ok(None);
+        }
+        let paths: Vec<PathBuf> = self.paths(report)?;
+        if paths.is_empty() {
+            eprintln!(
+                "slimfit: {}: the test run wrote no reach_report at {}: no test is known to run any function",
+                self.suite.name,
+                self.pattern(report)
+            );
+            return Ok(None);
+        }
+        let texts = paths.iter().map(std::fs::read_to_string).collect::<std::io::Result<Vec<_>>>()?;
+        formats::read_reach(report.format, &texts).map(Some).map_err(|e| unreadable("reach_report", report.format, e))
+    }
 }
 
 /// A report that is not in the format slimfit.toml names: its fault, with
@@ -328,31 +368,11 @@ fn unreadable(field: &str, format: impl serde::Serialize, e: anyhow::Error) -> a
     )
 }
 
-/// The texts of the report's files; `field` names it in slimfit.toml.
 /// The last 30 lines of a command's log.
 fn tail(log: &Path) -> String {
     let text = std::fs::read_to_string(log).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(30)..].join("\n")
-}
-
-fn read_reports<F>(root: &Path, out: &Path, field: &str, report: &Report<F>, log: &Path) -> Result<Vec<String>> {
-    let pattern = report_pattern(root, out, report);
-    // An empty file is no report: a shell redirect creates one even when
-    // the tool behind it is missing.
-    let paths: Vec<PathBuf> =
-        expand(&pattern)?.into_iter().filter(|p| p.metadata().is_ok_and(|m| m.len() > 0)).collect();
-    if paths.is_empty() {
-        return Err(fault(
-            format!("no {field} at {pattern}; the command's log ends:\n{}", tail(log)),
-            format!(
-                "fix the command's failure in its log {}; if it ran, make it write the report there, or set \
-                 `{field}` path in slimfit.toml to where it writes",
-                log.display()
-            ),
-        ));
-    }
-    paths.into_iter().map(|p| std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))).collect()
 }
 
 /// Paths matching an absolute glob, walking only below its literal prefix.
@@ -939,7 +959,7 @@ pub(crate) mod t {
     fn a_reach_report_is_read_when_written() {
         let dir = tempfile::tempdir().unwrap();
         let mut suite = crate::config::preset(crate::config::Preset::Rust);
-        let read = |s: &Suite| read_reach(dir.path(), dir.path(), s);
+        let read = |s: &Suite| Run::new(dir.path(), s, dir.path().into()).reach();
         assert!(read(&suite).unwrap().is_none());
         std::fs::write(dir.path().join(crate::tools::REACH), "test calc\tx\n").unwrap();
         assert_eq!(read(&suite).unwrap().unwrap().len(), 1);
