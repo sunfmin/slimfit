@@ -617,34 +617,37 @@ mod answer_tests {
         assert!(faults(repo, &six)[0].fault.contains("6 mutants picked, more than 5"));
         assert!(faults(repo, "check --mutants n m --why w")[0].fault.contains("2 mutant(s) picked, with 1 `--why`"));
         assert_eq!(faults(repo, "check --mutants --why w")[0].fault, "--why without a mutant's name");
-        let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
-        assert_eq!((code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()), (0, Some("killed")), "{out:#}");
-        let no = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", "nothing"]).unwrap_err());
+        // A pick that survives fails as `survived_mutants`, whoever picked.
+        let survivor = "src/lib.rs:12:5: replace is_adult -> bool with true";
+        let (out, code) =
+            slimfit_args(repo, &["check", "--mutants", killed, survivor, "--why", "the age bound", "w"]).unwrap();
+        let outcomes: Vec<&str> =
+            out["mutated"]["rust"]["picks"].as_array().unwrap().iter().filter_map(|p| p["outcome"].as_str()).collect();
+        let metrics: Vec<&str> =
+            out["verdict"]["violations"].as_array().unwrap().iter().filter_map(|v| v["metric"].as_str()).collect();
+        assert_eq!((code, outcomes, metrics), (1, vec!["killed", "survived"], vec!["survived_mutants"]), "{out:#}");
+        let loose = "ratchet --loosen survived_mutants --reason r";
+        let no = faults(repo, &format!("{loose} --no-mutants nothing"));
         assert!(no[0].fault.contains("--no-mutants, but this tree's measurement ran picked mutants"), "{no:?}");
         // The author does not pick (slimfit#58): a record without a picker, or with the author as its picker, is refused.
         for (args, fault) in [
-            ("ratchet", "without `--picker` and `--author`"),
-            ("ratchet --picker me --author me", "--picker is the change's author"),
-            ("ratchet --picker p", "without `--picker` and `--author`"),
+            ("", "without `--picker` and `--author`"),
+            (" --picker me --author me", "--picker is the change's author"),
+            (" --picker p", "without `--picker` and `--author`"),
         ] {
-            let f = faults(repo, args);
+            let f = faults(repo, &format!("{loose}{args}"));
             assert!(f[0].fault.contains(fault) && f[0].fix.contains("`slimfit help picker`"), "{args}: {f:?}");
         }
         assert!(!repo.join(crate::landing::DIR).exists(), "a refused ratchet writes no record");
-        let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();
+        let (out, _) = slimfit(repo, &format!("{loose} --picker p --author a")).unwrap();
         let record = out["record"].as_str().unwrap().to_string();
         assert!(record.starts_with(".slimfit/mutants/"), "{out:#}");
         let text = std::fs::read_to_string(repo.join(&record)).unwrap();
         assert!(text.contains("\"why\": \"the age bound\"") && text.contains("\"outcome\": \"killed\""), "{text}");
         assert!(text.contains("\"picker\": \"p\"") && text.contains("\"author\": \"a\""), "{text}");
+        // A record with a picker other than its author passes the gate.
         commit("a");
         assert_eq!(held(crate::EXIT_OK)["landing"]["records"], serde_json::json!([record]));
-        // A record with a picker passes the gate; a pick of it that survives still fails, as `survived_mutants`.
-        let survivor = "src/lib.rs:12:5: replace is_adult -> bool with true";
-        let (out, code) = slimfit_args(repo, &["check", "--mutants", survivor, "--why", "w"]).unwrap();
-        let metrics: Vec<&str> =
-            out["verdict"]["violations"].as_array().unwrap().iter().filter_map(|v| v["metric"].as_str()).collect();
-        assert_eq!((code, metrics), (crate::EXIT_VIOLATION, vec!["survived_mutants"]), "{out:#}");
         // Which lines a record covers is not held: an edit after it passes.
         let text = std::fs::read_to_string(repo.join("src/lib.rs")).unwrap();
         std::fs::write(repo.join("src/lib.rs"), text.replace("    1\n}\n", "    2\n}\n")).unwrap();
