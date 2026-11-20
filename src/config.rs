@@ -76,6 +76,15 @@ pub struct SuiteConfig {
     pub overrides: Overrides,
 }
 
+#[cfg(test)]
+impl Config {
+    /// One suite `name` of `preset`, at the repository root.
+    pub fn one(name: &str, preset: Preset) -> Config {
+        let s = SuiteConfig { name: name.into(), preset, root: dot(), overrides: Overrides::default() };
+        Config { suites: vec![s], check: CheckConfig::default() }
+    }
+}
+
 fn dot() -> String {
     ".".into()
 }

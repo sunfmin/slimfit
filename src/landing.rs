@@ -3,14 +3,16 @@
 //! Each record is a file of its own in `.slimfit/mutants/`, named by its
 //! contents, so two branches never write the same one.
 
-use crate::config::{CheckConfig, Config};
+use crate::config::{CheckConfig, Config, Suite};
 use crate::fault::fault;
 use crate::git;
-use crate::loc::{Classifier, Kind};
+use crate::loc::{Classifier, FileLines, Kind, Totals};
+use crate::measure::Resolver;
 use crate::model::{Measurement, MutantStatus, Pick};
 use crate::ratchet::{Bound, PICK_THE_MUTANTS, Violation};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -205,18 +207,52 @@ pub struct Landing {
     pub added: Lines,
 }
 
-/// The working tree as a command found it, read once, and its landing,
-/// found once when first asked for: each git spawn costs CPU time, which
-/// `test_seconds` counts (ADR 0010). A command that writes code reads its
-/// tree after it writes.
+/// The working tree as a command found it, read once, and what is found of
+/// it once when first asked for: its landing, and each suite's view of it.
+/// Each git spawn costs CPU time, which `test_seconds` counts (ADR 0010).
+/// A command that writes code reads its tree after it writes.
 pub struct Tree {
     pub wt: git::Worktree,
-    landing: std::cell::OnceCell<Option<Landing>>,
+    landing: OnceCell<Option<Landing>>,
+    suites: OnceCell<BTreeMap<String, OnceCell<SuiteTree>>>,
+}
+
+/// One suite's view of the working tree: which files it counts, of what
+/// kind, their lines, and where a tool's path for one of them resolves.
+pub struct SuiteTree {
+    pub suite: Suite,
+    classifier: Classifier,
+    pub totals: Totals,
+    pub resolver: Resolver,
+}
+
+impl SuiteTree {
+    /// `path`'s kind in the suite (relative to the repository root), whether
+    /// or not it is in the tree; `None` when the suite does not count it.
+    pub fn kind(&self, path: &str) -> Option<Kind> {
+        self.classifier.kind(path)
+    }
+
+    /// The lines of `file`, when it is a source file of the tree.
+    pub fn source_lines(&self, file: &str) -> Option<&FileLines> {
+        self.totals.files.get(file).filter(|(k, _)| *k == Kind::Source).map(|(_, l)| l)
+    }
 }
 
 impl Tree {
     pub fn read(head: &git::Head) -> Result<Tree> {
-        Ok(Tree { wt: git::worktree(head)?, landing: Default::default() })
+        Ok(Tree::of(git::worktree(head)?))
+    }
+
+    fn of(wt: git::Worktree) -> Tree {
+        Tree { wt, landing: Default::default(), suites: Default::default() }
+    }
+
+    /// The tree of `files` under `top`, with no repository: a test's sample
+    /// directory.
+    #[cfg(test)]
+    pub fn at(top: &Path, files: Vec<String>) -> Tree {
+        Tree::of(git::Worktree::of(top, files))
     }
 
     /// [`find`], of this tree.
@@ -226,6 +262,25 @@ impl Tree {
         }
         let found = find(repo, check, &self.wt.head)?;
         Ok(self.landing.get_or_init(|| found).as_ref())
+    }
+
+    /// The suite of `cfg` named `name`, resolved, and its view of this tree,
+    /// built when first asked for.
+    pub fn suite(&self, cfg: &Config, name: &str) -> Result<&SuiteTree> {
+        let suites = self.suites.get_or_init(|| cfg.suites.iter().map(|s| (s.name.clone(), OnceCell::new())).collect());
+        let Some((sc, cell)) = cfg.suites.iter().find(|s| s.name == name).zip(suites.get(name)) else {
+            anyhow::bail!("no suite {name} in slimfit.toml");
+        };
+        if let Some(s) = cell.get() {
+            return Ok(s);
+        }
+        let (repo, files) = (self.wt.head.top.as_path(), &self.wt.files);
+        let suite = sc.resolve();
+        let read = |f: &str| std::fs::read_to_string(repo.join(f)).ok();
+        let classifier = Classifier::new(&suite, repo, files, read)?;
+        let totals = classifier.count(files, read);
+        let resolver = Resolver::new(repo, &totals);
+        Ok(cell.get_or_init(|| SuiteTree { suite, classifier, totals, resolver }))
     }
 }
 
@@ -256,25 +311,23 @@ fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Lan
 
 /// Of `added`, the lines a suite's mutants run must measure, per suite whose
 /// tool can be limited to a change (no other runs mutants): its source lines.
-/// `tree` is the working tree's files, as [`git::Worktree`] lists them.
-pub fn required(repo: &Path, cfg: &Config, tree: &[String], added: &Lines) -> Result<BTreeMap<String, Lines>> {
-    let files: Vec<String> = added.keys().cloned().collect();
+pub fn required(cfg: &Config, tree: &Tree, added: &Lines) -> Result<BTreeMap<String, Lines>> {
     let mut out = BTreeMap::new();
-    for s in cfg.suites.iter().map(|s| s.resolve()) {
-        if !s.mutates() {
+    for sc in &cfg.suites {
+        let s = tree.suite(cfg, &sc.name)?;
+        if !s.suite.mutates() {
             continue;
         }
-        let totals =
-            Classifier::of_worktree(&s, repo, tree)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
         let mut lines = Lines::new();
-        for (f, (_, l)) in totals.files.iter().filter(|(_, (k, _))| *k == Kind::Source) {
-            let wanted = added[f].iter().filter(|(n, _)| l.is_source_line(**n));
-            let wanted: BTreeMap<u32, String> = wanted.map(|(n, t)| (*n, t.clone())).collect();
+        for (f, added) in added {
+            let Some(l) = s.source_lines(f) else { continue };
+            let wanted: BTreeMap<u32, String> =
+                added.iter().filter(|(n, _)| l.is_source_line(**n)).map(|(n, t)| (*n, t.clone())).collect();
             if !wanted.is_empty() {
                 lines.insert(f.clone(), wanted);
             }
         }
-        out.insert(s.name.clone(), lines);
+        out.insert(sc.name.clone(), lines);
     }
     Ok(out)
 }
@@ -329,7 +382,7 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<(Opt
         "no record of its mutants that names a picker other than its author"
     };
     let (mut lines, mut violations) = (0, vec![]);
-    for (suite, required) in required(repo, cfg, &tree.wt.files, &l.added)? {
+    for (suite, required) in required(cfg, tree, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
         lines += n;
         let Some((file, first)) = required.iter().next().filter(|_| !held) else { continue };
@@ -453,6 +506,24 @@ mod t {
         assert_eq!(got, want);
     }
 
+    /// A suite's view of the tree is built once per command: asked again, the
+    /// tree answers the same view, though a file changed since. A suite the
+    /// config does not name is refused.
+    #[test]
+    fn a_suites_view_is_built_once() {
+        let d = tempfile::tempdir().unwrap();
+        crate::workspace::t::write(d.path(), &[("src/a.rs", "fn a() {}\n")]);
+        let tree = Tree::at(d.path(), vec!["src/a.rs".into()]);
+        let cfg = Config::one("rust", crate::config::Preset::Rust);
+        let first = tree.suite(&cfg, "rust").unwrap();
+        assert_eq!((first.kind("src/a.rs"), first.totals.prod), (Some(Kind::Source), 1));
+        crate::workspace::t::write(d.path(), &[("src/a.rs", "fn a() {}\nfn b() {}\n")]);
+        let again = tree.suite(&cfg, "rust").unwrap();
+        assert!(std::ptr::eq(first, again));
+        assert_eq!(again.source_lines("src/a.rs").map(|l| l.prod), Some(1));
+        assert!(tree.suite(&cfg, "go").is_err());
+    }
+
     /// Lines added to a crate reached only through `[dev-dependencies]` are
     /// test lines: no mutant is owed for them; a prod crate's lines are.
     #[test]
@@ -467,8 +538,7 @@ mod t {
             })
             .into();
         let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
-        let got =
-            required(d.path(), &cfg, &git::worktree(&git::open(d.path()).unwrap()).unwrap().files, &added).unwrap();
+        let got = required(&cfg, &crate::measure::t::tree(d.path()), &added).unwrap();
         assert_eq!(got["rust"].keys().collect::<Vec<_>>(), ["crates/core/src/lib.rs"]);
     }
 
@@ -495,8 +565,7 @@ mod t {
         ]
         .into();
         let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
-        let got =
-            required(d.path(), &cfg, &git::worktree(&git::open(d.path()).unwrap()).unwrap().files, &added).unwrap();
+        let got = required(&cfg, &crate::measure::t::tree(d.path()), &added).unwrap();
         assert_eq!(got["rust"], [("src/a.rs".to_string(), [line(3, "fn a() {}")].into())].into());
     }
 }

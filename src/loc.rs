@@ -86,11 +86,6 @@ impl Classifier {
         Ok(c)
     }
 
-    /// The suite's classifier for the working tree at `repo`.
-    pub fn of_worktree(suite: &Suite, repo: &Path, files: &[String]) -> Result<Self> {
-        Self::new(suite, repo, files, |f| std::fs::read_to_string(repo.join(f)).ok())
-    }
-
     /// The kind the suite's globs alone give `path` (relative to the repo).
     fn globbed(&self, path: &str) -> Option<Kind> {
         let rel = if self.root == "." || self.root.is_empty() {

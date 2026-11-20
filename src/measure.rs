@@ -5,7 +5,8 @@
 use crate::config::{Config, Preset, Report, Suite};
 use crate::fault::{self, Faults, fault};
 use crate::formats;
-use crate::loc::{Classifier, Kind, Totals};
+use crate::landing::SuiteTree;
+use crate::loc::{Kind, Totals};
 use crate::model::*;
 use crate::rust_source;
 use anyhow::{Context, Result};
@@ -88,16 +89,15 @@ pub fn current(repo: &Path, tree: &crate::landing::Tree, cfg: &Config, opts: &Op
     let mut change = if with_mutants { Some(Change::pick(repo, cfg, tree, &scratch.0, picks)?) } else { None };
     let mut suites = Vec::new();
     for s in &cfg.suites {
-        let suite = s.resolve();
         eprintln!(
             "slimfit: measuring {} ({}){}",
-            suite.name,
-            suite.root,
+            s.name,
+            s.root,
             if with_mutants { " with the picked mutants of the change" } else { "" }
         );
-        let mutants = change.as_mut().map(|c| c.take(&suite.name));
-        let r = measure_suite(repo, &scratch.0, &wt.files, &suite, mutants, tested.next());
-        suites.push(r.map_err(|e| fault::within(&format!("suite {}", suite.name), e)));
+        let mutants = change.as_mut().map(|c| c.take(&s.name));
+        let r = tree.suite(cfg, &s.name).and_then(|st| measure_suite(repo, &scratch.0, st, mutants, tested.next()));
+        suites.push(r.map_err(|e| fault::within(&format!("suite {}", s.name), e)));
     }
     // Every suite is measured, so one that fails does not hide another's faults.
     let suites = fault::all(suites)?;
@@ -139,22 +139,19 @@ fn quoted(s: &str) -> String {
 fn measure_suite(
     repo: &Path,
     scratch: &Path,
-    files: &[String],
-    suite: &Suite,
+    st: &SuiteTree,
     mutants: Option<Picked>,
     tested: Option<SuiteMeasurement>,
 ) -> Result<SuiteMeasurement> {
+    let (suite, resolver) = (&st.suite, &st.resolver);
     let run = Run::new(repo, suite, scratch.join(&suite.name));
-    let classifier = Classifier::of_worktree(suite, repo, files)?;
-    let totals = classifier.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
-    let resolver = Resolver::new(repo, &totals);
     // The tests of this tree already ran: only the mutants are new. Without
     // mutants a cached run is passed here only to be timed again (`untimed`),
     // keeping its mutants.
     let (mutants, kept) = match (tested, mutants) {
         (Some(mut s), Some(picked)) => {
             std::fs::create_dir_all(&run.out)?;
-            picked.run(&run, &resolver, &mut s)?;
+            picked.run(&run, resolver, &mut s)?;
             return Ok(s);
         }
         (tested, mutants) => (mutants, tested),
@@ -181,9 +178,9 @@ fn measure_suite(
     let reach = run.reach()?;
 
     let timing = Timing { command_seconds, tree_cpu, test_cpu: read_test_cpu(&test_cpu) };
-    let mut s = reduce(suite, &totals, &resolver, tests, coverage, reach, None, timing);
+    let mut s = reduce(st, tests, coverage, reach, None, timing);
     if let Some(picked) = mutants {
-        picked.run(&run, &resolver, &mut s)?;
+        picked.run(&run, resolver, &mut s)?;
         // At the priority mutants run at, not a gate's: see `untimed`.
         s.untimed = true;
     } else if let Some(k) = kept {
@@ -451,17 +448,15 @@ pub(crate) struct Timing {
     pub test_cpu: BTreeMap<String, f64>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn reduce(
-    suite: &Suite,
-    totals: &Totals,
-    resolver: &Resolver,
+    st: &SuiteTree,
     mut tests: Vec<TestCase>,
     coverage: Coverage,
     reach: Option<Vec<formats::TestReach>>,
     mutation: Option<Mutation>,
     timing: Timing,
 ) -> SuiteMeasurement {
+    let (suite, totals, resolver) = (&st.suite, &st.totals, &st.resolver);
     // Each test's CPU time (ADR 0010): its own where the test command
     // recorded it; otherwise the command tree's, shared by wall time.
     if timing.test_cpu.is_empty() {
@@ -857,20 +852,12 @@ pub(crate) mod t {
     /// shared by the tests' wall times. `test_seconds` is their sum.
     #[test]
     fn each_tests_cpu_time_is_its_own_or_its_share_of_the_trees() {
-        let totals = Totals::default();
+        let tree = crate::landing::Tree::at(Path::new("/r"), vec![]);
+        let cfg = Config::one("rust", crate::config::Preset::Rust);
         let case = |id: &str, seconds| TestCase { id: id.into(), seconds, passed: true, cpu: 0.0 };
         let measure = |tests, test_cpu| {
             let timing = Timing { command_seconds: 9.87654, tree_cpu: 12.0, test_cpu };
-            reduce(
-                &crate::config::preset(crate::config::Preset::Rust),
-                &totals,
-                &Resolver::new(Path::new("/r"), &totals),
-                tests,
-                Coverage::default(),
-                None,
-                None,
-                timing,
-            )
+            reduce(tree.suite(&cfg, "rust").unwrap(), tests, Coverage::default(), None, None, timing)
         };
         let own = measure(vec![case("a", 3.0), case("b", 1.0)], [("a".to_string(), 0.25)].into());
         assert_eq!(own.tests.iter().map(|t| t.cpu).collect::<Vec<_>>(), [0.25, 0.0]);
@@ -902,13 +889,11 @@ pub(crate) mod t {
     #[test]
     fn reach_keys_each_source_function_by_its_first_line() {
         let repo = tempfile::tempdir().unwrap();
-        let mut totals = Totals::default();
-        let classifier =
-            Classifier::of_worktree(&crate::config::preset(crate::config::Preset::Rust), repo.path(), &[]).unwrap();
         let text = "fn a() {}\nfn b() {}\n#[cfg(test)]\nmod tests {\n    fn t() {\n        a();\n    }\n}\n";
         std::fs::create_dir(repo.path().join("src")).unwrap();
         std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
-        totals.files = classifier.count(&["src/a.rs".to_string()], |_| Some(text.into())).files;
+        let tree = crate::landing::Tree::at(repo.path(), vec!["src/a.rs".into()]);
+        let st = tree.suite(&Config::one("rust", crate::config::Preset::Rust), "rust").unwrap();
         let at = format!("{}/src/a.rs", repo.path().display());
         let f = |name: &str, line, symbol: &str| Function {
             file: at.clone(),
@@ -933,9 +918,7 @@ pub(crate) mod t {
             t("z", Some(&["_Rgone"]), &[2]),
         ];
         let timing = Timing { command_seconds: 0.0, tree_cpu: 0.0, test_cpu: BTreeMap::new() };
-        let suite = crate::config::preset(crate::config::Preset::Rust);
-        let resolver = Resolver::new(repo.path(), &totals);
-        let m = reduce(&suite, &totals, &resolver, vec![], coverage, Some(reach), None, timing);
+        let m = reduce(st, vec![], coverage, Some(reach), None, timing);
         let reach = m.reach.unwrap();
         assert_eq!(reach.functions["src/a.rs"], [(1, vec![0, 1]), (2, vec![1])].into());
         assert_eq!(reach.tests.iter().map(ReachTest::id).collect::<Vec<_>>(), ["calc::tests::t", "calc::y", "calc::z"]);
@@ -947,7 +930,7 @@ pub(crate) mod t {
         // The hash is of the function's text: an edit inside it changes it, one outside does not.
         let hash = |text: &str| {
             std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
-            test_source("src/a.rs", 5, &resolver).map(|s| s.hash)
+            test_source("src/a.rs", 5, &st.resolver).map(|s| s.hash)
         };
         assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
         assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash.clone()));

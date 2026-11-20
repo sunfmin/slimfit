@@ -6,11 +6,10 @@
 //! or `ratchet` reads it.
 
 use super::mutants::{Listed, Stop, list_suite, mutate_picks, runs_alone, stops};
-use super::{OUT, Resolver, Run, Scratch};
+use super::{OUT, Run, Scratch};
 use crate::config::Config;
 use crate::git;
 use crate::landing::{self, Record};
-use crate::loc::Classifier;
 use crate::model::*;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -173,9 +172,9 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
     let to = git::write_tree(repo, &tree.wt.head)?;
     let added = landing::added_lines(&git::diff(repo, &from, &to, ".", &[])?, "");
     let mut listed: BTreeMap<String, Listed> = BTreeMap::new();
-    for (name, lines) in landing::required(repo, cfg, &tree.wt.files, &added)? {
+    for (name, lines) in landing::required(cfg, tree, &added)? {
         let out = scratch.0.join("sample");
-        listed.insert(name.clone(), list_suite(repo, cfg, (&from, &to), &name, lines, &out)?);
+        listed.insert(name.clone(), list_suite(repo, &tree.suite(cfg, &name)?.suite, (&from, &to), lines, &out)?);
     }
     // A mutant that cannot run without a field deletion beside it is not drawn.
     let alone = |l: &Listed| l.candidates.iter().filter(|c| runs_alone(l, c)).cloned().collect::<Vec<_>>();
@@ -189,7 +188,7 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
         Some((_, s)) => s,
         None => {
             let s = run(
-                (repo, &tree.wt.files),
+                tree,
                 cfg,
                 m,
                 &listed,
@@ -216,9 +215,9 @@ fn built(outcome: &Option<MutantStatus>) -> bool {
 /// run, and keeps the first `n` in the order that built, with those before
 /// them that did not. A run that can stop builds none once `n` drawn before
 /// it have built; one that cannot (every test runs: no shim) holds only the
-/// first `n`, none replaced. `files`: the working tree's.
+/// first `n`, none replaced.
 fn run(
-    (repo, files): (&Path, &[String]),
+    tree: &landing::Tree,
     cfg: &Config,
     m: &Measurement,
     listed: &BTreeMap<String, Listed>,
@@ -229,12 +228,14 @@ fn run(
     let drawn = &order[..order.len().min(n * DRAWN)];
     let suites: BTreeSet<&String> = drawn.iter().map(|(s, _)| s).collect();
     let mut ran: BTreeMap<usize, Option<MutantStatus>> = BTreeMap::new();
+    let repo = tree.wt.head.top.as_path();
     for s in suites {
-        let suite = cfg.suites.iter().find(|x| &x.name == s).expect("a configured suite").resolve();
+        let st = tree.suite(cfg, s)?;
+        let suite = &st.suite;
         let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
-        let run = Run::new(repo, &suite, repo.join(OUT).join("sample").join(s));
+        let run = Run::new(repo, suite, repo.join(OUT).join("sample").join(s));
         std::fs::create_dir_all(&run.out)?;
-        let stop = stops(&suite, tested, &run.out);
+        let stop = stops(suite, tested, &run.out);
         let (ranks, picks): (Vec<usize>, Vec<Pick>) = (drawn.iter().enumerate())
             .filter(|(r, (x, _))| x == s && (stop || *r < n))
             .map(|(r, (_, c))| {
@@ -243,10 +244,7 @@ fn run(
             .unzip();
         let known = ran.iter().filter(|(_, o)| built(o)).map(|(r, _)| *r).collect();
         let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });
-        let totals =
-            Classifier::of_worktree(&suite, repo, files)?.count(files, |f| std::fs::read_to_string(repo.join(f)).ok());
-        let resolver = Resolver::new(repo, &totals);
-        let mutated = mutate_picks(&run, &resolver, &listed[s], &picks, tested, stop.as_ref())?;
+        let mutated = mutate_picks(&run, &st.resolver, &listed[s], &picks, tested, stop.as_ref())?;
         ran.extend(ranks.into_iter().zip(mutated.mutated.picks.into_iter().map(|p| p.outcome)));
     }
     let mut viable = 0;
