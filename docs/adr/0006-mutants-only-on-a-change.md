@@ -102,8 +102,9 @@ Together they fit: coverage proposes, the review decides.
      commit lists where each assertion went;
    - **keep**: the setups conflict (folding one changes what the other
      checks), or merging would hide which behaviour failed.
-3. **Accept**: plain `slimfit check`: no new uncovered line, failures 0,
-   test time not up (and for a merge, down). No mutant runs.
+3. **Accept**: plain `slimfit check`: failures 0; its answer shows no
+   new uncovered span and test time not up (and for a merge, down), as
+   trends the agent reads, not bounds (ADR 0009). No mutant runs.
 
 **Per-test lines, for Rust.** The Rust preset's test run gives every test
 its own coverage profiles (ADR 0007). After the run each test's profiles

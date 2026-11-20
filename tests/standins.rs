@@ -552,10 +552,16 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // Better than the baseline: improved.
     edit(&|b| b["uncovered_lines"] = (b["uncovered_lines"].as_u64().unwrap() + 100).into());
     run("check", &[], 0);
-    // Worse: violations, then a loosening.
+    // Worse: a trend, not a violation; the ratchet keeps the lower count.
     edit(&|b| b["uncovered_lines"] = 0.into());
-    run("check", &[], 1);
-    run("ratchet", &["--loosen", "uncovered_lines", "--reason", "test"], 0);
+    let worse = run("check", &[], 0);
+    assert_eq!(worse["verdict"]["uncovered_lines"][0]["baseline"], 0.0, "{worse:#}");
+    s.error(&["ratchet", "--loosen", "uncovered_lines", "--reason", "test"], &["never loosened"]);
+    run("ratchet", &[], 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&s.read(".slimfit/baseline.json")).unwrap()["suites"]["rust"]["uncovered_lines"],
+        0
+    );
     // A changed line whose mutants survive: cargo-mutants is given the
     // change's diff; the survivors are accepted with a reason. Each mutant
     // runs the tests that ran its function: cargo-mutants lists the

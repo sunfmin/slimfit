@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::git;
+use crate::landing::Tree;
 use crate::loc::{Classifier, Kind};
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
 use crate::ratchet::{Baseline, Kept, KeptFile};
@@ -21,7 +22,7 @@ pub enum TaskKind {
     /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
     #[value(verbatim_doc_comment)]
     PickMutants,
-    /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test. A feature nobody uses: don't delete it, escalate: that is a product decision.
+    /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
     /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
@@ -115,12 +116,12 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
         .collect()
 }
 
-pub fn all(repo: &Path, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
-    let mut out = pick_mutants(repo, cfg, m.with_mutants)?;
-    let files = git::files(repo)?;
+pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
+    let mut out = pick_mutants(repo, tree, cfg, m.with_mutants)?;
+    let files = &tree.wt.files;
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
-        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, &files)?, &s.suite, &base.kept_files)?);
+        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, files)?, &s.suite, &base.kept_files)?);
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -151,12 +152,12 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
 /// A task per suite whose change adds source lines and no record of its
 /// mutants (none due once `picked` ran: `ratchet` records them), with what
 /// its tool lists of the change to pick from.
-fn pick_mutants(repo: &Path, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
-    let (_, unrecorded) = crate::landing::hold(repo, cfg, picked)?;
+fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
+    let (_, unrecorded) = crate::landing::hold(repo, cfg, tree, picked)?;
     if unrecorded.is_empty() {
         return Ok(vec![]);
     }
-    let mut candidates = crate::measure::candidates(repo, cfg)?;
+    let mut candidates = crate::measure::candidates(repo, cfg, tree)?;
     Ok(unrecorded
         .into_iter()
         .map(|v| {
@@ -210,7 +211,10 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
             files: vec![sp.file.clone()],
             evidence: json!(sp),
             steps: "Find who calls this code. No caller on any user path: delete it, and whatever only it used. \
-                    A user path needs it: add a test through the module's interface that runs it (never test past the interface). \
+                    A user path needs it: add a test through the module's interface that asserts what these lines decide: \
+                    the result or effect that would differ were they wrong (never test past the interface). \
+                    A test that only runs the lines, asserting nothing they decide, is no fix: coverage would count it, \
+                    and no bound holds you to coverage, so nothing is gained by it. \
                     The new test must be fast (milliseconds, no sleeps, network or process spawns): if only a slow test can reach the line, delete the code or escalate, never add the slow test. \
                     It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence."
                 .into(),
@@ -306,8 +310,8 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                         KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed: \
                         record it with `slimfit keep <test> --reason \"<why>\"` and commit `.slimfit/baseline.json`, so `test` is not proposed again \
                         until its text changes. \
-                        No mutant is run for this: the accept command holds that no line becomes uncovered, no test fails and test time does not \
-                        rise; after a merge, `test_seconds` must fall."
+                        No mutant is run for this: the accept command holds that no test fails, and answers, as trends, whether a line became \
+                        uncovered (`new_spans`) and how test time moved: neither may rise, and after a merge `test_seconds` must fall."
                     .into(),
                 accept: TaskKind::RedundantTest.accept().into(),
             },
@@ -407,11 +411,11 @@ pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
 
 /// The suite that counts `path` (relative to the repo) as an existing
 /// source file, with its prod lines: where a deepen task's file belongs.
-pub fn source_suite(repo: &Path, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
+pub fn source_suite(repo: &Path, tree: &Tree, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
     let Ok(text) = std::fs::read_to_string(repo.join(path)) else { return Ok(None) };
-    let files = git::files(repo)?;
+    let files = &tree.wt.files;
     for sc in &cfg.suites {
-        let c = Classifier::of_worktree(&sc.resolve(), repo, &files)?;
+        let c = Classifier::of_worktree(&sc.resolve(), repo, files)?;
         if let Some((Kind::Source, l)) = c.file(path, &text) {
             return Ok(Some((sc.name.clone(), l.prod)));
         }
@@ -532,7 +536,8 @@ mod t {
             git(repo, &["commit", "-qm", &format!("c {i}")]);
         }
         let suite = crate::config::preset(crate::config::Preset::Rust);
-        let c = Classifier::of_worktree(&suite, repo, &git::files(repo).unwrap()).unwrap();
+        let c =
+            Classifier::of_worktree(&suite, repo, &git::worktree(&git::open(repo).unwrap()).unwrap().files).unwrap();
         let proposed: Vec<_> = deepen(repo, &c, "s", &[]).unwrap().into_iter().map(|t| t.files).collect();
         assert_eq!(proposed, [["src/big.rs"]]);
     }

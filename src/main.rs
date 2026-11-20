@@ -47,13 +47,14 @@ fn main() {
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json::Value, i32)> {
     let (repo, command) = cli::read(args)?;
     let start = repo.unwrap_or(std::env::current_dir()?);
-    let repo = git::toplevel(&start)?;
+    let head = git::open(&start)?;
+    let repo = head.top.clone();
     match command {
         Cmd::Init { dry_run, .. } => {
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let created = !repo.join(config::FILE).exists();
             let cfg = if created {
-                let suites = config::detect(&git::worktree(&repo)?.files);
+                let suites = config::detect(&git::worktree(&head)?.files);
                 if suites.is_empty() {
                     return Err(fault::fault(
                         format!("no {} project found in {}", cli::languages("or"), repo.display()),
@@ -73,8 +74,11 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             writes
                 .put(".gitignore", &gitignore(&std::fs::read_to_string(repo.join(".gitignore")).unwrap_or_default()))?;
             let (cfg, old) = both(cfg, ratchet::load(&repo))?;
+            // Read after the writes above: the tree is measured as it is now.
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh: true, dry_run, timed: false },
             )?;
@@ -98,16 +102,18 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Next { all, kind, fresh, sample, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
-            let mut list = tasks::all(&repo, &cfg, &m, &base)?;
+            let mut list = tasks::all(&repo, &tree, &cfg, &m, &base)?;
             let mut notes = Vec::new();
             if let Some(n) = sample {
                 measure::refuse_unpickable(&cfg)?;
-                let s = measure::sample::sample(&repo, &cfg, &m, n)?;
+                let s = measure::sample::sample(&repo, &tree, &cfg, &m, n)?;
                 let c = s.sample.counts();
                 notes.push(format!(
                     "sampled at {} from the changes since {}: {} killed, {} survived, {} unviable, of {} mutants no \
@@ -165,7 +171,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 ));
             }
             measure::refuse_unpickable(&cfg)?;
-            let candidates = measure::candidates(&repo, &cfg)?;
+            let candidates = measure::candidates(&repo, &cfg, &landing::Tree::read(&head)?)?;
             let next = if candidates.values().all(Vec::is_empty) {
                 "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
                  worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
@@ -181,17 +187,22 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Check { mutants, why, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let picks = picks(mutants.unwrap_or_default(), why)?;
             let with_mutants = !picks.is_empty();
             let scope = if with_mutants { measure::Mutants::Picks(picks) } else { measure::Mutants::None };
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: scope, fresh, dry_run: false, timed: !with_mutants },
             )?;
             let mut v = ratchet::check(&base, &m, &cfg.check);
-            let (landing, unrecorded) = landing::hold(&repo, &cfg, m.with_mutants)?;
+            let (landing, unrecorded) = landing::hold(&repo, &cfg, &tree, m.with_mutants)?;
             v.violations.extend(unrecorded);
+            if let Some(l) = &landing {
+                v.name_new_spans(&m, &l.added);
+            }
             v.ok = v.violations.is_empty();
             let next = if !v.ok {
                 "fix each violation as its `fix` says, then `slimfit check` again"
@@ -208,8 +219,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
             let (cfg, old) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
             )?;
@@ -246,6 +259,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Keep { test, reason, .. } => {
             let (cfg, mut base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
                     "keep without --reason",
@@ -260,7 +274,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 })
             };
-            if let Some((suite, prod_lines)) = tasks::source_suite(&repo, &cfg, &test)? {
+            if let Some((suite, prod_lines)) = tasks::source_suite(&repo, &tree, &cfg, &test)? {
                 let (commits_90d, commits_total) = tasks::churn(&repo, &test);
                 base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
                 base.kept_files.push(ratchet::KeptFile {
@@ -276,6 +290,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             }
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh: false, dry_run: false, timed: false },
             )?;
@@ -310,8 +325,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
         Cmd::Report { commits, points, fresh, .. } => {
             let (cfg, base) = loaded(&repo)?;
+            let tree = landing::Tree::read(&head)?;
             let m = measure::current(
                 &repo,
+                &tree,
                 &cfg,
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run: false, timed: false },
             )?;
@@ -764,6 +781,53 @@ mod answer_tests {
             cut(&elsewhere);
             assert_eq!(held(crate::EXIT_VIOLATION), (target.clone(), 6));
         }
+    }
+
+    /// A change that adds uncovered lines leaves `check` green (slimfit#67):
+    /// its answer says how far `uncovered_lines` rose and names the spans
+    /// holding a line the change adds, and only those; `ratchet` keeps the
+    /// lower count, and refuses to loosen what bounds nothing.
+    #[test]
+    fn new_uncovered_lines_are_named_not_failed() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.check.target = Some("target".into());
+        // The sample's coverage, its paths in the repository.
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        tests.push_str(" && sed 's#/REPO/##' \"$SLIMFIT_OUT/lcov.info\" > \"$SLIMFIT_OUT/l\" && mv \"$SLIMFIT_OUT/l\" \"$SLIMFIT_OUT/lcov.info\"");
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        // The target lacks `unused`'s body (lines 6-8), which the sample's coverage leaves unrun.
+        let lib = repo.join("src/lib.rs");
+        let text = std::fs::read_to_string(&lib).unwrap();
+        let body = "    let doubled = x * 2;\n    let shifted = doubled + 7;\n    shifted / 3\n";
+        std::fs::write(&lib, text.replace(body, "")).unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "target"]);
+        git(repo, &["branch", "target"]);
+        std::fs::write(&lib, &text).unwrap();
+        let (out, _) =
+            slimfit_args(repo, &["ratchet", "--no-mutants", "arithmetic", "--picker", "p", "--author", "a"]).unwrap();
+        assert!(out["record"].is_string(), "{out:#}");
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "a"]);
+        let p = repo.join(crate::ratchet::FILE);
+        let mut b: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let measured = b["suites"]["rust"]["uncovered_lines"].as_u64().unwrap();
+        b["suites"]["rust"]["uncovered_lines"] = 0.into();
+        std::fs::write(&p, b.to_string()).unwrap();
+        let (out, code) = slimfit(repo, "check").unwrap();
+        assert_eq!((code, &out["verdict"]["violations"]), (crate::EXIT_OK, &serde_json::json!([])), "{out:#}");
+        let t = &out["verdict"]["uncovered_lines"][0];
+        assert_eq!((t["baseline"].as_f64(), t["current"].as_f64()), (Some(0.0), Some(measured as f64)), "{t:#}");
+        let span =
+            serde_json::json!([{ "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused" }]);
+        assert_eq!(t["new_spans"], span, "{t:#}");
+        // Kept low, and not loosened: there is no bound to raise.
+        slimfit(repo, "ratchet").unwrap();
+        assert_eq!(crate::ratchet::load(repo).unwrap().suites["rust"].uncovered_lines, 0);
+        let f = faults(repo, "ratchet --loosen uncovered_lines --reason r");
+        assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("asserts what the lines decide"), "{f:?}");
     }
 
     /// A sample of a landed change's mutants, out of the loop: no name the

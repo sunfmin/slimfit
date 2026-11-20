@@ -126,10 +126,34 @@ pub struct Landing {
     pub added: Lines,
 }
 
+/// The working tree as a command found it, read once, and its landing,
+/// found once when first asked for: each git spawn costs CPU time, which
+/// `test_seconds` counts (ADR 0010). A command that writes code reads its
+/// tree after it writes.
+pub struct Tree {
+    pub wt: git::Worktree,
+    landing: std::cell::OnceCell<Option<Landing>>,
+}
+
+impl Tree {
+    pub fn read(head: &git::Head) -> Result<Tree> {
+        Ok(Tree { wt: git::worktree(head)?, landing: Default::default() })
+    }
+
+    /// [`find`], of this tree.
+    pub fn landing(&self, repo: &Path, check: &CheckConfig) -> Result<Option<&Landing>> {
+        if let Some(l) = self.landing.get() {
+            return Ok(l.as_ref());
+        }
+        let found = find(repo, check, &self.wt.head)?;
+        Ok(self.landing.get_or_init(|| found).as_ref())
+    }
+}
+
 /// The landing of the working tree, or `None` when there is no target to
 /// take it from: `[check] target` unset and no `origin/HEAD`. A target set
 /// in `slimfit.toml` that is not found is refused.
-pub fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Landing>> {
+fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Landing>> {
     let target = check.target.clone().unwrap_or_else(|| DEFAULT_TARGET.into());
     let Some(from) = git::merge_base(repo, &target) else {
         if check.target.is_none() {
@@ -153,16 +177,16 @@ pub fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option
 
 /// Of `added`, the lines a suite's mutants run must measure, per suite whose
 /// tool can be limited to a change (no other runs mutants): its source lines.
-pub fn required(repo: &Path, cfg: &Config, added: &Lines) -> Result<BTreeMap<String, Lines>> {
+/// `tree` is the working tree's files, as [`git::Worktree`] lists them.
+pub fn required(repo: &Path, cfg: &Config, tree: &[String], added: &Lines) -> Result<BTreeMap<String, Lines>> {
     let files: Vec<String> = added.keys().cloned().collect();
-    let tree = git::files(repo)?;
     let mut out = BTreeMap::new();
     for s in cfg.suites.iter().map(|s| s.resolve()) {
         if !s.mutates() {
             continue;
         }
         let totals =
-            Classifier::of_worktree(&s, repo, &tree)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
+            Classifier::of_worktree(&s, repo, tree)?.count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
         let mut lines = Lines::new();
         for (f, (_, l)) in totals.files.iter().filter(|(_, (k, _))| *k == Kind::Source) {
             let wanted = added[f].iter().filter(|(n, _)| l.is_source_line(**n));
@@ -188,6 +212,10 @@ pub struct Held {
     pub lines: usize,
     /// The records of picked mutants it adds.
     pub records: Vec<String>,
+    /// Every line it adds, by file: what `check` names the change's new
+    /// uncovered spans from. Not printed.
+    #[serde(skip)]
+    pub added: Lines,
 }
 
 /// What a [`Held`] prints, as the command pages name it.
@@ -200,8 +228,8 @@ pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's m
 /// than its author, nor did the measurement run picks (`picked`: `ratchet`
 /// records them, and refuses a record without such a picker). `None`, and no violation,
 /// when there is no branch it lands on.
-pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Vec<Violation>)> {
-    let Some(l) = find(repo, &cfg.check, &git::head(repo)?)? else {
+pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<(Option<Held>, Vec<Violation>)> {
+    let Some(l) = tree.landing(repo, &cfg.check)? else {
         eprintln!(
             "slimfit: slimfit.toml sets no [check] target and there is no {DEFAULT_TARGET}: the change is not held \
              to a record of its mutants (`slimfit doctor` says how to fix it)"
@@ -222,7 +250,7 @@ pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Ve
         "no record of its mutants that names a picker other than its author"
     };
     let (mut lines, mut violations) = (0, vec![]);
-    for (suite, required) in required(repo, cfg, &l.added)? {
+    for (suite, required) in required(repo, cfg, &tree.wt.files, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
         lines += n;
         let Some((file, first)) = required.iter().next().filter(|_| !held) else { continue };
@@ -240,7 +268,10 @@ pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Ve
             ),
         });
     }
-    Ok((Some(Held { target: l.target, from: l.from, lines, records }), violations))
+    Ok((
+        Some(Held { target: l.target.clone(), from: l.from.clone(), lines, records, added: l.added.clone() }),
+        violations,
+    ))
 }
 
 /// The lines each file gains in a unified diff (new-side numbers, with
@@ -316,7 +347,8 @@ mod t {
             })
             .into();
         let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
-        let got = required(d.path(), &cfg, &added).unwrap();
+        let got =
+            required(d.path(), &cfg, &git::worktree(&git::open(d.path()).unwrap()).unwrap().files, &added).unwrap();
         assert_eq!(got["rust"].keys().collect::<Vec<_>>(), ["crates/core/src/lib.rs"]);
     }
 
@@ -343,7 +375,8 @@ mod t {
         ]
         .into();
         let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
-        let got = required(d.path(), &cfg, &added).unwrap();
+        let got =
+            required(d.path(), &cfg, &git::worktree(&git::open(d.path()).unwrap()).unwrap().files, &added).unwrap();
         assert_eq!(got["rust"], [("src/a.rs".to_string(), [line(3, "fn a() {}")].into())].into());
     }
 }
