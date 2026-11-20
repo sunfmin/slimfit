@@ -35,13 +35,21 @@ pub fn hash(text: &str) -> String {
 
 /// A record of one change's mutants: the picks a ratcheted run ran, each
 /// with why and its outcome, per suite; or, with none picked, why none was
-/// worth a mutant.
+/// worth a mutant. Either way, who picked and who made the change, as the
+/// caller names them (slimfit#58): the gate holds only that they differ.
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Record {
     /// The working tree the record was made of: two branches' records
     /// differ, and so do their names.
     #[serde(default)]
     pub tree: String,
+    /// The agent that picked: an opaque id its caller gives (a session id,
+    /// with harness and model). Empty in records from before slimfit#58.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub picker: String,
+    /// The agent that made the change, named as `picker` is.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub picks: BTreeMap<String, Vec<Pick>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +57,13 @@ pub struct Record {
 }
 
 impl Record {
+    /// Whether it names a picker other than the change's author: what the
+    /// gate holds of a record, compared as given, never judged.
+    pub fn picked_by_another(&self) -> bool {
+        let (p, a) = (self.picker.trim(), self.author.trim());
+        !p.is_empty() && !a.is_empty() && p != a
+    }
+
     /// Its path, named by its contents, and its text.
     pub fn file(&self) -> Result<(String, String)> {
         let text = serde_json::to_string_pretty(self)? + "\n";
@@ -181,8 +196,9 @@ pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's m
      picked) and `records` (the records of picked mutants it adds, in .slimfit/mutants/)";
 
 /// Holds the landing to its mutants: per suite, a violation when it adds
-/// source lines and the landing adds no record, nor did the measurement
-/// run picks (`picked`: `ratchet` records them). `None`, and no violation,
+/// source lines and the landing adds no record that names a picker other
+/// than its author, nor did the measurement run picks (`picked`: `ratchet`
+/// records them, and refuses a record without such a picker). `None`, and no violation,
 /// when there is no branch it lands on.
 pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Vec<Violation>)> {
     let Some(l) = find(repo, &cfg.check, &git::head(repo)?)? else {
@@ -194,11 +210,22 @@ pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Ve
     };
     let records: Vec<String> =
         l.added.keys().filter(|f| f.starts_with(&format!("{DIR}/")) && f.ends_with(".json")).cloned().collect();
+    // A record that does not read names no picker: the gate does not refuse it, it just does not count.
+    let named = |f: &String| {
+        let text = std::fs::read_to_string(repo.join(f)).unwrap_or_default();
+        serde_json::from_str::<Record>(&text).is_ok_and(|r| r.picked_by_another())
+    };
+    let held = picked || records.iter().any(named);
+    let missing = if records.is_empty() {
+        "no record of its mutants"
+    } else {
+        "no record of its mutants that names a picker other than its author"
+    };
     let (mut lines, mut violations) = (0, vec![]);
     for (suite, required) in required(repo, cfg, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
         lines += n;
-        let Some((file, first)) = required.iter().next().filter(|_| records.is_empty() && !picked) else { continue };
+        let Some((file, first)) = required.iter().next().filter(|_| !held) else { continue };
         let line = first.keys().next().expect("a file listed has a line");
         violations.push(Violation {
             suite,
@@ -207,8 +234,8 @@ pub fn hold(repo: &Path, cfg: &Config, picked: bool) -> Result<(Option<Held>, Ve
             limit: 0.0,
             current: n as f64,
             fix: format!(
-                "the change adds {n} source line(s) since {} ({}), the first at {file}:{line}, and no record of its \
-                 mutants: {PICK_THE_MUTANTS}",
+                "the change adds {n} source line(s) since {} ({}), the first at {file}:{line}, and {missing}: \
+                 {PICK_THE_MUTANTS}",
                 l.from, l.target
             ),
         });

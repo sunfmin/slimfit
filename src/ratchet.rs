@@ -119,7 +119,7 @@ pub enum Bound {
     /// Picked mutants of the change no test kills: none, checked only with `--mutants <name>...` (see [mutants scope](help:mutants-scope)). No baseline keeps a count.
     #[value(verbatim_doc_comment)]
     SurvivedMutants,
-    /// Source lines the change adds while it adds no record of its mutants (picks, or a reason none is worth one): none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
+    /// Source lines the change adds while it adds no record of its mutants (picks, or a reason none is worth one) that names a picker other than its author: none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
     #[value(verbatim_doc_comment)]
     UnrecordedMutants,
 }
@@ -322,11 +322,13 @@ const SLOW_TESTS: &str = "test_seconds is a trend, not a bound: `slimfit check` 
      make the slow tests cheaper (`slimfit next --all --kind slow-test` lists them)";
 
 /// What clears `unrecorded_mutants`: the rule of every change to source.
-pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --mutants`), pick at most 5 worth \
-     running (`slimfit next` gives the task) and run them at background priority, never in a gate: `factorium worker \
-     exclusive --background -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 \
-     slimfit check ...`), then `slimfit ratchet`; or, when nothing in the change is worth a mutant, `slimfit ratchet \
-     --no-mutants \"<why>\"`; then commit .slimfit/mutants/ with the change";
+pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --mutants`) and ask a second agent \
+     to pick, never yourself: give it the goal (`slimfit help picker`), the change's diff and the candidates, nothing \
+     of your reasoning; run its picks at background priority, never in a gate: `factorium worker exclusive \
+     --background -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit check \
+     ...`), then `slimfit ratchet --picker <its id> --author <yours>`; or, when it says nothing in the change is worth \
+     a mutant, `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`; then commit \
+     .slimfit/mutants/ with the change";
 
 /// What times a tree's tests after `--mutants` ran them (`untimed`).
 pub const TIME_THE_TESTS: &str =

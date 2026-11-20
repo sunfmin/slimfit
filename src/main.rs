@@ -167,14 +167,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             measure::refuse_unpickable(&cfg)?;
             let candidates = measure::candidates(&repo, &cfg)?;
             let next = if candidates.values().all(Vec::is_empty) {
-                "no mutant of the change to pick: when it adds source lines, `slimfit ratchet --no-mutants \"<why>\"`, \
-                 then commit .slimfit/"
+                "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
+                 worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
+                 commit .slimfit/"
             } else {
-                "read your change and pick at most 5 of `candidates` on the decisions it makes (comparisons, boolean \
-                 logic, match guards, a return value that matters), none that cannot build; run them at background \
-                 priority: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why \
-                 <why>...` (outside factorium, `nice -n 19 slimfit check ...`), then `slimfit ratchet`; or, when none \
-                 is worth running, `slimfit ratchet --no-mutants \"<why>\"`"
+                "ask a second agent to pick, never yourself: give it the goal (`slimfit help picker`), the change's diff and \
+                 `candidates`, nothing else; run its picks at background priority: `factorium worker exclusive \
+                 --background -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 \
+                 slimfit check ...`), then `slimfit ratchet --picker <its id> --author <yours>`; or, when it finds \
+                 none worth running, `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`"
             };
             Ok((json!({ "candidates": candidates, "next": next }), EXIT_OK))
         }
@@ -205,7 +206,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 code,
             ))
         }
-        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, .. } => {
+        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
             let (cfg, old) = loaded(&repo)?;
             let m = measure::current(
                 &repo,
@@ -213,7 +214,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 &measure::Options { mutants: measure::Mutants::None, fresh, dry_run, timed: false },
             )?;
             let new = ratchet::ratchet(&old, &m, &cfg.check, &loosen, reason.as_deref())?;
-            let record = record(&m, no_mutants)?.map(|r| r.file()).transpose()?;
+            let record = record(&m, no_mutants, picker, author)?.map(|r| r.file()).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
@@ -371,8 +372,14 @@ fn picks(names: Vec<String>, why: Vec<String>) -> Result<Vec<model::Pick>> {
 }
 
 /// The record `ratchet` writes of `m`: its picks, or, with `--no-mutants`,
-/// why none was picked; `None` when there is neither.
-fn record(m: &model::Measurement, no_mutants: Option<String>) -> Result<Option<landing::Record>> {
+/// why none was picked; `None` when there is neither. Either names its
+/// picker and the change's author, who differ (slimfit#58).
+fn record(
+    m: &model::Measurement,
+    no_mutants: Option<String>,
+    picker: Option<String>,
+    author: Option<String>,
+) -> Result<Option<landing::Record>> {
     let picks: std::collections::BTreeMap<String, Vec<model::Pick>> = m
         .suites
         .iter()
@@ -395,9 +402,36 @@ fn record(m: &model::Measurement, no_mutants: Option<String>) -> Result<Option<l
         none => none,
     };
     if picks.is_empty() && none.is_none() {
+        if picker.is_some() || author.is_some() {
+            return Err(fault::fault(
+                "--picker or --author, but no record to name them in: this tree's measurement ran no picks",
+                "run the picks first (`slimfit check --mutants <name>... --why <why>...`), or add `--no-mutants \
+                 \"<the picker's why>\"`",
+            ));
+        }
         return Ok(None);
     }
-    Ok(Some(landing::Record { tree: m.tree.clone(), picks, none }))
+    let id = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty() && !v.contains('\n'));
+    let record = landing::Record {
+        tree: m.tree.clone(),
+        picker: id(picker).unwrap_or_default(),
+        author: id(author).unwrap_or_default(),
+        picks,
+        none,
+    };
+    if !record.picked_by_another() {
+        let fault = if record.picker.is_empty() || record.author.is_empty() {
+            "a record of the change's mutants without `--picker` and `--author`, each one line"
+        } else {
+            "--picker is the change's author: a record's picker is a second agent"
+        };
+        return Err(fault::fault(
+            fault,
+            "ask a second agent to pick, never yourself: it reads the goal (`slimfit help picker`), the change's diff \
+             and the candidates, nothing else; then `slimfit ratchet --picker <its id> --author <yours>`",
+        ));
+    }
+    Ok(Some(record))
 }
 
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {
@@ -583,15 +617,35 @@ mod answer_tests {
         assert!(faults(repo, &six)[0].fault.contains("6 mutants picked, more than 5"));
         assert!(faults(repo, "check --mutants n m --why w")[0].fault.contains("2 mutant(s) picked, with 1 `--why`"));
         assert_eq!(faults(repo, "check --mutants --why w")[0].fault, "--why without a mutant's name");
-        let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
-        assert_eq!((code, out["mutated"]["rust"]["picks"][0]["outcome"].as_str()), (0, Some("killed")), "{out:#}");
-        let no = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", "nothing"]).unwrap_err());
+        // A pick that survives fails as `survived_mutants`, whoever picked.
+        let survivor = "src/lib.rs:12:5: replace is_adult -> bool with true";
+        let (out, code) =
+            slimfit_args(repo, &["check", "--mutants", killed, survivor, "--why", "the age bound", "w"]).unwrap();
+        let outcomes: Vec<&str> =
+            out["mutated"]["rust"]["picks"].as_array().unwrap().iter().filter_map(|p| p["outcome"].as_str()).collect();
+        let metrics: Vec<&str> =
+            out["verdict"]["violations"].as_array().unwrap().iter().filter_map(|v| v["metric"].as_str()).collect();
+        assert_eq!((code, outcomes, metrics), (1, vec!["killed", "survived"], vec!["survived_mutants"]), "{out:#}");
+        let loose = "ratchet --loosen survived_mutants --reason r";
+        let no = faults(repo, &format!("{loose} --no-mutants nothing"));
         assert!(no[0].fault.contains("--no-mutants, but this tree's measurement ran picked mutants"), "{no:?}");
-        let (out, _) = slimfit(repo, "ratchet").unwrap();
+        // The author does not pick (slimfit#58): a record without a picker, or with the author as its picker, is refused.
+        for (args, fault) in [
+            ("", "without `--picker` and `--author`"),
+            (" --picker me --author me", "--picker is the change's author"),
+            (" --picker p", "without `--picker` and `--author`"),
+        ] {
+            let f = faults(repo, &format!("{loose}{args}"));
+            assert!(f[0].fault.contains(fault) && f[0].fix.contains("`slimfit help picker`"), "{args}: {f:?}");
+        }
+        assert!(!repo.join(crate::landing::DIR).exists(), "a refused ratchet writes no record");
+        let (out, _) = slimfit(repo, &format!("{loose} --picker p --author a")).unwrap();
         let record = out["record"].as_str().unwrap().to_string();
         assert!(record.starts_with(".slimfit/mutants/"), "{out:#}");
         let text = std::fs::read_to_string(repo.join(&record)).unwrap();
         assert!(text.contains("\"why\": \"the age bound\"") && text.contains("\"outcome\": \"killed\""), "{text}");
+        assert!(text.contains("\"picker\": \"p\"") && text.contains("\"author\": \"a\""), "{text}");
+        // A record with a picker other than its author passes the gate.
         commit("a");
         assert_eq!(held(crate::EXIT_OK)["landing"]["records"], serde_json::json!([record]));
         // Which lines a record covers is not held: an edit after it passes.
@@ -604,12 +658,28 @@ mod answer_tests {
         git(repo, &["checkout", "-qb", "b", "target"]);
         add("src/b.rs", "pub fn b_two() -> u8 {\n    2\n}\n");
         held(crate::EXIT_VIOLATION);
+        // Nor does a record that names no picker other than its author (as those from before slimfit#58).
+        std::fs::create_dir_all(repo.join(crate::landing::DIR)).unwrap();
+        let unnamed = repo.join(crate::landing::DIR).join("unnamed.json");
+        for text in [r#"{"none":"mine"}"#, r#"{"none":"mine","picker":"a","author":"a"}"#, "{"] {
+            std::fs::write(&unnamed, text).unwrap();
+            git(repo, &["add", "-A"]);
+            let fix = held(crate::EXIT_VIOLATION)["verdict"]["violations"][0]["fix"].clone();
+            assert!(fix.as_str().unwrap().contains("no record of its mutants that names a picker other"), "{fix}");
+        }
+        git(repo, &["rm", "-qf", &unnamed.to_string_lossy()]);
+        // Either flag with no record to write is refused.
+        assert!(faults(repo, "ratchet --picker p --author a")[0].fault.contains("no record to name them in"));
         assert!(faults(repo, "ratchet --no-mutants")[0].fault.contains("a value is required"));
         let blank = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", " "]).unwrap_err());
         assert_eq!(blank[0].fault, "--no-mutants without a reason");
-        let (out, _) = slimfit_args(repo, &["ratchet", "--no-mutants", "a constant: no decision to mutate"]).unwrap();
+        let no_mutants =
+            ["ratchet", "--no-mutants", "a constant: no decision to mutate", "--picker", "p", "--author", "b"];
+        assert!(faults(repo, "ratchet --no-mutants x")[0].fault.contains("without `--picker` and `--author`"));
+        let (out, _) = slimfit_args(repo, &no_mutants).unwrap();
         let none = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
         assert!(none.contains("\"none\": \"a constant: no decision to mutate\"") && !none.contains("picks"), "{none}");
+        assert!(none.contains("\"picker\": \"p\""), "{none}");
         commit("b");
         held(crate::EXIT_OK);
         git(repo, &["checkout", "-q", "a"]);
@@ -718,7 +788,7 @@ mod answer_tests {
         std::fs::write(&p, std::fs::read_to_string(&p).unwrap() + "\npub fn a_one() -> u8 {\n    1\n}\n").unwrap();
         let killed = "src/lib.rs:12:9: replace >= with < in is_adult";
         slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
-        slimfit(repo, "ratchet").unwrap();
+        slimfit(repo, "ratchet --picker p --author a").unwrap();
         git(repo, &["add", "-A"]);
         git(repo, &["commit", "-qm", "a, recorded"]);
         // Landed: the target is where the change now is.
@@ -777,7 +847,7 @@ mod answer_tests {
         assert_eq!(code, 0, "{held:#}");
         let (report, _) = slimfit(repo, "report --points 1").unwrap();
         let survival = &report["history"][0]["mutants_survival"];
-        assert_eq!((survival["author"]["ran"].as_u64(), survival["author"]["survived"].as_u64()), (Some(1), Some(0)));
+        assert_eq!((survival["picker"]["ran"].as_u64(), survival["picker"]["survived"].as_u64()), (Some(1), Some(0)));
         assert_eq!(survival["sampled"]["ran"].as_u64(), Some(16), "{survival:#}");
         let (next, _) = slimfit(repo, "next --all --sample 20").unwrap();
         assert!(next["tasks"].as_array().unwrap().iter().all(|t| t["evidence"]["source"] != "sampled"), "{next:#}");
