@@ -4,7 +4,7 @@
 
 use crate::config::CheckConfig;
 use crate::fault::{Fault, Faults, fault};
-use crate::model::{Measurement, Metrics, ReachTest, SuiteMeasurement};
+use crate::model::{Measurement, Metrics, ReachTest, Span, SuiteMeasurement};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -100,9 +100,10 @@ pub struct Loosening {
 }
 
 /// The metrics `check` holds against the baseline. Line counts are recorded
-/// but not bounded: code may grow, as long as every new line is covered and
-/// every new mutant killed. `test_seconds` is held as a trend, not a bound
-/// (ADR 0009, 0010). Each variant's help is the rule `check` holds it to.
+/// but not bounded: code may grow, as long as no test fails and every
+/// picked mutant of it is killed. `test_seconds` and `uncovered_lines` are
+/// held as trends, not bounds (ADR 0001, 0009, 0010). Each variant's help
+/// is the rule `check` holds it to.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum, agent_help::Help)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
@@ -113,7 +114,7 @@ pub enum Bound {
     /// The CPU time (user + sys) the tests' own processes spent, in seconds, build excluded: each test's own process and those it starts where the test command records it (the Rust preset's runner), otherwise the test command's process tree after the suite's `build_command`. A trend, not a bound: `check` answers it against the baseline and never fails on it, since on a host with fast and slow cores it moves with load (see [host load](help:host-load)); `slimfit ratchet` keeps the lower of the two, `slimfit report` shows it over time and `slow-test` tasks rank by it; never loosened, as there is nothing to loosen. What bounds a gate's time is the gate's own limit (see [factorium](help:factorium)).
     #[value(verbatim_doc_comment)]
     TestSeconds,
-    /// Lines no test runs: at most baseline + `coverage_slack` (by default {const:COVERAGE_SLACK}): code may grow, untested code may not. A drop counts as a gain only past the slack, so a line whose coverage flaps by timing never fails the gate.
+    /// Lines no test runs. A trend, not a bound: `check` answers it against the baseline and never fails on it, and when it rose names the uncovered spans the change adds (`new_spans`), for its author to judge: a bound would count a test that runs the lines and asserts nothing as a gain, which only a mutant can tell from a real one. `slimfit ratchet` keeps the lower of the two, a drop counting only past `coverage_slack` (by default {const:COVERAGE_SLACK}) so a line whose coverage flaps by timing is not locked in; `slimfit report` shows it over time and `uncovered` tasks list the spans; never loosened, as there is nothing to loosen.
     #[value(verbatim_doc_comment)]
     UncoveredLines,
     /// Picked mutants of the change no test kills: none, checked only with `--mutants <name>...` (see [mutants scope](help:mutants-scope)). No baseline keeps a count.
@@ -181,6 +182,9 @@ pub struct Verdict {
     /// Each timed suite's `test_seconds` against the baseline's: a trend,
     /// which fails nothing.
     pub test_seconds: Vec<Trend>,
+    /// Each suite's `uncovered_lines` against the baseline's: a trend, which
+    /// fails nothing; where it rose, with the spans the change adds.
+    pub uncovered_lines: Vec<Trend>,
 }
 
 /// A metric shown against the baseline, which fails nothing.
@@ -190,10 +194,40 @@ pub struct Trend {
     /// None for a suite new to the baseline.
     pub baseline: Option<f64>,
     pub current: f64,
+    /// For `uncovered_lines` that rose: the uncovered spans holding a line
+    /// the change adds ([`Verdict::name_new_spans`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub new_spans: Vec<Span>,
+}
+
+impl Trend {
+    fn of(suite: &str, baseline: Option<f64>, current: f64) -> Self {
+        Trend { suite: suite.into(), baseline, current, new_spans: vec![] }
+    }
+
+    fn rose(&self) -> bool {
+        self.baseline.is_none_or(|b| self.current > b + 1e-9)
+    }
 }
 
 /// What a [`Trend`] prints, as the command pages name it.
 pub const TREND_HELP: &str = "each with `suite`, `baseline` (`null` for a suite with no baseline yet) and `current`";
+
+/// What `uncovered_lines`' trend prints besides.
+pub const NEW_SPANS_HELP: &str = "where it rose, `new_spans`: each uncovered span that holds a line the change \
+     adds since `landing.from`, with `file`, `start`, `end`, `lines` and `function`, when known (none without a landing)";
+
+impl Verdict {
+    /// Names, in each suite's `uncovered_lines` that rose, the uncovered
+    /// spans holding a line of `added` (the landing's lines, by file).
+    pub fn name_new_spans(&mut self, m: &Measurement, added: &crate::landing::Lines) {
+        for t in self.uncovered_lines.iter_mut().filter(|t| t.rose()) {
+            let Some(s) = m.suites.iter().find(|s| s.suite == t.suite) else { continue };
+            let adds = |sp: &&Span| added.get(&sp.file).is_some_and(|l| l.range(sp.start..=sp.end).next().is_some());
+            t.new_spans = s.uncovered.iter().filter(adds).cloned().collect();
+        }
+    }
+}
 
 pub fn load(repo: &Path) -> Result<Baseline> {
     match std::fs::read_to_string(repo.join(FILE)) {
@@ -219,7 +253,7 @@ fn survivors(s: &SuiteMeasurement) -> Option<f64> {
 }
 
 /// Each bound's rule, which `check` and `ratchet` both derive from: what the
-/// baseline keeps of it, what a measurement holds, its limit, when it is a
+/// baseline keeps of it, what a measurement holds, its limit (none for a trend), when it is a
 /// gain (what `check` calls improved and `ratchet` locks in) and whether it
 /// may be loosened.
 impl Bound {
@@ -256,12 +290,10 @@ impl Bound {
         }
     }
 
-    /// The most it may be, given what the baseline keeps; none when that
-    /// depends on a baseline there is not, and for a trend.
-    fn limit(self, cfg: &CheckConfig, kept: Option<f64>) -> Option<f64> {
+    /// The most it may be, whatever the baseline keeps; none for a trend.
+    fn limit(self) -> Option<f64> {
         match self {
-            Bound::TestSeconds => None,
-            Bound::UncoveredLines => kept.map(|b| b + cfg.coverage_slack as f64),
+            Bound::TestSeconds | Bound::UncoveredLines => None,
             Bound::Failures | Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
         }
     }
@@ -285,7 +317,8 @@ impl Bound {
                 "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
             )),
             Bound::TestSeconds => Some(SLOW_TESTS.into()),
-            _ => None,
+            Bound::UncoveredLines => Some(UNCOVERED.into()),
+            Bound::SurvivedMutants => None,
         }
     }
 
@@ -305,10 +338,7 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
             format!("make these tests pass: {}; {}", failing.join(", "), list("failing-test"))
         }
         Bound::TestSeconds => SLOW_TESTS.into(),
-        Bound::UncoveredLines => format!(
-            "new lines run under no test: cover each through its module's interface, or delete it; {}",
-            list("uncovered")
-        ),
+        Bound::UncoveredLines => UNCOVERED.into(),
         Bound::SurvivedMutants => format!(
             "picked mutants of the change survive: assert the behaviour each one changes, or simplify the code until it cannot exist; {}",
             list("surviving-mutant")
@@ -320,6 +350,11 @@ fn fix(b: Bound, s: &SuiteMeasurement) -> String {
 /// What to do about `test_seconds`, which bounds nothing.
 const SLOW_TESTS: &str = "test_seconds is a trend, not a bound: `slimfit check` never fails on it; to lower it, \
      make the slow tests cheaper (`slimfit next --all --kind slow-test` lists them)";
+
+/// What to do about `uncovered_lines`, which bounds nothing.
+pub const UNCOVERED: &str = "uncovered_lines is a trend, not a bound: `slimfit check` never fails on it; to lower \
+     it, add a fast test through the module's interface that asserts what the lines decide, or delete the lines if \
+     nothing needs them; a test that only runs them is no fix (`slimfit next --all --kind uncovered` lists them)";
 
 /// What clears `unrecorded_mutants`: the rule of every change to source.
 pub const PICK_THE_MUTANTS: &str = "list the change's mutants (`slimfit check --mutants`) and ask a second agent \
@@ -343,6 +378,7 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         mutants_unchecked: !m.with_mutants,
         time_unchecked: m.suites.iter().filter(|s| s.untimed).map(|s| s.suite.clone()).collect(),
         test_seconds: vec![],
+        uncovered_lines: vec![],
     };
     for s in &m.suites {
         let kept = base.suites.get(&s.suite);
@@ -352,10 +388,12 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig) -> Verdict {
         for &bound in <Bound as clap::ValueEnum>::value_variants() {
             let Some(cur) = bound.current(s) else { continue };
             let was = bound.kept(kept);
-            if bound == Bound::TestSeconds {
-                v.test_seconds.push(Trend { suite: s.suite.clone(), baseline: was, current: cur });
+            match bound {
+                Bound::TestSeconds => v.test_seconds.push(Trend::of(&s.suite, was, cur)),
+                Bound::UncoveredLines => v.uncovered_lines.push(Trend::of(&s.suite, was, cur)),
+                _ => {}
             }
-            if let Some(lim) = bound.limit(cfg, was)
+            if let Some(lim) = bound.limit()
                 && cur > lim + 1e-9
             {
                 v.violations.push(Violation {
@@ -550,16 +588,53 @@ mod t {
     }
 
     #[test]
-    fn growth_of_a_bound_is_a_violation_and_shrinking_an_improvement() {
+    fn a_trend_that_falls_is_an_improvement_and_a_suite_new_to_the_baseline_still_fails() {
         let cfg = CheckConfig::default();
-        let v = check(&base(m(10, 10.0)), &measurement(m(12, 9.0), Some(0)), &cfg);
-        assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), vec![Bound::UncoveredLines]);
-        assert!(v.violations[0].fix.ends_with("`slimfit next --all --kind uncovered` lists them"));
-        assert_eq!(v.improved.iter().map(|c| c.metric).collect::<Vec<_>>(), vec![Bound::TestSeconds]);
+        let v = check(&base(m(10, 10.0)), &measurement(m(8, 9.0), Some(0)), &cfg);
+        assert!(v.ok, "{v:?}");
+        let improved = [Bound::TestSeconds, Bound::UncoveredLines];
+        assert_eq!(v.improved.iter().map(|c| c.metric).collect::<Vec<_>>(), improved);
         // A suite new to the baseline is recorded, but its failures still fail.
         let v = check(&Baseline::default(), &measurement(Metrics { failures: 1, ..m(1, 1.0) }, None), &cfg);
         assert_eq!((v.new_suites, v.violations.len()), (vec!["s".to_string()], 1));
-        assert_eq!(v.test_seconds, [Trend { suite: "s".into(), baseline: None, current: 1.0 }]);
+        assert_eq!(v.test_seconds, [Trend::of("s", None, 1.0)]);
+        assert_eq!(v.uncovered_lines, [Trend::of("s", None, 1.0)]);
+    }
+
+    /// `uncovered_lines` over the baseline fails nothing (slimfit#67): the
+    /// check is green and answers it, naming the uncovered spans that hold
+    /// a line the change adds; one it falls within `coverage_slack` is not
+    /// named, and the ratchet keeps the lower count, a drop counting only
+    /// past the slack; `--loosen uncovered_lines` is refused with what a
+    /// fix is.
+    #[test]
+    fn uncovered_lines_is_a_trend_that_names_the_changes_spans() {
+        let cfg = CheckConfig::default();
+        let span = |file: &str, start, end| Span { file: file.into(), start, end, lines: 2, function: None };
+        let mut more = measurement(m(14, 10.0), None);
+        more.suites[0].uncovered = vec![span("a.rs", 3, 4), span("a.rs", 8, 9), span("b.rs", 1, 2)];
+        let mut v = check(&base(m(10, 10.0)), &more, &cfg);
+        assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
+        let added: crate::landing::Lines =
+            [("a.rs".to_string(), [(9, "x".to_string()), (20, "y".to_string())].into())].into();
+        v.name_new_spans(&more, &added);
+        assert_eq!(
+            v.uncovered_lines,
+            [Trend { new_spans: vec![span("a.rs", 8, 9)], ..Trend::of("s", Some(10.0), 14.0) }]
+        );
+        // Not risen: no span named, though the change adds one.
+        let mut same = check(&base(m(14, 10.0)), &more, &cfg);
+        same.name_new_spans(&more, &added);
+        assert!(same.uncovered_lines[0].new_spans.is_empty(), "{same:?}");
+        let kept = |cur: u64| ratchet(&base(m(10, 10.0)), &measurement(m(cur, 10.0), None), &cfg, &[], None);
+        assert_eq!([14, 9, 8].map(|c| kept(c).unwrap().suites["s"].uncovered_lines), [10, 10, 8]);
+        let f = crate::fault::of(
+            ratchet(&base(m(10, 10.0)), &more, &cfg, &[Bound::UncoveredLines], Some("x")).unwrap_err(),
+        );
+        assert!(
+            f[0].fault.contains("never loosened") && f[0].fix.contains("a test that only runs them is no fix"),
+            "{f:?}"
+        );
     }
 
     /// `test_seconds` far over the baseline fails nothing: the check is
@@ -571,7 +646,7 @@ mod t {
         let slow = measurement(m(10, 100.0), None);
         let v = check(&base(m(10, 10.0)), &slow, &cfg);
         assert!(v.ok && v.violations.is_empty() && v.improved.is_empty(), "{v:?}");
-        assert_eq!(v.test_seconds, [Trend { suite: "s".into(), baseline: Some(10.0), current: 100.0 }]);
+        assert_eq!(v.test_seconds, [Trend::of("s", Some(10.0), 100.0)]);
         assert_eq!(ratchet(&base(m(10, 10.0)), &slow, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
         let fast = measurement(m(10, 4.0), None);
         assert_eq!(ratchet(&base(m(10, 10.0)), &fast, &cfg, &[], None).unwrap().suites["s"].test_seconds, 4.0);
@@ -669,26 +744,26 @@ mod t {
     #[test]
     fn loosening_needs_a_reason_and_is_recorded() {
         let cfg = CheckConfig::default();
-        let (b, cur) = (base(m(10, 10.0)), measurement(m(12, 10.0), None));
+        let (b, cur) = (base(m(10, 10.0)), measurement(m(10, 10.0), Some(2)));
         let fixes = |r: Result<Baseline>| -> Vec<String> {
             crate::fault::of(r.unwrap_err()).into_iter().map(|f| f.fix).collect()
         };
         let f = fixes(ratchet(&b, &cur, &cfg, &[], None));
         assert!(
-            f[0].ends_with("or, if the rise is right, `slimfit ratchet --loosen uncovered_lines --reason \"<why>\"`")
+            f[0].ends_with("or, if the rise is right, `slimfit ratchet --loosen survived_mutants --reason \"<why>\"`")
         );
-        assert!(fixes(ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], None))[0].starts_with("add `--reason"));
+        assert!(fixes(ratchet(&b, &cur, &cfg, &[Bound::SurvivedMutants], None))[0].starts_with("add `--reason"));
         // Every refusal at once: each violated bound, and the missing reason.
-        let worse = measurement(Metrics { failures: 1, ..m(12, 20.0) }, None);
-        let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::SurvivedMutants], None));
-        assert_eq!(f.len(), 3, "{f:?}");
+        let worse = measurement(Metrics { failures: 1, ..m(12, 20.0) }, Some(2));
+        let f = fixes(ratchet(&b, &worse, &cfg, &[Bound::UncoveredLines], None));
+        assert_eq!(f.len(), 4, "{f:?}");
         assert!(f[0].starts_with("make these tests pass") && !f[0].contains("--loosen failures"), "{f:?}");
-        assert!(f[1].contains("--loosen uncovered_lines") && f[2].starts_with("add `--reason"), "{f:?}");
-        let next = ratchet(&b, &cur, &cfg, &[Bound::UncoveredLines], Some("generated code")).unwrap();
-        assert_eq!(next.suites["s"].uncovered_lines, 12);
-        assert_eq!(next.loosened[0].reason, "generated code");
+        assert!(f[1].contains("--loosen survived_mutants") && f[2].starts_with("uncovered_lines is a trend"), "{f:?}");
+        assert!(f[3].starts_with("add `--reason"), "{f:?}");
+        let next = ratchet(&b, &cur, &cfg, &[Bound::SurvivedMutants], Some("equivalent")).unwrap();
+        assert_eq!((next.loosened[0].to, next.loosened[0].reason.as_str()), (2.0, "equivalent"));
         // A loosened bound that did not rise is not recorded as raised.
-        let same = ratchet(&b, &measurement(m(10, 10.0), None), &cfg, &[Bound::UncoveredLines], Some("x"));
+        let same = ratchet(&b, &measurement(m(10, 10.0), Some(0)), &cfg, &[Bound::SurvivedMutants], Some("x"));
         assert!(same.unwrap().loosened.is_empty());
     }
 }
