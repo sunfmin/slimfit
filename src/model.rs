@@ -98,7 +98,7 @@ impl MutantCounts {
 
 /// A mutant of the change, as the suite's tool lists it: what the agent
 /// picks from (`check --mutants` with no names).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Candidate {
     /// The tool's name for it: what `check --mutants <name>` picks it by.
     pub name: String,
@@ -108,6 +108,14 @@ pub struct Candidate {
     pub function: String,
     /// The code it puts in place of the original.
     pub replacement: String,
+    /// The last line it changes (from `line`).
+    #[serde(skip)]
+    pub end: u32,
+    /// A deletion of a field from a struct literal: cargo-mutants 27 runs
+    /// those whatever its name filter says, so a run's diff must leave out
+    /// the lines of those not picked.
+    #[serde(skip)]
+    pub field: bool,
 }
 
 /// What a [`Candidate`] prints, as the command pages name it.

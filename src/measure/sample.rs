@@ -5,8 +5,8 @@
 //! as picks run; `report` sets its survival beside the picks'. No `check`
 //! or `ratchet` reads it.
 
-use super::mutants::{Listed, list_suite, mutate_picks};
-use super::{OUT, Resolver, Scratch};
+use super::mutants::{Listed, Stop, list_suite, mutate_picks, runs_alone, stops};
+use super::{OUT, Resolver, Run, Scratch};
 use crate::config::Config;
 use crate::git;
 use crate::landing::{self, Record};
@@ -24,12 +24,12 @@ pub const DIR: &str = ".slimfit/samples";
 /// the last sample's tip.
 pub const SAMPLE_DAYS: u32 = 7;
 
-/// How many runs a sample takes to reach its number of viable mutants: a
-/// drawn mutant that does not build is replaced by the next in the draw.
-pub const ROUNDS: usize = 3;
+/// How many mutants a sample of N draws, in N: those after the first N
+/// replace, in the draw's order, the ones that do not build, all in one run.
+pub const DRAWN: usize = 2;
 
-/// What a sample costs, measured on slimfit itself (evidence: slimfit#55).
-pub const COST: &str = "a sample of 5, drawn from 585 mutants of 7 days of changes, took 310s wall and 570s CPU (user + sys), its test run included, at background priority on a host at load 8-13; cargo-mutants 27 ran 15 more than the 5 drawn, field deletions its name filter does not hold back";
+/// What a sample costs, measured on slimfit itself (evidence: slimfit#60).
+pub const COST: &str = "a sample of 5, drawn from 574 mutants of 7 days of changes, took 38.5s wall and 115s CPU (user + sys), its test run included, on a host at load 6-11: one cargo-mutants run of the 10 drawn built 8 (one did not build, 2 more than the sample kept) and skipped 2";
 
 /// git's empty tree: where changes start in a repository younger than the window.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -162,7 +162,7 @@ fn picked_since(repo: &Path, from: &str, head: &str) -> Result<BTreeSet<String>>
 /// sample (or [`SAMPLE_DAYS`]), none a record picked, and runs them as
 /// picks run, each with its function's tests, on `m`, this tree's test run.
 /// A drawn mutant that does not build is replaced by the next in the draw,
-/// for at most [`ROUNDS`] runs. Cached in `.slimfit/out/` per tip and `n`.
+/// among `n` × [`DRAWN`] run at once. Cached in `.slimfit/out/` per tip and `n`.
 pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sampled> {
     let head = git::run(repo, &["rev-parse", "HEAD"])?.trim().to_string();
     let cache = repo.join(OUT).join("sample.json");
@@ -177,8 +177,10 @@ pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sa
         let out = scratch.0.join("sample");
         listed.insert(name.clone(), list_suite(repo, cfg, (&from, &to), &name, lines, &out)?);
     }
+    // A mutant that cannot run without a field deletion beside it is not drawn.
+    let alone = |l: &Listed| l.candidates.iter().filter(|c| runs_alone(l, c)).cloned().collect::<Vec<_>>();
     let pool: Vec<(String, Candidate)> =
-        listed.iter().flat_map(|(s, l)| l.candidates.iter().map(move |c| (s.clone(), c.clone()))).collect();
+        listed.iter().flat_map(|(s, l)| alone(l).into_iter().map(move |c| (s.clone(), c))).collect();
     let picked = picked_since(repo, &from, &head)?;
     let order = draw(&pool, &picked, &head);
     let cached: Option<(usize, Sample)> =
@@ -205,8 +207,16 @@ pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sa
     Ok(Sampled { sample, candidates })
 }
 
-/// Runs `order`'s mutants in rounds until `n` built and ran, the draw is
-/// spent, or [`ROUNDS`] runs are done; each run, per suite, as picks run.
+/// Whether a mutant's outcome says it built.
+fn built(outcome: &Option<MutantStatus>) -> bool {
+    matches!(outcome, Some(MutantStatus::Killed | MutantStatus::Survived))
+}
+
+/// Runs the first `n` × [`DRAWN`] of `order`, one run per suite, as picks
+/// run, and keeps the first `n` in the order that built, with those before
+/// them that did not. A run that can stop builds none once `n` drawn before
+/// it have built; one that cannot (every test runs: no shim) holds only the
+/// first `n`, none replaced.
 fn run(
     repo: &Path,
     cfg: &Config,
@@ -217,31 +227,35 @@ fn run(
     mut sample: Sample,
 ) -> Result<Sample> {
     let files = git::files(repo)?;
-    let mut next = order.iter();
-    for _ in 0..ROUNDS {
-        let c = sample.counts();
-        let want = n.saturating_sub((c.killed + c.survived) as usize);
-        let round: Vec<&(String, Candidate)> = next.by_ref().take(want).collect();
-        if round.is_empty() {
+    let drawn = &order[..order.len().min(n * DRAWN)];
+    let suites: BTreeSet<&String> = drawn.iter().map(|(s, _)| s).collect();
+    let mut ran: BTreeMap<usize, Option<MutantStatus>> = BTreeMap::new();
+    for s in suites {
+        let suite = cfg.suites.iter().find(|x| &x.name == s).expect("a configured suite").resolve();
+        let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
+        let run = Run::new(repo, &suite, repo.join(OUT).join("sample").join(s));
+        std::fs::create_dir_all(&run.out)?;
+        let stop = stops(&suite, tested, &run.out);
+        let (ranks, picks): (Vec<usize>, Vec<Pick>) = (drawn.iter().enumerate())
+            .filter(|(r, (x, _))| x == s && (stop || *r < n))
+            .map(|(r, (_, c))| (r, Pick { name: c.name.clone(), why: "sampled".into(), outcome: None }))
+            .unzip();
+        let known = ran.iter().filter(|(_, o)| built(o)).map(|(r, _)| *r).collect();
+        let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });
+        let totals = Classifier::of_worktree(&suite, repo, &files)?
+            .count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
+        let resolver = Resolver::new(repo, &totals);
+        let mutated = mutate_picks(&run, &resolver, &listed[s], &picks, tested, stop.as_ref())?;
+        ran.extend(ranks.into_iter().zip(mutated.mutated.picks.into_iter().map(|p| p.outcome)));
+    }
+    let mut viable = 0;
+    for (r, outcome) in ran {
+        if viable == n {
             break;
         }
-        let mut by_suite: BTreeMap<&String, Vec<Pick>> = BTreeMap::new();
-        for (s, c) in round {
-            by_suite.entry(s).or_default().push(Pick { name: c.name.clone(), why: "sampled".into(), outcome: None });
-        }
-        for (s, picks) in by_suite {
-            let l = &listed[s];
-            let suite = cfg.suites.iter().find(|x| &x.name == s).expect("a configured suite").resolve();
-            let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
-            let totals = Classifier::of_worktree(&suite, repo, &files)?
-                .count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
-            let out = repo.join(OUT).join("sample").join(s);
-            std::fs::create_dir_all(&out)?;
-            let root = repo.join(&suite.root);
-            let ran = mutate_picks(&root, &out, &suite, &Resolver::new(repo, &totals), l, &picks, tested)?;
-            let drawn = sample.drawn.entry(s.clone()).or_default();
-            drawn.extend(ran.mutated.picks.into_iter().map(|p| Drawn { name: p.name, outcome: p.outcome }));
-        }
+        let (s, c) = &drawn[r];
+        viable += usize::from(built(&outcome));
+        sample.drawn.entry(s.clone()).or_default().push(Drawn { name: c.name.clone(), outcome });
     }
     Ok(sample)
 }
@@ -260,6 +274,7 @@ mod t {
                     line: i as u32,
                     function: "f".into(),
                     replacement: i.to_string(),
+                    ..Candidate::default()
                 };
                 ("rust".to_string(), c)
             })
