@@ -110,6 +110,16 @@ pub fn worktree(head: &Head) -> Result<Worktree> {
     Ok(Worktree { files, head: head.clone(), key })
 }
 
+#[cfg(test)]
+impl Worktree {
+    /// The tree of `files` under `top`, with no repository: a test's sample
+    /// directory.
+    pub fn of(top: &Path, files: Vec<String>) -> Self {
+        let head = Head { top: top.into(), commit: None, index: Default::default(), scratch: Default::default() };
+        Self { files, head, key: String::new() }
+    }
+}
+
 /// Files of the working tree that differ from `commit` (both sides of a
 /// rename, deleted ones too), plus the untracked ones.
 fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<Vec<String>> {

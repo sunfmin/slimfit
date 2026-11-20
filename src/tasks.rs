@@ -3,8 +3,8 @@
 
 use crate::config::Config;
 use crate::git;
-use crate::landing::Tree;
-use crate::loc::{Classifier, Kind};
+use crate::landing::{SuiteTree, Tree};
+use crate::loc::Kind;
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
 use crate::ratchet::{Baseline, Kept, KeptFile, Measured};
 use anyhow::Result;
@@ -121,12 +121,11 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
 
 pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
     let mut out = pick_mutants(repo, tree, cfg, m.with_mutants)?;
-    let files = &tree.wt.files;
     let landed = landed(repo);
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
         out.extend(rising(repo, &cfg.check, s, &landed));
-        out.extend(deepen(repo, &Classifier::of_worktree(&sc.resolve(), repo, files)?, &s.suite, &base.kept_files)?);
+        out.extend(deepen(repo, tree.suite(cfg, &sc.name)?, &base.kept_files));
     }
     out.sort_by_key(|t| t.kind);
     Ok(out)
@@ -535,12 +534,9 @@ pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
 
 /// The suite that counts `path` (relative to the repo) as an existing
 /// source file, with its prod lines: where a deepen task's file belongs.
-pub fn source_suite(repo: &Path, tree: &Tree, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
-    let Ok(text) = std::fs::read_to_string(repo.join(path)) else { return Ok(None) };
-    let files = &tree.wt.files;
+pub fn source_suite(tree: &Tree, cfg: &Config, path: &str) -> Result<Option<(String, u64)>> {
     for sc in &cfg.suites {
-        let c = Classifier::of_worktree(&sc.resolve(), repo, files)?;
-        if let Some((Kind::Source, l)) = c.file(path, &text) {
+        if let Some(l) = tree.suite(cfg, &sc.name)?.source_lines(path) {
             return Ok(Some((sc.name.clone(), l.prod)));
         }
     }
@@ -559,21 +555,20 @@ pub fn churn(repo: &Path, file: &str) -> (u64, u64) {
 /// Source files that keep changing and are big: where a deeper module pays
 /// off soonest. A file kept as it is (`kept`) is not proposed until it has
 /// grown or churned past the verdict's thresholds.
-fn deepen(repo: &Path, classifier: &Classifier, suite: &str, kept: &[KeptFile]) -> Result<Vec<Task>> {
+fn deepen(repo: &Path, st: &SuiteTree, kept: &[KeptFile]) -> Vec<Task> {
+    let suite = &st.suite.name;
     let log =
         git::run(repo, &["log", &format!("--since={DEEPEN_DAYS}.days"), "--no-merges", "--format=", "--name-only"])
             .unwrap_or_default();
     let mut changes: BTreeMap<&str, u64> = BTreeMap::new();
     for f in log.lines().filter(|l| !l.is_empty()) {
-        if classifier.kind(f) == Some(Kind::Source) {
+        if st.kind(f) == Some(Kind::Source) {
             *changes.entry(f).or_default() += 1;
         }
     }
     let mut hot = Vec::new();
     for (f, n) in changes.into_iter().filter(|(_, n)| *n >= 5) {
-        let Ok(text) = std::fs::read_to_string(repo.join(f)) else { continue };
-        let Some((_, l)) = classifier.file(f, &text) else { continue };
-        let lines = l.prod;
+        let Some(lines) = st.source_lines(f).map(|l| l.prod) else { continue };
         // Only a file with a verdict pays for counting its whole history.
         let held = || kept.iter().filter(|k| k.file == f).any(|k| k.holds(suite, f, lines, churn(repo, f).1));
         if lines >= 100 && !held() {
@@ -581,7 +576,7 @@ fn deepen(repo: &Path, classifier: &Classifier, suite: &str, kept: &[KeptFile]) 
         }
     }
     hot.sort_by_key(|(f, n, l)| (std::cmp::Reverse(n * l), f.clone()));
-    Ok(hot
+    hot
         .into_iter()
         .map(|(f, n, l)| Task {
             kind: TaskKind::Deepen,
@@ -597,7 +592,7 @@ fn deepen(repo: &Path, classifier: &Classifier, suite: &str, kept: &[KeptFile]) 
                 .into(),
             accept: TaskKind::Deepen.accept().into(),
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -659,10 +654,8 @@ mod t {
             git(repo, &["add", "."]);
             git(repo, &["commit", "-qm", &format!("c {i}")]);
         }
-        let suite = crate::config::preset(crate::config::Preset::Rust);
-        let c =
-            Classifier::of_worktree(&suite, repo, &git::worktree(&git::open(repo).unwrap()).unwrap().files).unwrap();
-        let proposed: Vec<_> = deepen(repo, &c, "s", &[]).unwrap().into_iter().map(|t| t.files).collect();
+        let (tree, cfg) = (crate::measure::t::tree(repo), Config::one("s", crate::config::Preset::Rust));
+        let proposed: Vec<_> = deepen(repo, tree.suite(&cfg, "s").unwrap(), &[]).into_iter().map(|t| t.files).collect();
         assert_eq!(proposed, [["src/big.rs"]]);
     }
 
@@ -675,7 +668,7 @@ mod t {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path();
         git(repo, &["init", "-q"]);
-        let c = Classifier::of_worktree(&crate::config::preset(crate::config::Preset::Rust), repo, &[]).unwrap();
+        let cfg = Config::one("s", crate::config::Preset::Rust);
         let commit = |lines: usize, note: &str| {
             let body: String = (0..lines).map(|i| format!("pub const C{i}: u8 = {};\n", note.len())).collect();
             std::fs::create_dir_all(repo.join("src")).unwrap();
@@ -686,12 +679,13 @@ mod t {
         for i in 0..5 {
             commit(120, &"x".repeat(i));
         }
-        let proposed = |kept: &[KeptFile]| deepen(repo, &c, "s", kept).unwrap().len();
+        // The tree as it is after the last commit.
+        let proposed =
+            |kept: &[KeptFile]| deepen(repo, crate::measure::t::tree(repo).suite(&cfg, "s").unwrap(), kept).len();
         assert_eq!(proposed(&[]), 1);
         let (commits_90d, commits_total) = churn(repo, "src/big.rs");
         assert_eq!((commits_90d, commits_total), (5, 5));
-        let prod_lines =
-            c.file("src/big.rs", &std::fs::read_to_string(repo.join("src/big.rs")).unwrap()).unwrap().1.prod;
+        let prod_lines = source_suite(&crate::measure::t::tree(repo), &cfg, "src/big.rs").unwrap().unwrap().1;
         let verdict = |suite: &str| KeptFile {
             suite: suite.into(),
             file: "src/big.rs".into(),

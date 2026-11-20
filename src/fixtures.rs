@@ -4,10 +4,10 @@
 //! `is_adult` whose boundary mutant survives, a redundant copy of the `add`
 //! test, and a slow test.
 
-use crate::config::{CheckConfig, Preset, preset};
+use crate::config::{CheckConfig, Config, Preset, preset};
 use crate::formats::{self, CoverageFormat, MutantsFormat, ReachFormat, TestsFormat};
-use crate::loc::Classifier;
-use crate::measure::{Resolver, Timing, reduce};
+use crate::landing::Tree;
+use crate::measure::{Timing, reduce};
 use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
 use crate::ratchet::{Baseline, check, ratchet};
 use crate::tasks::{TaskKind, of_measurement};
@@ -55,13 +55,9 @@ fn measure_with_coverage(
     let dir = sample(lang);
     let mut files = Vec::new();
     files_under(&dir, &dir, &mut files);
-    let mut suite = preset(p);
-    suite.name = lang.into();
-    let totals = Classifier::of_worktree(&suite, &dir, &files)
-        .unwrap()
-        .count(&files, |f| std::fs::read_to_string(dir.join(f)).ok());
     // The reports' `/REPO` is the sample's directory, where its files are read.
-    let resolver = Resolver::new(&dir, &totals);
+    let tree = Tree::at(&dir, files);
+    let st = tree.suite(&Config::one(lang, p), lang).unwrap();
     let here = |texts: Vec<String>| -> Vec<String> {
         texts.into_iter().map(|t| t.replace("/REPO", &dir.to_string_lossy())).collect()
     };
@@ -69,23 +65,14 @@ fn measure_with_coverage(
     let c = formats::read_coverage(coverage.0, &here(coverage.1)).unwrap();
     let mut m = formats::read_mutants(mutants.0, &here(read(lang, mutants.1))).unwrap();
     for x in &mut m {
-        x.file = resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
+        x.file = st.resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
     // The Rust sample's test run also records which functions each test ran.
     let reach =
         (p == Preset::Rust).then(|| formats::read_reach(ReachFormat::Lcov, &here(read(lang, &["reach.txt"]))).unwrap());
     // The tests' CPU time as their wall time: the sample's reports hold no other.
     let tree_cpu = t.iter().map(|t| t.seconds).sum();
-    reduce(
-        &suite,
-        &totals,
-        &resolver,
-        t,
-        c,
-        reach,
-        Some(m.into()),
-        Timing { command_seconds: 0.0, tree_cpu, test_cpu: Default::default() },
-    )
+    reduce(st, t, c, reach, Some(m.into()), Timing { command_seconds: 0.0, tree_cpu, test_cpu: Default::default() })
 }
 
 /// What every sample must show, whatever the language.

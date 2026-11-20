@@ -87,8 +87,8 @@ fn listed(repo: &Path, cfg: &Config, tree: &landing::Tree, scratch: &Path) -> Re
     };
     eprintln!("slimfit: the change is what HEAD adds since its merge base with {}, {}", l.target, l.from);
     let mut out = BTreeMap::new();
-    for (name, lines) in landing::required(repo, cfg, &tree.wt.files, &l.added)? {
-        let listed = list_suite(repo, cfg, (&l.from, &l.to), &name, lines, scratch);
+    for (name, lines) in landing::required(cfg, tree, &l.added)? {
+        let listed = list_suite(repo, &tree.suite(cfg, &name)?.suite, (&l.from, &l.to), lines, scratch);
         out.insert(name.clone(), listed.map_err(|e| fault::within(&format!("suite {name}"), e))?);
     }
     Ok(out)
@@ -98,19 +98,18 @@ fn listed(repo: &Path, cfg: &Config, tree: &landing::Tree, scratch: &Path) -> Re
 /// in it: nothing, and the tool not run, when the suite adds no source line.
 pub(super) fn list_suite(
     repo: &Path,
-    cfg: &Config,
+    suite: &Suite,
     (from, to): (&str, &str),
-    name: &str,
     lines: landing::Lines,
     scratch: &Path,
 ) -> Result<Listed> {
-    let suite = cfg.suites.iter().find(|s| s.name == name).expect("a configured suite").resolve();
+    let name = &suite.name;
     let files: Vec<String> = lines.keys().cloned().collect();
     if files.is_empty() {
         return Ok(Listed::default());
     }
     let patch = git::diff(repo, from, to, &suite.root, &files)?;
-    let run = Run::new(repo, &suite, scratch.join(name));
+    let run = Run::new(repo, suite, scratch.join(name));
     std::fs::create_dir_all(&run.out)?;
     let (diff, list) = (run.out.join("change.diff"), run.out.join("mutants.list.json"));
     std::fs::write(&diff, &patch)?;
