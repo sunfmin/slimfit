@@ -469,7 +469,10 @@ mod t {
     }
 
     fn picks(names: &[&str]) -> Vec<Pick> {
-        names.iter().map(|n| Pick { name: n.to_string(), why: String::new(), outcome: None }).collect()
+        names
+            .iter()
+            .map(|n| Pick { name: n.to_string(), why: String::new(), outcome: None, first_outcome: None })
+            .collect()
     }
 
     const CORNER: &str = "src/lib.rs:13:5: replace corner -> Point with Default::default()";
