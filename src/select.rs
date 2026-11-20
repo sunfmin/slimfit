@@ -73,26 +73,20 @@ pub struct PlanMutant {
 /// its diff puts in; `rank` gives a name's rank in the draw, `None` if not drawn.
 pub fn drawn(listed: &str, rank: impl Fn(&str) -> Option<usize>) -> Result<Vec<PlanMutant>> {
     let listed: serde_json::Value = serde_json::from_str(listed).context("cargo mutants --list --json")?;
-    let mut out = Vec::new();
-    for m in listed.as_array().into_iter().flatten() {
-        let (Some(name), Some(file), Some(diff)) = (m["name"].as_str(), m["file"].as_str(), m["diff"].as_str()) else {
-            continue;
-        };
-        let Some(rank) = rank(name) else { continue };
-        let mut lines = diff.lines().skip_while(|l| !l.starts_with("@@ "));
-        let Some(mut at) = lines.next().and_then(|h| h.split(" +").nth(1)?.split([',', ' ']).next()?.parse().ok())
-        else {
-            continue;
-        };
+    let mutant = |m: &serde_json::Value| {
+        let rank = rank(m["name"].as_str()?)?;
+        let mut lines = m["diff"].as_str()?.lines().skip_while(|l| !l.starts_with("@@ "));
+        let header = lines.next()?;
+        let mut at: u32 = header.split(" +").nth(1)?.split([',', ' ']).next()?.parse().ok()?;
         // The new side's changed lines, from the first: context before them counts.
         let mut lines = lines.filter(|l| !l.starts_with('-')).peekable();
         while lines.next_if(|l| !l.starts_with('+')).is_some() {
             at += 1;
         }
         let text = lines.map_while(|l| l.strip_prefix('+')).map(String::from).collect();
-        out.push(PlanMutant { rank, file: file.into(), start: at, text });
-    }
-    Ok(out)
+        Some(PlanMutant { rank, file: m["file"].as_str()?.into(), start: at, text })
+    };
+    Ok(listed.as_array().into_iter().flatten().filter_map(mutant).collect())
 }
 
 impl Budget {
@@ -300,9 +294,7 @@ fn budgeted(args: &[OsString]) -> i32 {
     }
     eprintln!("slimfit: drawn mutant {rank}: building");
     let code = real_or_fail(args);
-    if code == 0 {
-        let _ = std::fs::write(dir.join(format!("built-{rank}")), "");
-    }
+    let _ = (code == 0).then(|| std::fs::write(dir.join(format!("built-{rank}")), ""));
     code
 }
 

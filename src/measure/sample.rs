@@ -207,6 +207,11 @@ pub fn sample(repo: &Path, cfg: &Config, m: &Measurement, n: usize) -> Result<Sa
     Ok(Sampled { sample, candidates })
 }
 
+/// Whether a mutant's outcome says it built.
+fn built(outcome: &Option<MutantStatus>) -> bool {
+    matches!(outcome, Some(MutantStatus::Killed | MutantStatus::Survived))
+}
+
 /// Runs the first `n` × [`DRAWN`] of `order`, one run per suite, as picks
 /// run, and keeps the first `n` in the order that built, with those before
 /// them that did not. A run that can stop builds none once `n` drawn before
@@ -235,7 +240,6 @@ fn run(
             .filter(|(r, (x, _))| x == s && (stop || *r < n))
             .map(|(r, (_, c))| (r, Pick { name: c.name.clone(), why: "sampled".into(), outcome: None }))
             .unzip();
-        let built = |o: &Option<MutantStatus>| matches!(o, Some(MutantStatus::Killed | MutantStatus::Survived));
         let known = ran.iter().filter(|(_, o)| built(o)).map(|(r, _)| *r).collect();
         let stop = stop.then(|| Stop { viable: n, ranks: ranks.clone(), known });
         let totals = Classifier::of_worktree(&suite, repo, &files)?
@@ -251,7 +255,7 @@ fn run(
             break;
         }
         let (s, c) = &drawn[r];
-        viable += usize::from(matches!(outcome, Some(MutantStatus::Killed | MutantStatus::Survived)));
+        viable += usize::from(built(&outcome));
         sample.drawn.entry(s.clone()).or_default().push(Drawn { name: c.name.clone(), outcome });
     }
     Ok(sample)

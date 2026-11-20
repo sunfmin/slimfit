@@ -387,10 +387,6 @@ fn selecting(
         _ => return every(format!("cargo-mutants listed no mutants (log {})", log.display())),
     };
     let rank = |name: &str| picks.iter().position(|p| p.name == name);
-    let others: Vec<String> = formats::read_mutants_list(&listed)?.into_iter().map(|c| c.name).collect();
-    for name in others.iter().filter(|n| rank(n).is_none()) {
-        eprintln!("slimfit: {}: cargo-mutants also runs `{name}`, which is not picked", suite.name);
-    }
     if let Some(s) = stop {
         let mutants = crate::select::drawn(&listed, |n| Some(s.ranks[rank(n)?]))?;
         plan.budget = Some(crate::select::Budget { viable: s.viable, known: s.known.clone(), mutants });
