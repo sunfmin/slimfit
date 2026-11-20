@@ -6,7 +6,7 @@
 //! or `ratchet` reads it.
 
 use super::mutants::{Listed, list_suite, mutate_picks};
-use super::{OUT, Resolver, Scratch};
+use super::{OUT, Resolver, Run, Scratch};
 use crate::config::Config;
 use crate::git;
 use crate::landing::{self, Record};
@@ -235,10 +235,9 @@ fn run(
             let tested = m.suites.iter().find(|x| &x.suite == s).expect("a measured suite");
             let totals = Classifier::of_worktree(&suite, repo, &files)?
                 .count(&files, |f| std::fs::read_to_string(repo.join(f)).ok());
-            let out = repo.join(OUT).join("sample").join(s);
-            std::fs::create_dir_all(&out)?;
-            let root = repo.join(&suite.root);
-            let ran = mutate_picks(&root, &out, &suite, &Resolver::new(repo, &totals), l, &picks, tested)?;
+            let run = Run::new(repo, &suite, repo.join(OUT).join("sample").join(s));
+            std::fs::create_dir_all(&run.out)?;
+            let ran = mutate_picks(&run, &Resolver::new(repo, &totals), l, &picks, tested)?;
             let drawn = sample.drawn.entry(s.clone()).or_default();
             drawn.extend(ran.mutated.picks.into_iter().map(|p| Drawn { name: p.name, outcome: p.outcome }));
         }

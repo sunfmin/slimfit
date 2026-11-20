@@ -3,8 +3,8 @@
 //! alone, each with the tests that ran its function. Measuring a suite
 //! asks this module for one thing: run the suite's picks on its test run.
 
-use super::{Resolver, Scratch, prefix, quoted, read_reports, report_paths, shell, tail, unreadable};
-use crate::config::{Config, MutantTests, Suite};
+use super::{Resolver, Run, Scratch, quoted, tail, unreadable};
+use crate::config::{Config, MutantTests};
 use crate::fault::{self, Faults, fault};
 use crate::formats;
 use crate::git;
@@ -110,9 +110,9 @@ pub(super) fn list_suite(
         return Ok(Listed::default());
     }
     let patch = git::diff(repo, from, to, &suite.root, &files)?;
-    let dir = scratch.join(name);
-    std::fs::create_dir_all(&dir)?;
-    let (diff, list) = (dir.join("change.diff"), dir.join("mutants.list.json"));
+    let run = Run::new(repo, &suite, scratch.join(name));
+    std::fs::create_dir_all(&run.out)?;
+    let (diff, list) = (run.out.join("change.diff"), run.out.join("mutants.list.json"));
     std::fs::write(&diff, &patch)?;
     let command = format!(
         "{} {} {} --list --json > {}",
@@ -121,7 +121,7 @@ pub(super) fn list_suite(
         quoted(&diff.to_string_lossy()),
         quoted(&list.to_string_lossy())
     );
-    let (log, ok) = shell(&repo.join(&suite.root), &dir, &command, "mutants-list", &[])?;
+    let (log, ok) = run.shell(&command, "mutants-list", &[])?;
     let listing = std::fs::read_to_string(&list).unwrap_or_default();
     let read = formats::read_mutants_list(&listing).ok().filter(|_| ok);
     let Some(mut candidates) = read else {
@@ -130,7 +130,7 @@ pub(super) fn list_suite(
             format!("fix the command's failure in its log {}", log.display()),
         ));
     };
-    let prefix = prefix(&suite);
+    let prefix = run.prefix();
     candidates.iter_mut().for_each(|c| c.file = format!("{prefix}{}", c.file));
     Ok(Listed { patch, candidates })
 }
@@ -191,17 +191,9 @@ fn choose(listed: BTreeMap<String, Listed>, picks: &[Pick]) -> Result<BTreeMap<S
 impl Picked {
     /// Runs the picks on `tested`, this tree's test run of `suite` (which
     /// tests each mutant runs is chosen from it), and records in it the
-    /// mutants the run reports and each pick's outcome. `out` is the
-    /// suite's scratch directory.
-    pub(super) fn run(
-        &self,
-        root: &Path,
-        out: &Path,
-        suite: &Suite,
-        resolver: &Resolver,
-        tested: &mut SuiteMeasurement,
-    ) -> Result<()> {
-        mutate_picks(root, out, suite, resolver, &self.listed, &self.picks, tested)?.record(tested);
+    /// mutants the run reports and each pick's outcome.
+    pub(super) fn run(&self, run: &Run, resolver: &Resolver, tested: &mut SuiteMeasurement) -> Result<()> {
+        mutate_picks(run, resolver, &self.listed, &self.picks, tested)?.record(tested);
         Ok(())
     }
 }
@@ -210,9 +202,7 @@ impl Picked {
 /// outcome. `tested` is this tree's test run: which tests each mutant runs
 /// is chosen from it.
 pub(super) fn mutate_picks(
-    root: &Path,
-    out: &Path,
-    suite: &Suite,
+    run: &Run,
     resolver: &Resolver,
     listed: &Listed,
     picks: &[Pick],
@@ -222,7 +212,8 @@ pub(super) fn mutate_picks(
     if picks.is_empty() {
         return Ok(Mutation { mutants: Vec::new(), mutated: Mutated::default() });
     }
-    let diff = out.join("change.diff");
+    let suite = run.suite;
+    let diff = run.out.join("change.diff");
     std::fs::write(&diff, &listed.patch)?;
     eprintln!("slimfit: {}: running the {} picked mutant(s) of the change", suite.name, picks.len());
     let mut command =
@@ -231,15 +222,15 @@ pub(super) fn mutate_picks(
         command.push_str(&format!(" {} {}", suite.mutants_pick_flag, quoted(&anchored(&p.name))));
     }
     let env = match suite.mutants_tests {
-        MutantTests::Reached => selecting(root, out, suite, &prefix(suite), tested, &command)?,
+        MutantTests::Reached => selecting(run, tested, &command)?,
         MutantTests::All => Vec::new(),
     };
-    let run = mutate(root, out, suite, resolver, &command, &env)?;
+    let reported = mutate(run, resolver, &command, &env)?;
     // A pick is the mutant the run reports at its place, as its name describes it.
     let ran = |name: &str| {
         let c = listed.candidates.iter().find(|c| c.name == name)?;
         let described = name.splitn(4, ':').nth(3).map(str::trim)?;
-        run.iter().find(|m| m.file == c.file && m.line == c.line && m.description == described)
+        reported.iter().find(|m| m.file == c.file && m.line == c.line && m.description == described)
     };
     let mutants: Vec<Mutant> = picks.iter().filter_map(|p| ran(&p.name)).cloned().collect();
     let picks = picks.iter().map(|p| Pick { outcome: ran(&p.name).map(|m| m.status), ..p.clone() }).collect();
@@ -263,28 +254,23 @@ fn anchored(name: &str) -> String {
 /// that ran each function, and the shim first on PATH. Empty, and every
 /// test runs, when the test run recorded no reach, the real nextest is not
 /// found, or the mutants cannot be listed; stderr says which.
-fn selecting(
-    root: &Path,
-    out: &Path,
-    suite: &Suite,
-    prefix: &str,
-    tested: &SuiteMeasurement,
-    command: &str,
-) -> Result<Vec<(String, std::ffi::OsString)>> {
+fn selecting(run: &Run, tested: &SuiteMeasurement, command: &str) -> Result<Vec<(String, std::ffi::OsString)>> {
+    let suite = run.suite;
     let every = |why: String| {
         eprintln!("slimfit: {}: {why}: every mutant runs every test", suite.name);
         Ok(Vec::new())
     };
     let Some(reach) = &tested.reach else { return every("the test run recorded no test's functions".into()) };
-    let shims = out.join("shim");
+    let shims = run.out.join("shim");
     let Some(real) = crate::select::real_nextest(&shims) else {
         return every(format!("no {} on PATH or in cargo's bin directory", crate::select::SHIM));
     };
-    let list = out.join("mutants.list.json");
+    let list = run.out.join("mutants.list.json");
     let listing = format!("{command} --list --json > {}", quoted(&list.to_string_lossy()));
-    let (log, ok) = shell(root, out, &listing, "mutants-list", &[])?;
+    let (log, ok) = run.shell(&listing, "mutants-list", &[])?;
     let listed = std::fs::read_to_string(&list).unwrap_or_default();
-    let plan = match crate::select::plan(root, &listed, |f| format!("{prefix}{f}"), reach, &tested.tests) {
+    let prefix = run.prefix();
+    let plan = match crate::select::plan(&run.root, &listed, |f| format!("{prefix}{f}"), reach, &tested.tests) {
         Ok(p) if ok => p,
         _ => return every(format!("cargo-mutants listed no mutants (log {})", log.display())),
     };
@@ -314,20 +300,11 @@ fn selecting(
 /// One run of the mutation tool, its paths resolved to the suite's files.
 /// A run limited to a change may have no mutant to test, and a tool may
 /// then write no report: a clean exit then reads as none.
-fn mutate(
-    root: &Path,
-    out: &Path,
-    suite: &Suite,
-    resolver: &Resolver,
-    command: &str,
-    env: &[(String, std::ffi::OsString)],
-) -> Result<Vec<Mutant>> {
-    // A report left by an earlier run would be read as this run's.
-    for old in report_paths(root, out, &suite.mutants_report)? {
-        std::fs::remove_file(old)?;
-    }
-    let (log, ok) = shell(root, out, command, "mutants", env)?;
-    let reports = match read_reports(root, out, "mutants_report", &suite.mutants_report, &log) {
+fn mutate(run: &Run, resolver: &Resolver, command: &str, env: &[(String, std::ffi::OsString)]) -> Result<Vec<Mutant>> {
+    let suite = run.suite;
+    run.clear(&suite.mutants_report)?;
+    let (log, ok) = run.shell(command, "mutants", env)?;
+    let reports = match run.texts("mutants_report", &suite.mutants_report, &log) {
         Err(_) if ok => vec![],
         r => r?,
     };
