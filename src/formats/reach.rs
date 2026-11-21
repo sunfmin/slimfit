@@ -100,9 +100,6 @@ fn lcov(line: &str, file: &mut String, t: &mut TestReach) -> Result<()> {
 /// A block of the test's coverprofile: its lines ran when its count is
 /// above 0. A coverprofile names no functions.
 fn go_cover(line: &str, t: &mut TestReach) -> Result<()> {
-    if line.starts_with("mode:") || line.trim().is_empty() {
-        return Ok(());
-    }
     let (file, start, end, count) = super::coverage::go_block(line)?;
     if count > 0 {
         t.lines.entry(file.to_string()).or_default().extend(start..=end);
@@ -146,7 +143,7 @@ mod tests {
     /// Of each test's coverprofile, the lines of the blocks that ran.
     #[test]
     fn reads_the_lines_of_each_tests_coverprofile() {
-        let text = "test m/p\tTestA\nmode: set\nm/p/a.go:3.10,5.2 2 1\nm/p/a.go:7.2,7.9 1 0\n\
+        let text = "test m/p\tTestA\nm/p/a.go:3.10,5.2 2 1\nm/p/a.go:7.2,7.9 1 0\n\
                     test m/p\tTestB\nunreadable /o/each/1-TestB.cover\n";
         let got = read(ReachFormat::GoCover, &[text.into()]).unwrap();
         assert_eq!(got[0].lines, [("m/p/a.go".to_string(), [3, 4, 5].into())].into());

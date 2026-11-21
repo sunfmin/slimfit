@@ -706,11 +706,7 @@ fn llvm_cov(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal>
 /// `go list -f <template> ./...`: the sample's one package, by the import
 /// path the real per-test report gives it, and its directory.
 fn go(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
-    let package = || {
-        let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
-        let first = reach.lines().find_map(|l| l.strip_prefix("test ")).expect("a test in the sample's reach");
-        first.split('\t').next().unwrap().to_string()
-    };
+    let package = || go_tests(reports)[0].0.clone();
     if sub == "list" {
         need(args, "-f")?;
         println!("{}\t{}", package(), dir.display());
@@ -735,16 +731,22 @@ fn go(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work, Re
     Ok(Work { copies: vec![("cover.out".into(), cover.into())], stdout: Some("test.json".into()), ..Work::default() })
 }
 
+/// The (package, name) of each test of the sample's real per-test report.
+fn go_tests(reports: &Path) -> Vec<(String, String)> {
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    let tests = reach.lines().filter_map(|l| l.strip_prefix("test ")?.split_once('\t'));
+    tests.map(|(p, n)| (p.to_string(), n.to_string())).collect()
+}
+
 /// A Go test binary: `-test.list <regexp>` lists the sample's tests;
 /// `-test.run ^<name>$ -test.coverprofile=<file>` writes, as that test's
 /// profile, the real per-test report's blocks for it.
 fn go_test_binary(args: &[String], reports: &Path) -> Result<Work, Refusal> {
-    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
-    let tests = reach.lines().filter_map(|l| Some(l.strip_prefix("test ")?.split_once('\t')?.1));
     if value(args, "-test.list").is_some() {
-        tests.for_each(|t| println!("{t}"));
+        go_tests(reports).iter().for_each(|(_, t)| println!("{t}"));
         return Ok(Work::default());
     }
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
     let run = need(args, "-test.run")?;
     let name =
         run.strip_prefix('^').and_then(|r| r.strip_suffix('$')).ok_or(format!("-test.run {run}: not one test"))?;

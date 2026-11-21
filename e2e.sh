@@ -57,12 +57,12 @@ missing() {
 # An untested function appended to the sample's source, per language.
 inject() {
   case "$1" in
-    rust) printf '\npub fn untested(x: i64) -> i64 {\n    let y = x * 3;\n    y - 1\n}\n' >> "$(source_of "$1")" ;;
-    go) printf '\nfunc Untested(x int) int {\n\ty := x * 3\n\treturn y - 1\n}\n' >> "$(source_of "$1")" ;;
-    typescript) printf '\nexport function untested(x: number): number {\n  const y = x * 3;\n  return y - 1;\n}\n' >> "$(source_of "$1")" ;;
-    kotlin) printf '\nfun untested(x: Int): Int {\n    val y = x * 3\n    return y - 1\n}\n' >> "$(source_of "$1")" ;;
-    swift) printf '\npublic func untested(_ x: Int) -> Int {\n    let y = x * 3\n    return y - 1\n}\n' >> "$(source_of "$1")" ;;
-  esac
+    rust) printf '\npub fn untested(x: i64) -> i64 {\n    let y = x * 3;\n    y - 1\n}\n' ;;
+    go) printf '\nfunc Untested(x int) int {\n\ty := x * 3\n\treturn y - 1\n}\n' ;;
+    typescript) printf '\nexport function untested(x: number): number {\n  const y = x * 3;\n  return y - 1;\n}\n' ;;
+    kotlin) printf '\nfun untested(x: Int): Int {\n    val y = x * 3\n    return y - 1\n}\n' ;;
+    swift) printf '\npublic func untested(_ x: Int) -> Int {\n    let y = x * 3\n    return y - 1\n}\n' ;;
+  esac >> "$(source_of "$1")"
 }
 source_of() {
   case "$1" in
