@@ -93,7 +93,7 @@ pub(crate) enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). A Rust suite counts as test code, besides its `tests` globs and its `#[cfg(test)]` code, every file of a workspace crate that other members of the workspace at the suite's root reach only through `[dev-dependencies]` (none through `[dependencies]` or `[build-dependencies]`): read from the Cargo manifests, never declared again in `slimfit.toml`; for a layout this misses, add globs to the suite's `tests`. It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the verdicts already recorded there: its loosenings, `mutants_from`, the files kept, and each test kept while its text is unchanged. Code already on the branch changes land on is never charged to a mutants run: only the source lines a change adds after it are (see [what the gate holds](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
+    /// It detects {const:LANGUAGES} projects in the repo's files, one suite per project found, each from its language's preset, and writes them to `slimfit.toml` when the repo has none; an existing `slimfit.toml` is kept and used as it is (edit it to override any preset field). A Rust suite's `tests` globs are, by default, {const:RUST_TESTS}: tests, benches and examples in any crate. It counts as test code, besides its `tests` globs and its `#[cfg(test)]` code, every file of a workspace crate that other members of the workspace at the suite's root reach only through `[dev-dependencies]` (none through `[dependencies]` or `[build-dependencies]`): read from the Cargo manifests, never declared again in `slimfit.toml`; for a layout this misses, add globs to the suite's `tests`. It measures every suite once, never from the cache (one instrumented test run, and no mutant), and writes `.slimfit/baseline.json` from that measurement, keeping the verdicts already recorded there: its loosenings, `mutants_from`, the files kept, and each test kept while its text is unchanged. Code already on the branch changes land on is never charged to a mutants run: only the source lines a change adds after it are (see [what the gate holds](help:mutants-scope)). It adds `.slimfit/out` to `.gitignore`, and keeps the measurement and each suite's reports and logs in `.slimfit/out/`. With `--dry-run` it writes none of these (see [dry runs](help:dry-run)).
     ///
     /// ## What it answers
     ///
@@ -518,6 +518,7 @@ fn help() -> Help {
         .constant("KEPT_CHURN", ratchet::KEPT_CHURN)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
         .constant("CACHE_PITFALL", measure::CACHE_HELP)
+        .constant("RUST_TESTS", prose_list(config::RUST_TESTS.iter().map(|g| format!("`{g}`")), "and"))
 }
 
 /// What an answer exits with, nothing left to do included.

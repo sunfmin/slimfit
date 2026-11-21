@@ -1,0 +1,6 @@
+{
+  "tree": "0a3f82cd46f237c62d71237b4339b9970b8c7248+d1fba762150c532c",
+  "picker": "codex:01a1fcdc-9b53-7da1-b8af-90daeeb0a10c:default",
+  "author": "claude-code:ad2acc18-2a33-58a3-b807-35b50a11255b:opus",
+  "none": "The whole-body replacements do not isolate the Rust glob change, and deleting mutants_tests targets an unchanged setting."
+}
