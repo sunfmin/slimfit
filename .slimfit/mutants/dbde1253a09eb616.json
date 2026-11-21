@@ -1,0 +1,39 @@
+{
+  "tree": "e535565f500225e3ed986c0925d7fe5b19d6c47f+d1fba762150c532c",
+  "picker": "grok:01a2007c-335b-7a93-afdc-941351988034:grok-4.7-build",
+  "author": "claude-code:2e2fba6d-08a8-50f7-bf02-7487c54fae9a:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:318:60: replace <= with > in redundant",
+        "why": "On equal line sets this only swaps which twin is kept, and the Go checks accept any two of TestAdds, TestAddsAgain and TestSlow.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:317:39: replace * with + in redundant",
+        "why": "A total overlap can stay on the same side of the cut when the weight is added, and the tests assert the tasks rather than the score.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:309:44: replace += with -= in redundant",
+        "why": "This running total only ranks or fills evidence, while the checks require two twin tasks in calc_test.go.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:311:50: replace += with -= in redundant",
+        "why": "The other total can change sign and still leave the same duplicate-line tasks the sample asserts.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:599:25: replace == with != in reached",
+        "why": "Go still resolves tests through go_source, and the hash check calls test_source directly, so an empty Rust function index can pass.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
