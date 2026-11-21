@@ -87,9 +87,10 @@ Together they fit: coverage proposes, the review decides.
    (for a language whose tests have no binary, the unit `ReachTest::binary`
    holds: its package or test file). On guild each binary has its own
    setup (a scheduler's world, a started guildd) and none reaches half the
-   suite, so the suite-wide cut kept it, and 889 of 1,044 candidates paired
-   two tests of one binary; cut per binary, the overlap candidates fell
-   from 652 to 246 and the 392 subsets did not move (evidence: slimfit#85).
+   suite, so the suite-wide cut kept it and most candidates paired two
+   tests of one binary; cut per binary, the redundant-test tasks fell from
+   1,058 to 644: overlap from 670 to 256, while the same 388 tests stayed
+   subsets (evidence: slimfit#85).
 
    The subset is of all lines: setup both run cannot make one test a
    subset of another, and leaving it out would drop real subsets in small
