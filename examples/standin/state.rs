@@ -29,6 +29,9 @@ pub struct Fault {
     /// Write no report.
     #[serde(default)]
     pub no_report: bool,
+    /// nextest: the first test it runs fails.
+    #[serde(default)]
+    pub first_test_fails: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

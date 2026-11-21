@@ -118,7 +118,7 @@ fn main() {
         "cargo" => cargo(&sub, args, &dir, &state.reports),
         "llvm-profdata" => llvm_profdata(&sub, args),
         "llvm-cov" => llvm_cov(&sub, args, &state.reports),
-        "cargo-nextest" => nextest(args, &dir, &state.reports),
+        "cargo-nextest" => nextest(args, &dir, &state.reports, fault.first_test_fails),
         "go" => go(&sub, args),
         "gremlins" => gremlins(&sub, args),
         "swift" => swift(&sub, args, &dir),
@@ -430,14 +430,29 @@ const NEXTEST_CONFIG: &str = ".config/nextest.toml";
 /// nextest's TOML, a `--profile` other than `default` one the repository
 /// configures, and its filtersets (`-E`, any one of which runs a test) in
 /// the grammar of [`matches`]. The tests are the reach report's, those
-/// the filtersets match; every one passes. From `--archive-file`, it
-/// extracts the binary to `--extract-to` and runs each test through the
-/// runner `--config` sets, writing the real JUnit report, of those tests
-/// only, under the profile's store; otherwise it prints each test it runs.
-fn nextest(args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
-    if args.first().map(String::as_str) != Some("nextest") || args.get(1).map(String::as_str) != Some("run") {
-        return Err("only `nextest run` stands in".into());
-    }
+/// the filtersets match; every one passes but the first when
+/// `first_fails`, and then, as nextest stops at a failure unless told how
+/// many to take ([`stops_after`]), only it runs and the rest are said not
+/// to. From `--archive-file`, it extracts the binary to `--extract-to` and
+/// runs each test through the runner `--config` sets, writing the real
+/// JUnit report, of those tests only, under the profile's store;
+/// otherwise it prints each test it runs. `nextest list -T oneline` of an
+/// archive prints the tests, as `<binary> <name>`, and takes no flag of a
+/// run's failures.
+fn nextest(args: &[String], dir: &Path, reports: &Path, first_fails: bool) -> Result<Work, Refusal> {
+    let list = match (args.first().map(String::as_str), args.get(1).map(String::as_str)) {
+        (Some("nextest"), Some("run")) => false,
+        (Some("nextest"), Some("list")) => true,
+        _ => return Err("only `nextest run` and `nextest list` stand in".into()),
+    };
+    let stops = if list {
+        if let Some(f) = args.iter().find(|a| FAILURE_FLAGS.iter().any(|f| a.split('=').next() == Some(f))) {
+            return Err(format!("unexpected argument '{f}' found"));
+        }
+        None
+    } else {
+        stops_after(args)?
+    };
     let mut junit = None;
     for config in values(args, "--tool-config-file") {
         let (tool, path) = config.split_once(':').ok_or("--tool-config-file is not tool:path")?;
@@ -460,14 +475,40 @@ fn nextest(args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal>
             tests.push((binary.to_string(), name.to_string()));
         }
     }
+    // nextest extracts an archive only where it is not yet.
+    let into = value(args, "--extract-to").map(PathBuf::from);
+    if let Some(at) = into.as_ref().map(|i| i.join("target")).filter(|t| t.exists()) {
+        return Err(format!("destination `{}` already exists", at.display()));
+    }
+    if list {
+        has(args, "-T")?;
+        need(args, "--archive-file")?;
+        tests.iter().for_each(|(b, n)| println!("{b} {n}"));
+        return Ok(Work::default());
+    }
+    let listed = tests.len();
+    let failed = first_fails && !tests.is_empty() && !args.iter().any(|a| a == "--no-run");
+    if failed && stops == Some(1) {
+        tests.truncate(1);
+    }
+    let not_run = listed - tests.len();
+    let said = move || {
+        if not_run > 0 {
+            eprintln!(
+                "warning: {not_run}/{listed} tests were not run due to test failure (run with --no-fail-fast to run all tests, or run with --max-fail)"
+            );
+        }
+    };
+    let exit = if failed { 100 } else { 0 };
     let Some(archive) = value(args, "--archive-file") else {
         if !args.iter().any(|a| a == "--no-run") {
             tests.iter().for_each(|(b, n)| println!("standin nextest: runs {b} {n}"));
         }
-        return Ok(Work::default());
+        said();
+        return Ok(Work { exit, ..Work::default() });
     };
     has(args, "--workspace-remap")?;
-    let into = PathBuf::from(need(args, "--extract-to")?);
+    let into = into.ok_or("no --extract-to")?;
     let text = std::fs::read_to_string(dir.join(&archive)).map_err(|e| format!("--archive-file {archive}: {e}"))?;
     let (path, binary) = text.split_once('\n').ok_or("--archive-file: not a stand-in's archive")?;
     let into = into.canonicalize().map_err(|e| format!("--extract-to {}: {e}", into.display()))?.join(path);
@@ -483,9 +524,33 @@ fn nextest(args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal>
     std::fs::create_dir_all(&store).unwrap();
     Ok(Work {
         files: vec![(store.join(junit), report)],
-        prepare: vec![Box::new(move || run_tests(&runner, &tests, &into))],
+        prepare: vec![Box::new(move || run_tests(&runner, &tests, &into)), Box::new(said)],
+        exit,
         ..Work::default()
     })
+}
+
+/// nextest's flags of a run's failures; it takes each once, and a number
+/// of failures (`--max-fail`) beside no other.
+const FAILURE_FLAGS: &[&str] = &["--no-fail-fast", "--nff", "--fail-fast", "--ff", "--max-fail"];
+
+/// After how many failures a run stops: `None`, every test runs. One
+/// unless a flag says otherwise; the last of `--fail-fast` and
+/// `--no-fail-fast` wins.
+fn stops_after(args: &[String]) -> Result<Option<usize>, Refusal> {
+    let given: Vec<&str> =
+        args.iter().filter_map(|a| FAILURE_FLAGS.iter().find(|f| a.split('=').next() == Some(**f)).copied()).collect();
+    if let Some(f) = given.iter().find(|f| given.iter().filter(|g| g == f).count() > 1) {
+        return Err(format!("the argument '{f}' cannot be used multiple times"));
+    }
+    if given.contains(&"--max-fail") && given.len() > 1 {
+        return Err("the argument '--max-fail' cannot be used with another flag of failures".into());
+    }
+    if let Some(n) = value(args, "--max-fail") {
+        let n = n.split(':').next().unwrap_or_default();
+        return if n == "all" { Ok(None) } else { n.parse().map(Some).map_err(|_| format!("--max-fail {n}")) };
+    }
+    Ok(if matches!(given.last(), Some(&"--no-fail-fast" | &"--nff")) { None } else { Some(1) })
 }
 
 /// Whether filterset `expr` matches test `name` of `binary`: nextest's
