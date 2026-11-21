@@ -174,9 +174,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Check { mutants, why, fresh, .. } => {
             let s = Session::open(&repo)?;
-            let picks = picks(mutants.unwrap_or_default(), why)?;
-            let with_mutants = !picks.is_empty();
-            let scope = if with_mutants { measure::Mutants::Picks(picks) } else { measure::Mutants::None };
+            let scope = measure::Mutants::of(mutants.unwrap_or_default(), why)?;
+            let with_mutants = scope != measure::Mutants::None;
             let m =
                 s.measure(measure::Options { mutants: scope, fresh, timed: !with_mutants, ..Default::default() })?;
             if m.with_mutants {
@@ -212,7 +211,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let growth_record = growth.record(&m.tree, grown, author.as_deref())?;
             let growth_record = growth_record.map(|r| landing::file_in(growth::DIR, &r)).transpose()?;
             let author = author.filter(|_| growth_record.is_none() || picker.is_some() || no_mutants.is_some());
-            let record = record(&m, no_mutants, picker, author)?;
+            let record = landing::Record::of(&m, no_mutants, picker, author)?;
             let record = record.map(|r| landing::file_in(landing::DIR, &r.with_firsts(&repo))).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
@@ -339,99 +338,6 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             Ok((answer, EXIT_OK))
         }
     }
-}
-
-/// The picks `check --mutants <name>... --why <why>...` names: at most
-/// `PICKS_MAX`, each with its own one-line reason.
-fn picks(names: Vec<String>, why: Vec<String>) -> Result<Vec<model::Pick>> {
-    let mut faults = Vec::new();
-    if names.len() > measure::PICKS_MAX {
-        faults.push(fault::Fault {
-            fault: format!("{} mutants picked, more than {}", names.len(), measure::PICKS_MAX),
-            fix: format!(
-                "pick at most {}: those on the decisions the change makes (comparisons, boolean logic, match \
-                 guards, a return value that matters)",
-                measure::PICKS_MAX
-            ),
-        });
-    }
-    if names.len() != why.len() || why.iter().any(|w| w.trim().is_empty() || w.contains('\n')) {
-        faults.push(fault::Fault {
-            fault: format!("{} mutant(s) picked, with {} `--why`", names.len(), why.len()),
-            fix: "give each pick one `--why` of one line, in the order of the names".into(),
-        });
-    }
-    if !faults.is_empty() {
-        return Err(fault::Faults(faults).into());
-    }
-    Ok(names
-        .into_iter()
-        .zip(why)
-        .map(|(name, why)| model::Pick { name, why, outcome: None, first_outcome: None })
-        .collect())
-}
-
-/// The record `ratchet` writes of `m`: its picks, or, with `--no-mutants`,
-/// why none was picked; `None` when there is neither. Either names its
-/// picker and the change's author, who differ (slimfit#58).
-fn record(
-    m: &model::Measurement,
-    no_mutants: Option<String>,
-    picker: Option<String>,
-    author: Option<String>,
-) -> Result<Option<landing::Record>> {
-    let picks: std::collections::BTreeMap<String, Vec<model::Pick>> = m
-        .suites
-        .iter()
-        .filter_map(|s| Some((s.suite.clone(), s.mutated.as_ref()?.picks.clone())))
-        .filter(|(_, p)| !p.is_empty())
-        .collect();
-    let none = match no_mutants {
-        Some(_) if !picks.is_empty() => {
-            return Err(fault::fault(
-                "--no-mutants, but this tree's measurement ran picked mutants",
-                "leave out `--no-mutants`: the record is of those picks (or `--fresh` to measure without them)",
-            ));
-        }
-        Some(why) if why.trim().is_empty() || why.contains('\n') => {
-            return Err(fault::fault(
-                "--no-mutants without a reason",
-                "say in one line why nothing in the change is worth a mutant",
-            ));
-        }
-        none => none,
-    };
-    if picks.is_empty() && none.is_none() {
-        if picker.is_some() || author.is_some() {
-            return Err(fault::fault(
-                "--picker or --author, but no record to name them in: this tree's measurement ran no picks",
-                "run the picks first (`slimfit check --mutants <name>... --why <why>...`), or add `--no-mutants \
-                 \"<the picker's why>\"`",
-            ));
-        }
-        return Ok(None);
-    }
-    let id = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty() && !v.contains('\n'));
-    let record = landing::Record {
-        tree: m.tree.clone(),
-        picker: id(picker).unwrap_or_default(),
-        author: id(author).unwrap_or_default(),
-        picks,
-        none,
-    };
-    if !record.picked_by_another() {
-        let fault = if record.picker.is_empty() || record.author.is_empty() {
-            "a record of the change's mutants without `--picker` and `--author`, each one line"
-        } else {
-            "--picker is the change's author: a record's picker is a second agent"
-        };
-        return Err(fault::fault(
-            fault,
-            "ask a second agent to pick, never yourself: it reads the goal (`slimfit help picker`), the change's diff \
-             and the candidates, nothing else; then `slimfit ratchet --picker <its id> --author <yours>`",
-        ));
-    }
-    Ok(Some(record))
 }
 
 fn metrics_of(m: &model::Measurement) -> serde_json::Value {
