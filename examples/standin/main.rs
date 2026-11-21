@@ -263,7 +263,7 @@ fn sub_is(sub: &str, want: &str) -> Result<(), Refusal> {
     if sub == want { Ok(()) } else { Err(format!("no subcommand {sub:?}")) }
 }
 
-/// `cargo llvm-cov nextest`, `cargo llvm-cov show-env` and `cargo mutants`.
+/// `cargo llvm-cov nextest-archive`, `cargo llvm-cov show-env`, `cargo mutants`, and `cargo nextest`.
 fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
     match sub {
         // The environment the test run builds with, as the mutants command reads it.
