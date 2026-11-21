@@ -63,6 +63,70 @@ impl Record {
     pub fn picked_by_another(&self) -> bool {
         by_another(&self.picker, &self.author)
     }
+
+    /// The record `ratchet` writes of `m`: its picks, or, with
+    /// `no_mutants`, why none was picked; `None` when there is neither.
+    /// Either names its picker and the change's author, who differ
+    /// (slimfit#58).
+    pub fn of(
+        m: &Measurement,
+        no_mutants: Option<String>,
+        picker: Option<String>,
+        author: Option<String>,
+    ) -> Result<Option<Record>> {
+        let picks: BTreeMap<String, Vec<Pick>> = m
+            .suites
+            .iter()
+            .filter_map(|s| Some((s.suite.clone(), s.mutated.as_ref()?.picks.clone())))
+            .filter(|(_, p)| !p.is_empty())
+            .collect();
+        let none = match no_mutants {
+            Some(_) if !picks.is_empty() => {
+                return Err(fault(
+                    "--no-mutants, but this tree's measurement ran picked mutants",
+                    "leave out `--no-mutants`: the record is of those picks (or `--fresh` to measure without them)",
+                ));
+            }
+            Some(why) if why.trim().is_empty() || why.contains('\n') => {
+                return Err(fault(
+                    "--no-mutants without a reason",
+                    "say in one line why nothing in the change is worth a mutant",
+                ));
+            }
+            none => none,
+        };
+        if picks.is_empty() && none.is_none() {
+            if picker.is_some() || author.is_some() {
+                return Err(fault(
+                    "--picker or --author, but no record to name them in: this tree's measurement ran no picks",
+                    "run the picks first (`slimfit check --mutants <name>... --why <why>...`), or add `--no-mutants \
+                     \"<the picker's why>\"`",
+                ));
+            }
+            return Ok(None);
+        }
+        let id = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty() && !v.contains('\n'));
+        let record = Record {
+            tree: m.tree.clone(),
+            picker: id(picker).unwrap_or_default(),
+            author: id(author).unwrap_or_default(),
+            picks,
+            none,
+        };
+        if !record.picked_by_another() {
+            let what = if record.picker.is_empty() || record.author.is_empty() {
+                "a record of the change's mutants without `--picker` and `--author`, each one line"
+            } else {
+                "--picker is the change's author: a record's picker is a second agent"
+            };
+            return Err(fault(
+                what,
+                "ask a second agent to pick, never yourself: it reads the goal (`slimfit help picker`), the change's \
+                 diff and the candidates, nothing else; then `slimfit ratchet --picker <its id> --author <yours>`",
+            ));
+        }
+        Ok(Some(record))
+    }
 }
 
 /// Whether a record names `who` (its picker, or reviewer) and `author`, and

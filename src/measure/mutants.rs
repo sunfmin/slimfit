@@ -29,6 +29,42 @@ pub enum Mutants {
 /// The most mutants one change may pick (ADR 0008).
 pub const PICKS_MAX: usize = 5;
 
+impl Mutants {
+    /// The picks `check --mutants <name>... --why <why>...` names: at most
+    /// `PICKS_MAX`, each with its own one-line reason; none names `None`.
+    pub fn of(names: Vec<String>, why: Vec<String>) -> Result<Mutants> {
+        let mut faults = Vec::new();
+        if names.len() > PICKS_MAX {
+            faults.push(fault::Fault {
+                fault: format!("{} mutants picked, more than {PICKS_MAX}", names.len()),
+                fix: format!(
+                    "pick at most {PICKS_MAX}: those on the decisions the change makes (comparisons, boolean logic, \
+                     match guards, a return value that matters)"
+                ),
+            });
+        }
+        if names.len() != why.len() || why.iter().any(|w| w.trim().is_empty() || w.contains('\n')) {
+            faults.push(fault::Fault {
+                fault: format!("{} mutant(s) picked, with {} `--why`", names.len(), why.len()),
+                fix: "give each pick one `--why` of one line, in the order of the names".into(),
+            });
+        }
+        if !faults.is_empty() {
+            return Err(Faults(faults).into());
+        }
+        if names.is_empty() {
+            return Ok(Mutants::None);
+        }
+        Ok(Mutants::Picks(
+            names
+                .into_iter()
+                .zip(why)
+                .map(|(name, why)| Pick { name, why, outcome: None, first_outcome: None })
+                .collect(),
+        ))
+    }
+}
+
 /// The names of the picks a measurement ran, in every suite.
 pub(super) fn picked(m: &Measurement) -> BTreeSet<&str> {
     m.suites.iter().filter_map(|s| s.mutated.as_ref()).flat_map(|d| &d.picks).map(|p| p.name.as_str()).collect()
