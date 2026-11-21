@@ -1,0 +1,10 @@
+{
+  "tree": "648fa65218a134d98bac8d448bdda1d0770c4074+d1fba762150c532c",
+  "lines": 70,
+  "serves": "slimfit#80",
+  "considered": "reusing history() per-commit counting for HEAD (done: one Counter serves report --lines-only and every history point), and Totals.files from loc::Classifier for the per-directory split instead of a second count",
+  "reviewer": "codex:01a1fd26-6967-7c03-b597-9cea60db912d:default",
+  "author": "claude-code:3ad16b46-aa51-5dd7-ac2b-b324d9699d02:opus",
+  "cut": "In src/report.rs, aggregate directory totals inside the existing per-suite classifier loop and return the suite totals and directory breakdown together. Reuse that result for HEAD and history, deleting By::split, the intermediate Vec of Totals, and both adapters that pass it to the splitter.",
+  "answer": "Done in 648fa65: Counter::count sums per directory in the suites loop and returns suites and directories together; By::split, the Vec of Totals and both adapters are gone."
+}
