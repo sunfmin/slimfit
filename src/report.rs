@@ -6,7 +6,7 @@
 use crate::config::{Config, Suite};
 use crate::git;
 use crate::landing::{self, Record, Records};
-use crate::loc::{Classifier, Totals};
+use crate::loc::Classifier;
 use crate::measure::sample;
 use crate::model::{MutantStatus, Source};
 use crate::ratchet;
@@ -190,26 +190,6 @@ impl By {
         };
         Ok(By(globs.iter().map(one).collect::<Result<_>>()?))
     }
-
-    /// Each suite's file lines summed per directory a glob matches that
-    /// holds the file: a file in nested matches counts in each.
-    fn split<'a>(&self, suites: impl Iterator<Item = (&'a str, &'a Totals)>) -> ByDir {
-        let mut out = ByDir::new();
-        if self.0.is_empty() {
-            return out;
-        }
-        for (suite, t) in suites {
-            for (file, (_, l)) in &t.files {
-                let dirs = file.match_indices('/').map(|(i, _)| &file[..i]);
-                for dir in dirs.filter(|d| self.0.iter().any(|g| g.is_match(d))) {
-                    let e = out.entry(dir.to_string()).or_default().entry(suite.to_string()).or_default();
-                    e.prod_lines += l.prod;
-                    e.test_lines += l.test;
-                }
-            }
-        }
-        out
-    }
 }
 
 /// What counts a commit's lines: the suites resolved, and the files each
@@ -238,12 +218,24 @@ impl Counter {
     }
 
     /// Each suite's lines in the tree `texts`, counted as `prod_lines` and
-    /// `test_lines` are.
-    fn count(&self, repo: &Path, texts: &BTreeMap<&str, &str>) -> Result<Vec<(String, Totals)>> {
+    /// `test_lines` are, and summed per directory `by` matches that holds
+    /// the file: a file in nested matches counts in each.
+    fn count(&self, repo: &Path, texts: &BTreeMap<&str, &str>, by: &By) -> Result<(BTreeMap<String, DirLines>, ByDir)> {
         let paths: Vec<String> = texts.keys().filter(|p| !ours(p)).map(|p| p.to_string()).collect();
         let read = |p: &str| texts.get(p).map(|t| t.to_string());
-        let count = |s: &Suite| Ok((s.name.clone(), Classifier::new(s, repo, &paths, read)?.count(&paths, read)));
-        self.resolved.iter().map(count).collect()
+        let (mut suites, mut dirs) = (BTreeMap::new(), ByDir::new());
+        for s in &self.resolved {
+            let t = Classifier::new(s, repo, &paths, read)?.count(&paths, read);
+            suites.insert(s.name.clone(), DirLines { prod_lines: t.prod, test_lines: t.test });
+            for (file, (_, l)) in t.files.iter().filter(|_| !by.0.is_empty()) {
+                let all = file.match_indices('/').map(|(i, _)| &file[..i]);
+                for dir in all.filter(|d| by.0.iter().any(|g| g.is_match(d))) {
+                    let e = dirs.entry(dir.to_string()).or_default().entry(s.name.clone()).or_default();
+                    (e.prod_lines, e.test_lines) = (e.prod_lines + l.prod, e.test_lines + l.test);
+                }
+            }
+        }
+        Ok((suites, dirs))
     }
 }
 
@@ -251,9 +243,7 @@ impl Counter {
 pub fn lines(repo: &Path, cfg: &Config, by: &By) -> Result<(BTreeMap<String, DirLines>, ByDir)> {
     let counter = Counter::new(repo, cfg)?;
     let blobs = counter.blobs(repo, "HEAD")?;
-    let counted = counter.count(repo, &blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect())?;
-    let suites = counted.iter().map(|(n, t)| (n.clone(), DirLines { prod_lines: t.prod, test_lines: t.test }));
-    Ok((suites.collect(), by.split(counted.iter().map(|(n, t)| (n.as_str(), t)))))
+    counter.count(repo, &blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect(), by)
 }
 
 /// `points` commits spread evenly over the last `commits` first-parent
@@ -276,14 +266,13 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize, by: &By
         let blobs = counter.blobs(repo, commit)?;
         let texts: BTreeMap<&str, &str> = blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let baseline: Option<Value> = texts.get(ratchet::FILE).and_then(|t| serde_json::from_str(t).ok());
-        let counted = counter.count(repo, &texts)?;
+        let (counted, by) = counter.count(repo, &texts, by)?;
         let mut suites = BTreeMap::new();
-        for (name, t) in &counted {
-            let mut lines = Lines { prod: t.prod, test: t.test, ..Lines::default() };
-            judged(baseline.as_ref(), name, &mut lines);
-            suites.insert(name.clone(), lines);
+        for (name, t) in counted {
+            let mut lines = Lines { prod: t.prod_lines, test: t.test_lines, ..Lines::default() };
+            judged(baseline.as_ref(), &name, &mut lines);
+            suites.insert(name, lines);
         }
-        let by = by.split(counted.iter().map(|(n, t)| (n.as_str(), t)));
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
         let mutants_survival = survival(texts.iter().map(|(p, t)| (*p, *t)));
         let growth_records = crate::growth::Records::of(texts.iter().map(|(p, t)| (*p, *t)));

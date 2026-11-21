@@ -1054,6 +1054,35 @@ mod answer_tests {
         assert_eq!((code, held["verdict"]["ok"].as_bool()), (crate::EXIT_OK, Some(true)), "{held:#}");
     }
 
+    /// `report --lines-only` runs no test, and answers `by` only when asked;
+    /// `report --fresh` measures again where the cache would answer.
+    #[test]
+    fn report_lines_only_runs_no_test_and_fresh_measures_again() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        let runs = repo.join("runs");
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        *tests = format!("echo run >> '{}'; {tests}", runs.display());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\nruns\n").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "config"]);
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().count());
+        let (out, _) = slimfit(repo, "report --lines-only --by src --points 0").unwrap();
+        assert_eq!(
+            (ran(), out["by"]["src"]["rust"]["prod_lines"].clone()),
+            (0, out["current"]["rust"]["prod_lines"].clone())
+        );
+        assert!(
+            out["current"]["rust"]["tests"].is_null() && out["by"]["src"]["rust"]["prod_lines"].as_u64() > Some(0),
+            "{out:#}"
+        );
+        let (out, _) = slimfit(repo, "report --points 0").unwrap();
+        assert!(out.get("by").is_none() && ran() == 1, "{out:#}");
+        slimfit(repo, "report --fresh --points 0").unwrap();
+        assert_eq!(ran(), 2);
+    }
+
     /// A landing whose ratchet followed `--mutants` keeps its time
     /// (slimfit#74). The gate's run before the commit times the files the
     /// mutants run then finds under a new HEAD: its time stands, not the
