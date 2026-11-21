@@ -537,9 +537,13 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // the test does not ask. Kept, with a reason, it is not proposed again.
     let proposed = |next: &Value| -> Vec<String> {
         let tasks = next["tasks"].as_array().unwrap().iter();
-        tasks.map(|t| t["evidence"]["test"].as_str().unwrap().to_string()).collect()
+        let candidates = tasks.flat_map(|t| t["evidence"]["candidates"].as_array().unwrap().iter());
+        candidates.map(|c| c["test"].as_str().unwrap().to_string()).collect()
     };
-    let before = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
+    let all = run("next", &["--all", "--kind", "redundant-test"], 0);
+    let before = proposed(&all);
+    // One file holds them: one task, its candidates counted.
+    assert_eq!((all["counts"]["redundant-test"].clone(), all["candidates"].clone()), (1.into(), 2.into()), "{all:#}");
     let twins = ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"];
     assert!(before.len() == 2 && before.iter().all(|t| twins.contains(&t.as_str())), "{before:?}");
     let twin = before[0].as_str();
