@@ -196,7 +196,7 @@ mod t {
     /// its `;`, on its own line or the attribute's.
     #[test]
     fn an_item_ends_where_its_braces_close_or_at_its_semicolon() {
-        let src = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    // c\n    fn s() { let _ = \"}\"; let _ = '{'; }\n}\n/// doc\nfn b() {}\n";
+        let src = "fn a() {}\n\n#[cfg(test)]\nmod tests {\n    // c\n    fn s() { let _ = \"}\"; let _ = '{'; let _ = '\\\"'; }\n}\n/// doc\nfn b() {}\n";
         assert_eq!(test_blocks(src), vec![(3, 7)]);
         assert_eq!(test_blocks("#[cfg(test)]\nuse x::y;\nfn a() {}\n"), vec![(1, 2)]);
         assert_eq!(test_blocks("#[cfg(test)] mod t;\nfn x() {}\n"), vec![(1, 1)]);
