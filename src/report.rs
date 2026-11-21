@@ -3,10 +3,10 @@
 //! the bounds the committed baseline held, the verdicts it kept and the
 //! records of picked mutants, all read from git, with no test run.
 
-use crate::config::Config;
+use crate::config::{Config, Suite};
 use crate::git;
 use crate::landing::{self, Record, Records};
-use crate::loc::Classifier;
+use crate::loc::{Classifier, Totals};
 use crate::measure::sample;
 use crate::model::{MutantStatus, Source};
 use crate::ratchet;
@@ -21,6 +21,10 @@ pub struct Point {
     pub commit: String,
     pub date: String,
     pub suites: BTreeMap<String, Lines>,
+    /// Per directory `--by` matches, per suite, its lines at the commit;
+    /// absent without `--by`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub by: ByDir,
     /// The records `.slimfit/mutants/` held at the commit; absent when it
     /// held none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,9 +163,102 @@ fn records<'a>(files: impl Iterator<Item = (&'a str, &'a str)>) -> Option<Record
     n
 }
 
+/// A suite's lines as `prod_lines` and `test_lines` count them.
+#[derive(Debug, Default, Clone, Copy, Serialize, PartialEq)]
+pub struct DirLines {
+    pub prod_lines: u64,
+    pub test_lines: u64,
+}
+
+/// Per directory, per suite, its lines.
+pub type ByDir = BTreeMap<String, BTreeMap<String, DirLines>>;
+
+/// The directories `--by`'s globs name: each matched against a directory
+/// of the repo, relative to its root, a `*` not crossing a `/`.
+pub struct By(Vec<globset::GlobMatcher>);
+
+impl By {
+    pub fn new(globs: &[String]) -> Result<By> {
+        let one = |g: &String| {
+            let glob = globset::GlobBuilder::new(g.trim_end_matches('/')).literal_separator(true).build();
+            glob.map(|g| g.compile_matcher()).map_err(|e| {
+                crate::fault::fault(
+                    format!("--by {g} is not a glob: {e}"),
+                    "give a glob of directories relative to the repo's root, such as `--by 'crates/*'`",
+                )
+            })
+        };
+        Ok(By(globs.iter().map(one).collect::<Result<_>>()?))
+    }
+
+    /// Each suite's file lines summed per directory a glob matches that
+    /// holds the file: a file in nested matches counts in each.
+    fn split<'a>(&self, suites: impl Iterator<Item = (&'a str, &'a Totals)>) -> ByDir {
+        let mut out = ByDir::new();
+        if self.0.is_empty() {
+            return out;
+        }
+        for (suite, t) in suites {
+            for (file, (_, l)) in &t.files {
+                let dirs = file.match_indices('/').map(|(i, _)| &file[..i]);
+                for dir in dirs.filter(|d| self.0.iter().any(|g| g.is_match(d))) {
+                    let e = out.entry(dir.to_string()).or_default().entry(suite.to_string()).or_default();
+                    e.prod_lines += l.prod;
+                    e.test_lines += l.test;
+                }
+            }
+        }
+        out
+    }
+}
+
+/// What counts a commit's lines: the suites resolved, and the files each
+/// counts at all, which does not depend on the tree.
+struct Counter {
+    resolved: Vec<Suite>,
+    claims: Vec<Classifier>,
+}
+
+/// slimfit's own files a commit holds, read for what it judged then.
+fn ours(p: &str) -> bool {
+    p == ratchet::FILE || p.starts_with(landing::DIR) || p.starts_with(sample::DIR) || p.starts_with(crate::growth::DIR)
+}
+
+impl Counter {
+    fn new(repo: &Path, cfg: &Config) -> Result<Counter> {
+        let resolved: Vec<Suite> = cfg.suites.iter().map(|s| s.resolve()).collect();
+        // Classifiers of no tree: they pick the blobs to read.
+        let claims = resolved.iter().map(|s| Classifier::new(s, repo, &[], |_| None)).collect::<Result<_>>()?;
+        Ok(Counter { resolved, claims })
+    }
+
+    /// `commit`'s blobs a suite counts, and slimfit's own.
+    fn blobs(&self, repo: &Path, commit: &str) -> Result<Vec<(String, String)>> {
+        git::tree_blobs(repo, commit, |p| ours(p) || self.claims.iter().any(|c| c.kind(p).is_some()))
+    }
+
+    /// Each suite's lines in the tree `texts`, counted as `prod_lines` and
+    /// `test_lines` are.
+    fn count(&self, repo: &Path, texts: &BTreeMap<&str, &str>) -> Result<Vec<(String, Totals)>> {
+        let paths: Vec<String> = texts.keys().filter(|p| !ours(p)).map(|p| p.to_string()).collect();
+        let read = |p: &str| texts.get(p).map(|t| t.to_string());
+        let count = |s: &Suite| Ok((s.name.clone(), Classifier::new(s, repo, &paths, read)?.count(&paths, read)));
+        self.resolved.iter().map(count).collect()
+    }
+}
+
+/// HEAD's lines, from git alone: per suite, and per directory `by` names.
+pub fn lines(repo: &Path, cfg: &Config, by: &By) -> Result<(BTreeMap<String, DirLines>, ByDir)> {
+    let counter = Counter::new(repo, cfg)?;
+    let blobs = counter.blobs(repo, "HEAD")?;
+    let counted = counter.count(repo, &blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect())?;
+    let suites = counted.iter().map(|(n, t)| (n.clone(), DirLines { prod_lines: t.prod, test_lines: t.test }));
+    Ok((suites.collect(), by.split(counted.iter().map(|(n, t)| (n.as_str(), t)))))
+}
+
 /// `points` commits spread evenly over the last `commits` first-parent
-/// commits, oldest first.
-pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Result<Vec<Point>> {
+/// commits, oldest first, with each suite's lines per directory `by` names.
+pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize, by: &By) -> Result<Vec<Point>> {
     let log =
         git::run(repo, &["log", "--first-parent", "--format=%H %cs", "-n", &commits.to_string()]).unwrap_or_default();
     let all: Vec<(&str, &str)> = log.lines().filter_map(|l| l.split_once(' ')).collect();
@@ -173,36 +270,33 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
         (0..points).map(|i| (i as f64 * step) as usize).filter(|i| *i < all.len()).map(|i| all[i]).collect();
     picked.dedup();
     picked.reverse();
-    let resolved: Vec<_> = cfg.suites.iter().map(|s| s.resolve()).collect();
-    // Which files a suite counts at all does not depend on the tree: these
-    // classifiers, of no tree, pick the blobs to read.
-    let claims: Vec<Classifier> =
-        resolved.iter().map(|s| Classifier::new(s, repo, &[], |_| None)).collect::<Result<_>>()?;
+    let counter = Counter::new(repo, cfg)?;
     let mut out = Vec::new();
     for (commit, date) in picked {
-        let ours = |p: &str| {
-            p == ratchet::FILE
-                || p.starts_with(landing::DIR)
-                || p.starts_with(sample::DIR)
-                || p.starts_with(crate::growth::DIR)
-        };
-        let blobs = git::tree_blobs(repo, commit, |p| ours(p) || claims.iter().any(|c| c.kind(p).is_some()))?;
+        let blobs = counter.blobs(repo, commit)?;
         let texts: BTreeMap<&str, &str> = blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let baseline: Option<Value> = texts.get(ratchet::FILE).and_then(|t| serde_json::from_str(t).ok());
-        let paths: Vec<String> = texts.keys().filter(|p| !ours(p)).map(|p| p.to_string()).collect();
+        let counted = counter.count(repo, &texts)?;
         let mut suites = BTreeMap::new();
-        let read = |p: &str| texts.get(p).map(|t| t.to_string());
-        for s in &resolved {
-            let t = Classifier::new(s, repo, &paths, read)?.count(&paths, read);
+        for (name, t) in &counted {
             let mut lines = Lines { prod: t.prod, test: t.test, ..Lines::default() };
-            judged(baseline.as_ref(), &s.name, &mut lines);
-            suites.insert(s.name.clone(), lines);
+            judged(baseline.as_ref(), name, &mut lines);
+            suites.insert(name.clone(), lines);
         }
+        let by = by.split(counted.iter().map(|(n, t)| (n.as_str(), t)));
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
         let mutants_survival = survival(texts.iter().map(|(p, t)| (*p, *t)));
         let growth_records = crate::growth::Records::of(texts.iter().map(|(p, t)| (*p, *t)));
         let commit = commit[..12].to_string();
-        out.push(Point { commit, date: date.to_string(), suites, mutants_records, growth_records, mutants_survival });
+        out.push(Point {
+            commit,
+            date: date.to_string(),
+            suites,
+            by,
+            mutants_records,
+            growth_records,
+            mutants_survival,
+        });
     }
     Ok(out)
 }
@@ -248,7 +342,7 @@ mod t {
                 r#"{"tip":"t","from":"f","pool":9,"drawn":{"rust":[{"name":"a","outcome":"survived"},{"name":"b","outcome":"killed"},{"name":"c","outcome":"unviable"}]}}"#,
             ),
         ]);
-        let h = history(repo, &cfg, 10, 10).unwrap();
+        let h = history(repo, &cfg, 10, 10, &By::new(&[]).unwrap()).unwrap();
         let rust: Vec<&Lines> = h.iter().map(|p| &p.suites["rust"]).collect();
         let judged = |l: &Lines| (l.tests, l.test_seconds, l.uncovered_lines, l.kept, l.kept_files);
         assert_eq!(
@@ -274,5 +368,52 @@ mod t {
             "sampled": { "ran": 2, "survived": 1, "rate": 0.5, "unviable": 1, "first_survived": 1, "first_unknown": 0 },
         });
         assert_eq!((survival, h[1].mutants_survival.is_none()), (want, true));
+    }
+}
+
+#[cfg(test)]
+mod by {
+    use super::*;
+    use crate::measure::t::git;
+
+    /// Lines per directory, from HEAD alone: one crate's counted by hand
+    /// (blanks and `//` comments out, inline tests and `tests/` as test),
+    /// the crates summing to the suite's, an uncommitted file not counted,
+    /// and each history point split the same way.
+    #[test]
+    fn by_counts_each_directory_as_the_suite_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        let files = [
+            // 2 prod (`///`, `//` and the blank do not count), 4 test (the `#[cfg(test)]` block).
+            (
+                "crates/a/src/lib.rs",
+                "/// a\npub fn a() {}\n\n// note\nfn b() {}\n#[cfg(test)]\nmod t {\n    fn c() {}\n}\n",
+            ),
+            // 2 test.
+            ("crates/a/tests/it.rs", "#[test]\nfn it() {}\n"),
+            ("crates/b/src/lib.rs", "fn b() {}\n"),
+            ("crates/b/README.md", "not counted\n"),
+        ];
+        for (p, t) in files {
+            std::fs::create_dir_all(repo.join(p).parent().unwrap()).unwrap();
+            std::fs::write(repo.join(p), t).unwrap();
+        }
+        git(repo, &["init", "-q"]);
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "c"]);
+        std::fs::write(repo.join("crates/b/src/new.rs"), "fn uncommitted() {}\n").unwrap();
+        let cfg: Config = toml::from_str("[[suite]]\nname = \"rust\"\npreset = \"rust\"\n").unwrap();
+        let by = By::new(&["crates/*".to_string()]).unwrap();
+        let (suites, dirs) = lines(repo, &cfg, &by).unwrap();
+        let of = |d: &str| dirs[d]["rust"];
+        assert_eq!(of("crates/a"), DirLines { prod_lines: 2, test_lines: 6 });
+        assert_eq!(of("crates/b"), DirLines { prod_lines: 1, test_lines: 0 });
+        // `*` does not cross a `/`: no key for a crate's subdirectories.
+        assert_eq!(dirs.keys().collect::<Vec<_>>(), ["crates/a", "crates/b"]);
+        assert_eq!(suites["rust"], DirLines { prod_lines: 3, test_lines: 6 });
+        let h = history(repo, &cfg, 10, 10, &by).unwrap();
+        assert_eq!(h[0].by, dirs);
+        assert!(By::new(&["crates/[".to_string()]).is_err());
     }
 }

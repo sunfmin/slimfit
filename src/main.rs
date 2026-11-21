@@ -313,24 +313,30 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             Ok((json!({ "findings": findings, "host": host, "next": next }), EXIT_OK))
         }
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
-        Cmd::Report { commits, points, fresh, .. } => {
+        Cmd::Report { commits, points, fresh, by, lines_only, .. } => {
             let s = Session::open(&repo)?;
-            let m = s.measure(measure::Options { fresh, ..Default::default() })?;
-            let history = report::history(&repo, &s.cfg, commits, points)?;
+            let globs = report::By::new(&by)?;
+            let (lines, by_dir) = report::lines(&repo, &s.cfg, &globs)?;
+            let current = match lines_only {
+                true => json!(lines),
+                false => metrics_of(&s.measure(measure::Options { fresh, ..Default::default() })?),
+            };
+            let history = report::history(&repo, &s.cfg, commits, points, &globs)?;
             let records = landing::records(&repo)?;
             let growth_records = growth::Records::read(&repo)?;
-            Ok((
-                json!({
-                    "current": metrics_of(&m),
-                    "baseline": s.base.suites,
-                    "loosened": s.base.loosened,
-                    "history": history,
-                    "mutants_records": records,
-                    "growth_records": growth_records,
-                    "next": "slimfit next",
-                }),
-                EXIT_OK,
-            ))
+            let mut answer = json!({
+                "current": current,
+                "baseline": s.base.suites,
+                "loosened": s.base.loosened,
+                "history": history,
+                "mutants_records": records,
+                "growth_records": growth_records,
+                "next": "slimfit next",
+            });
+            if !by.is_empty() {
+                answer["by"] = json!(by_dir);
+            }
+            Ok((answer, EXIT_OK))
         }
     }
 }

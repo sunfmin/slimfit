@@ -4,6 +4,7 @@ What each command costs, and how to measure that before placing slimfit in a rep
 |---|---|
 | `slimfit check`, `slimfit next`, `slimfit ratchet`, `slimfit report` | one instrumented test run, about 1.5× a plain one; none while the working tree is unchanged since the last measurement (`--fresh` measures again) |
 | `slimfit keep` | the measurement of this tree, cached or one instrumented test run, as above; no mutant |
+| `slimfit report --lines-only` | no test run and no build: it reads HEAD's files, and those of the history's points, from git |
 | `slimfit doctor` | no test run and no build: it reads `slimfit.toml`, the baseline and factorium's gates, and finds the tools by name |
 | `slimfit init` | one instrumented test run, always; no mutant |
 | `slimfit check --mutants` (no name) | no test run and no build: the mutation tool lists the change's mutants from its diff (under a second on slimfit) |
