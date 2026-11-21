@@ -95,9 +95,17 @@ Together they fit: coverage proposes, the review decides.
    The subset is of all lines: setup both run cannot make one test a
    subset of another, and leaving it out would drop real subsets in small
    suites, where the lines most tests run are the code under test. Each
-   candidate names the one other test it most overlaps (a superset first),
-   slowest candidate first. A test that runs no source line is not
-   proposed.
+   candidate names the one other test it most overlaps (a superset first).
+   A test that runs no source line is not proposed.
+
+   A task is one test file with every candidate whose test is in it, each
+   with its other test, its kind (subset or overlap), share and seconds,
+   slowest first; files come by the seconds their candidates would save,
+   most first. One task a pair would take years at idle work's pace on
+   guild (about 1,000 candidates, one issue per kind a day), and most
+   candidates pair two tests of one binary, often one file (305 in
+   guild-scheduler::scheduler): a worker who reads the file once decides
+   every pair in it (slimfit#86).
 2. **Decision** (the agent, by the task's steps). For every assertion of the
    candidate, find the assertion in the other test (or another named test)
    that checks the same outcome on the same setup. Then one of:

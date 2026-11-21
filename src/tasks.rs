@@ -28,7 +28,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate by both tests' assertions: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
@@ -281,8 +281,9 @@ pub const COMMON_LINES: f64 = 0.5;
 /// of the lines either runs with another (the slower of the two is
 /// proposed). Overlap is computed without the lines more than
 /// [`COMMON_LINES`] of the test's binary's tests run, which shared setup makes, not what a
-/// test checks; a subset is of all lines, as setup cannot make one. Each is named once, with the other test it most overlaps;
-/// the slowest first. Coverage only proposes:
+/// test checks; a subset is of all lines, as setup cannot make one. Each is named once, with the other test it most overlaps.
+/// A task is one test file with every candidate in it, slowest first; the
+/// files most seconds to save first. Coverage only proposes:
 /// the steps decide by reading the assertions. A test kept, unchanged since,
 /// is not proposed.
 fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
@@ -320,7 +321,9 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
         .collect();
     let lines: Vec<_> = lines.into_iter().map(|(l, _)| l).collect();
     let at = |id: &str| reach.tests.iter().find(|t| t.id() == id);
-    let mut out: Vec<(f64, Task)> = Vec::new();
+    // Per test file: the seconds its candidates would save, the other tests' files, and the candidates.
+    type File = (f64, BTreeSet<String>, Vec<(f64, Value)>);
+    let mut by_file: BTreeMap<String, File> = BTreeMap::new();
     for ((t, mine, secs), mine_own) in lines.iter().zip(&own) {
         if at(t).is_some_and(|rt| kept.iter().any(|k| k.holds(&s.suite, rt))) {
             continue;
@@ -343,20 +346,44 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
             .map(|(o, share, within, _)| (o, share, within))
             .max_by(|a, b| (a.2, a.1).partial_cmp(&(b.2, b.1)).unwrap_or(std::cmp::Ordering::Equal).then(b.0.cmp(a.0)));
         let Some((other, share, within)) = best else { continue };
-        out.push((
-            *secs,
+        let file = at(t).map(|rt| rt.source.as_ref().map_or(rt.binary.clone(), |src| src.file.clone()));
+        let other_file = at(other).and_then(|rt| Some(rt.source.as_ref()?.file.clone()));
+        let candidate = json!({
+            "test": t,
+            "other_test": other,
+            "kind": if within { "subset" } else { "overlap" },
+            "share": (share * 100.0).round() / 100.0,
+            "seconds": secs,
+            "lines": mine.len(),
+        });
+        let (total, others, candidates) = by_file.entry(file.unwrap_or_default()).or_default();
+        *total += *secs;
+        others.extend(other_file);
+        candidates.push((*secs, candidate));
+    }
+    let mut files: Vec<_> = by_file.into_iter().collect();
+    files.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(a.0.cmp(&b.0)));
+    files
+        .into_iter()
+        .map(|(file, (total, others, mut candidates))| {
+            candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let files = std::iter::once(file.clone()).chain(others.into_iter().filter(|f| *f != file)).collect();
             Task {
                 kind: TaskKind::RedundantTest,
                 suite: s.suite.clone(),
-                summary: if within {
-                    format!("{other} runs every line {t} runs ({} lines)", mine.len())
-                } else {
-                    format!("{t} shares {:.0}% of its lines past its binary's shared setup with {other}", share * 100.0)
-                },
-                files: [at(t), at(other)].into_iter().flatten().filter_map(|rt| Some(rt.source.as_ref()?.file.clone())).collect::<BTreeSet<_>>().into_iter().collect(),
-                evidence: json!({ "test": t, "seconds": secs, "lines": mine.len(), "other_test": other }),
-                steps: "Coverage only proposes; the assertions decide. Read both tests. For every assertion of `test`, find the \
-                        assertion in `other_test` (or another test you name) that checks the same outcome on the same setup. Then do one: \
+                summary: format!(
+                    "{file}: {} test(s) another test runs over, {total:.2}s of CPU to save",
+                    candidates.len()
+                ),
+                files,
+                evidence: json!({
+                    "file": file,
+                    "seconds": (total * 1000.0).round() / 1000.0,
+                    "candidates": candidates.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
+                }),
+                steps: "Coverage only proposes; the assertions decide. Read the file once and decide every candidate in it. For \
+                        each: for every assertion of its `test`, find the assertion in its `other_test` (or another test you name) that \
+                        checks the same outcome on the same setup. Then do one: \
                         DELETE `test` when every assertion maps (put the mapping in the commit message). \
                         MERGE when some assertion does not map but the two build compatible setups: fold the unmapped assertions, and the setup they need, \
                         into one test, or turn both into one test over a table of cases, so the setup is paid once; the merged test keeps every \
@@ -368,11 +395,15 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                         uncovered (`new_spans`) and how test time moved: neither may rise, and after a merge `test_seconds` must fall."
                     .into(),
                 accept: TaskKind::RedundantTest.accept().into(),
-            },
-        ));
-    }
-    out.sort_by(|a, b| b.0.total_cmp(&a.0));
-    out.into_iter().map(|(_, t)| t).collect()
+            }
+        })
+        .collect()
+}
+
+/// How many redundant-test candidates `tasks` hold, over all their files.
+pub fn candidates(tasks: &[Task]) -> usize {
+    let of = |t: &Task| t.evidence["candidates"].as_array().map_or(0, Vec::len);
+    tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).map(of).sum()
 }
 
 fn slow(s: &SuiteMeasurement) -> Vec<Task> {
@@ -812,17 +843,49 @@ mod t {
         assert_eq!(tasks[0].evidence["log"], ".slimfit/out/s/test.log");
     }
 
-    /// Each proposed test with the other test it names.
+    /// Each proposed test with the other test it names, task by task.
     fn pairs(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<(String, String)> {
-        redundant(s, kept)
-            .into_iter()
-            .map(|t| {
-                (
-                    t.evidence["test"].as_str().unwrap().to_string(),
-                    t.evidence["other_test"].as_str().unwrap().to_string(),
-                )
-            })
-            .collect()
+        let tasks = redundant(s, kept);
+        let candidates = tasks.iter().flat_map(|t| t.evidence["candidates"].as_array().unwrap().clone());
+        let name = |c: &Value, k: &str| c[k].as_str().unwrap().to_string();
+        candidates.map(|c| (name(&c, "test"), name(&c, "other_test"))).collect()
+    }
+
+    /// A task is a test file with every candidate in it, slowest first, and
+    /// the files whose candidates would save most come first: three in one
+    /// file and one in another make two tasks, the first holding three.
+    #[test]
+    fn a_redundant_test_task_is_a_file_of_candidates() {
+        let tests = [
+            ("one", 0.1, 1..=10),
+            ("one_again", 0.3, 1..=10),
+            ("two", 0.1, 20..=29),
+            ("two_again", 0.4, 21..=30),
+            ("three", 0.2, 40..=41),
+            ("wide", 0.1, 40..=49),
+            ("lone", 0.8, 60..=69),
+            ("lone_again", 0.1, 60..=69),
+        ];
+        let mut s = suite(tests.map(|(n, secs, ls)| (n, secs, ls.collect())));
+        for t in &mut s.reach.as_mut().unwrap().tests {
+            let file = if t.name.starts_with("lone") || t.name == "wide" { "tests/b.rs" } else { "tests/a.rs" };
+            t.source.as_mut().unwrap().file = file.into();
+        }
+        let tasks = redundant(&s, &[]);
+        let files: Vec<_> = tasks.iter().map(|t| (t.evidence["file"].clone(), t.evidence["seconds"].clone())).collect();
+        assert_eq!(files, [(json!("tests/a.rs"), json!(0.9)), (json!("tests/b.rs"), json!(0.8))]);
+        let first = &tasks[0].evidence["candidates"];
+        let got: Vec<_> = first.as_array().unwrap().iter().map(|c| (c["test"].clone(), c["kind"].clone())).collect();
+        let want = [("two_again", "overlap"), ("one_again", "subset"), ("three", "subset")];
+        assert_eq!(got, want.map(|(t, k)| (json!(format!("t::{t}")), json!(k))));
+        assert_eq!((first[0]["share"].clone(), first[0]["other_test"].clone()), (json!(0.82), json!("t::two")));
+        assert_eq!(tasks[0].files, ["tests/a.rs", "tests/b.rs"]);
+        assert_eq!(candidates(&tasks), 4);
+        // A kept test leaves its file's task; a file with none left has none.
+        let keep = |test: &str| Kept { suite: "s".into(), test: test.into(), hash: "h".into(), reason: "r".into() };
+        let left = redundant(&s, &[keep("t::lone")]);
+        assert_eq!((left.len(), candidates(&left)), (1, 3));
+        assert_eq!(candidates(&redundant(&s, &[keep("t::two_again")])), 3);
     }
 
     /// A test whose lines another runs too is proposed (of two that run the
@@ -838,7 +901,7 @@ mod t {
         let got = |kept: &[Kept]| pairs(&s, kept);
         let want = [("near2", "near"), ("inside", "twin"), ("twin", "wide")];
         assert_eq!(got(&[]), want.map(|(a, b)| (format!("t::{a}"), format!("t::{b}"))));
-        assert_eq!(redundant(&s, &[])[0].files, ["tests/near.rs", "tests/near2.rs"]);
+        assert_eq!(redundant(&s, &[])[0].files, ["tests/near2.rs", "tests/near.rs"]);
         // Kept, it is not proposed again until its text changes.
         let keep = |suite: &str, hash: &str| Kept {
             suite: suite.into(),
@@ -868,7 +931,7 @@ mod t {
         ];
         let s = suite(tests);
         assert_eq!(pairs(&s, &[]), [("t::same".to_string(), "t::same2".to_string())]);
-        assert_eq!(redundant(&s, &[])[0].evidence["lines"], 96);
+        assert_eq!(redundant(&s, &[])[0].evidence["candidates"][0]["lines"], 96);
     }
 
     /// Shared setup is each binary's: lines more than COMMON_LINES of its

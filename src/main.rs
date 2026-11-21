@@ -117,6 +117,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             for t in &list {
                 *counts.entry(serde_json::to_value(t.kind)?.as_str().unwrap_or("").to_string()).or_insert(0) += 1;
             }
+            let candidates = tasks::candidates(&list);
             let list = tasks::cap(list);
             if !m.with_mutants {
                 notes.push(
@@ -142,9 +143,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             };
             Ok((
                 if all {
-                    json!({ "tasks": list, "counts": counts, "notes": notes, "next": next })
+                    json!({ "tasks": list, "counts": counts, "candidates": candidates, "notes": notes, "next": next })
                 } else {
-                    json!({ "task": list.first(), "remaining": counts, "notes": notes, "next": next })
+                    json!({ "task": list.first(), "remaining": counts, "candidates": candidates, "notes": notes, "next": next })
                 },
                 EXIT_OK,
             ))
