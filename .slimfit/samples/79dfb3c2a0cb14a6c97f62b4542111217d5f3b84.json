@@ -1,0 +1,33 @@
+{
+  "tip": "79dfb3c2a0cb14a6c97f62b4542111217d5f3b84",
+  "from": "ebb39c99b49747cf5c3a419f191e798b545f17cd",
+  "pool": 412,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/measure/mutants.rs:301:5: replace run_lines -> Result<BTreeMap<&'a str, BTreeSet<u32>>, Vec<crate::fault::Fault>> with Ok(BTreeMap::from_iter([(\"xyzzy\", BTreeSet::from_iter([0]))]))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:339:9: replace Run<'a>::texts -> Result<Vec<String>> with Ok(vec![\"xyzzy\".into()])",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:70:5: replace candidates -> Result<BTreeMap<String, Vec<Candidate>>> with Ok(BTreeMap::from_iter([(\"xyzzy\".into(), vec![])]))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:316:5: replace find -> Result<Option<Landing>> with Ok(Some(Default::default()))",
+        "outcome": "unviable"
+      },
+      {
+        "name": "src/landing.rs:417:9: replace Held::growth_due -> bool with false",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/select.rs:243:31: replace || with && in within",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
