@@ -15,12 +15,26 @@ pub struct TestReach {
     pub lines: BTreeMap<String, BTreeSet<u32>>,
 }
 
+/// What each test ran; refused when the run left tests out (slimfit#79): its
+/// coverage and reach are then not the tree's, and a mutant planned from
+/// them would run too few tests.
 pub fn read(format: ReachFormat, texts: &[String]) -> Result<Vec<TestReach>> {
     let mut out: Vec<TestReach> = Vec::new();
+    let mut not_run = Vec::new();
     for t in texts {
         match format {
-            ReachFormat::Lcov => lcov(t, &mut out)?,
+            ReachFormat::Lcov => lcov(t, &mut out, &mut not_run)?,
         }
+    }
+    if !not_run.is_empty() {
+        return Err(crate::fault::fault(
+            format!(
+                "the test run stopped before every test ran, so its coverage and reach are not the tree's; not run: {}",
+                not_run.join(", ")
+            ),
+            "let every test run: take `--fail-fast` and `--max-fail` out of the suite's `test_args` (the rust preset \
+             runs every test whatever fails), then run the same slimfit command again",
+        ));
     }
     Ok(out)
 }
@@ -28,11 +42,16 @@ pub fn read(format: ReachFormat, texts: &[String]) -> Result<Vec<TestReach>> {
 /// `test <binary>\t<name>` lines, each followed by the LCOV of what the
 /// test's profiles ran (`SF`, `FNDA` and `DA` records; a count of 0 is not
 /// run), or by `unreadable <what>`. A test named twice (nextest retried it)
-/// ran what either run ran.
-fn lcov(text: &str, out: &mut Vec<TestReach>) -> Result<()> {
+/// ran what either run ran. A `not run <what>` line, anywhere, names a
+/// test the run left out (or nextest's words on how many).
+fn lcov(text: &str, out: &mut Vec<TestReach>, not_run: &mut Vec<String>) -> Result<()> {
     let mut at: Option<usize> = None;
     let mut file = String::new();
     for line in text.lines() {
+        if let Some(what) = line.strip_prefix("not run ") {
+            not_run.push(what.replace('\t', " "));
+            continue;
+        }
         if let Some(t) = line.strip_prefix("test ") {
             let Some((binary, name)) = t.split_once('\t') else { bail!("a test line without a tab: {line:?}") };
             at = Some(match out.iter().position(|r| r.binary == binary && r.name == name) {
@@ -97,6 +116,8 @@ mod tests {
             ]
         );
         assert!(read(ReachFormat::Lcov, &["SF:/r/a.rs\n".into()]).is_err());
+        let cut = read(ReachFormat::Lcov, &[format!("{text}not run calc\tlater\n")]).unwrap_err();
+        assert!(crate::fault::of(cut)[0].fault.ends_with("not run: calc later"));
         assert!(read(ReachFormat::Lcov, &["test a\tb\nDA:x,1\n".into()]).is_err());
     }
 }

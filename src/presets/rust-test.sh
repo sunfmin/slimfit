@@ -52,11 +52,49 @@ LINES
 eval "set -- ${SLIMFIT_TEST_ARGS:-}" &&
 cargo llvm-cov nextest-archive --workspace --archive-file "$SLIMFIT_OUT/tests.tar.zst" &&
 mkdir -p "$SLIMFIT_OUT/bin" "$SLIMFIT_OUT/profiles" || exit
-LLVM_PROFILE_FILE="$SLIMFIT_OUT/profiles/run-%p-%m.profraw" cargo nextest run \
-  --archive-file "$SLIMFIT_OUT/tests.tar.zst" --workspace-remap . --extract-to "$SLIMFIT_OUT/bin" \
-  --tool-config-file "slimfit:$SLIMFIT_OUT/nextest.toml" \
-  --config "target.'cfg(all())'.runner = ['sh', '$SLIMFIT_OUT/runner.sh']" "$@"
+# Every test runs, whatever fails: a test not run would be missing from
+# the coverage and the reach (slimfit#79). `test_args` that say when a
+# failure stops the run say it instead (nextest takes one such flag), and
+# are kept out of "$@", which `nextest list` takes too.
+failfast= skip= n=$#
+for a in "$@"; do
+  if [ -n "$skip" ]; then failfast="$failfast $a" skip=; continue; fi
+  case $a in
+  --max-fail) failfast="$failfast $a" skip=1 ;;
+  --no-fail-fast | --nff | --fail-fast | --ff | --max-fail=*) failfast="$failfast $a" ;;
+  *) set -- "$@" "$a" ;;
+  esac
+done
+shift "$n"
+# nextest's `$1` (run, list) of the archive, extracted to `$2` (which
+# must not hold it yet), its instrumented tests writing their profiles at
+# `$3`.
+in_archive() {
+  sub=$1 into=$2 profile=$3
+  shift 3
+  LLVM_PROFILE_FILE=$profile cargo nextest "$sub" \
+    --archive-file "$SLIMFIT_OUT/tests.tar.zst" --workspace-remap . --extract-to "$into" \
+    --tool-config-file "slimfit:$SLIMFIT_OUT/nextest.toml" \
+    --config "target.'cfg(all())'.runner = ['sh', '$SLIMFIT_OUT/runner.sh']" "$@"
+}
+# shellcheck disable=SC2086 # $failfast: flags and their numbers, split.
+in_archive run "$SLIMFIT_OUT/bin" "$SLIMFIT_OUT/profiles/run-%p-%m.profraw" ${failfast:---no-fail-fast} "$@" 2> "$SLIMFIT_OUT/run.err"
 rc=$?
+cat "$SLIMFIT_OUT/run.err" >&2
+# nextest says when it stopped before every test ran (a failure past
+# `--max-fail`, a signal): each test it listed but did not run is then
+# a `not run` line of the reach report, which slimfit refuses; or, when
+# the listing fails, nextest's own words.
+stopped=$(grep -E '[0-9]+/[0-9]+ tests? (was|were) not run' "$SLIMFIT_OUT/run.err")
+if [ -n "$stopped" ]; then
+  cut -f2,3 "$SLIMFIT_OUT/tests.map" 2>/dev/null | sort -u > "$SLIMFIT_OUT/ran.txt"
+  list() { in_archive list "$SLIMFIT_OUT/listed" "$SLIMFIT_OUT/listed/%p.profraw" -T oneline "$@"; }
+  if mkdir -p "$SLIMFIT_OUT/listed" && list "$@" > "$SLIMFIT_OUT/listed.txt"; then
+    sed 's/ /	/' "$SLIMFIT_OUT/listed.txt" | grep -vxFf "$SLIMFIT_OUT/ran.txt"
+  else
+    echo "$stopped"
+  fi | sed 's/^/not run /' > "$SLIMFIT_OUT/not-run.txt"
+fi
 TOOLS=${LLVM_TOOLS:-$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin}
 IGNORED='/rustc/|/\.cargo/(registry|git)/|/\.rustup/'
 export TOOLS SLIMFIT_OUT IGNORED
@@ -76,4 +114,5 @@ if [ -s "$SLIMFIT_OUT/tests.map" ]; then
   each | xargs -P "$(getconf _NPROCESSORS_ONLN)" -I{} sh -c 'sh "$SLIMFIT_OUT/lines.sh" {} > "$SLIMFIT_OUT/reach-{}.txt"'
   each | while read -r i; do cat "$SLIMFIT_OUT/reach-$i.txt"; done > "$SLIMFIT_OUT/{REACH}"
 fi
+[ -s "$SLIMFIT_OUT/not-run.txt" ] && cat "$SLIMFIT_OUT/not-run.txt" >> "$SLIMFIT_OUT/{REACH}"
 exit $rc

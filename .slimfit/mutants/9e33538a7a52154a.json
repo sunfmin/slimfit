@@ -1,0 +1,6 @@
+{
+  "tree": "167dc5e723aa377dbed53f132eedae456460613b+d1fba762150c532c",
+  "picker": "codex:01a1fce8-da0c-7780-91b1-20ad292dba79:default",
+  "author": "claude-code:5de9d682-a02f-58d4-ae92-ff6319a45c54:opus",
+  "none": "The tests assert parsed reach and the diagnostic naming skipped tests, so each buildable candidate would break an asserted result."
+}

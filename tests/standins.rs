@@ -313,6 +313,7 @@ fn every_preset_through_its_standins() {
     every_printed_key_is_on_its_page(&printed);
     faults_reach_the_agent(&s, &RUST);
     rust_test_args();
+    rust_runs_every_test_whatever_fails();
 
     go();
     for lang in [&TYPESCRIPT, &KOTLIN, &SWIFT] {
@@ -472,13 +473,13 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
         s.error(args, &[missing, "fix: fix the command's failure in its log", tool]);
         s.relink(&link);
     }
-    let no_report = Some(Fault { exit: 0, no_report: true });
+    let no_report = Some(Fault { exit: 0, no_report: true, ..Fault::default() });
     let (first, mutants) = (lang.runs_tests, lang.mutants_step);
-    s.fault(first, Some(Fault { exit: 3, no_report: false }));
+    s.fault(first, Some(Fault { exit: 3, ..Fault::default() }));
     if mutates {
         // A listing with no report and exit 0 is cargo-mutants' empty one
         // (`rust`): the listing that fails also exits non-zero.
-        s.fault(mutants, Some(Fault { exit: 1, no_report: true }));
+        s.fault(mutants, Some(Fault { exit: 1, no_report: true, ..Fault::default() }));
     }
     let (code, json, stderr) = s.slimfit(args);
     if mutates {
@@ -758,6 +759,50 @@ fn rust_test_args() {
     let log = s.read(".slimfit/out/rust/mutants.log");
     let runs: Vec<&str> = log.lines().filter_map(|l| l.strip_prefix("standin nextest: runs calc ")).collect();
     assert_eq!(runs, ["tests::adds_again", "tests::adds"], "{log}");
+}
+
+/// A failing test stops none of the Rust test run (slimfit#79): every test
+/// is measured, and what each ran, while a mutant's tests still stop at
+/// its first failure. A suite's own `--no-fail-fast` is passed once; a
+/// `--fail-fast` of its own leaves tests out, and that run is refused,
+/// naming them.
+fn rust_runs_every_test_whatever_fails() {
+    let fails = Some(Fault { first_test_fails: true, ..Fault::default() });
+    let measured = |test_args: &str| {
+        let s = Sample::new(&RUST);
+        let toml = format!("[[suite]]\nname = \"rust\"\npreset = \"rust\"\ntest_args = {test_args:?}\n");
+        std::fs::write(s.repo.join("slimfit.toml"), toml).unwrap();
+        git(&s.repo, &["add", "-A"]);
+        git(&s.repo, &["commit", "-qm", "test_args"]);
+        s.fault("cargo-nextest nextest", fails);
+        s
+    };
+    let every = |s: &Sample, init: &Value| {
+        assert_eq!(init["baseline"]["rust"]["tests"], 4, "{init:#}");
+        let reach = s.read(".slimfit/out/rust/reach.txt");
+        assert_eq!(reach.lines().filter(|l| l.starts_with("test ")).count(), 4, "{reach}");
+        let run = s.take().into_iter().find(|c| c.step == "cargo-nextest nextest").unwrap();
+        assert_eq!(run.args.iter().filter(|a| *a == "--no-fail-fast").count(), 1, "{run:?}");
+    };
+    let s = measured("");
+    every(&s, &s.ok(&["init"]));
+    // A mutant of `add`, which `adds_again`, `adds` and `slow` run: the
+    // first fails, and the rest are not run.
+    let lib = s.repo.join("src/lib.rs");
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap().replacen("a + b", "a + b // changed", 1)).unwrap();
+    s.ok(&["check", "--mutants", PICK_KILLED, "--why", "the sum"]);
+    let calls = s.take();
+    let run = calls.iter().rfind(|c| c.step == "cargo-nextest nextest" && !c.args.contains(&"--no-run".into()));
+    assert!(!run.unwrap().args.iter().any(|a| a == "--no-fail-fast"), "{run:?}");
+    let log = s.read(".slimfit/out/rust/mutants.log");
+    let runs: Vec<&str> = log.lines().filter_map(|l| l.strip_prefix("standin nextest: runs calc ")).collect();
+    assert_eq!(runs, ["tests::adds_again"], "{log}");
+    assert!(log.contains("warning: 2/3 tests were not run due to test failure"), "{log}");
+
+    let s = measured("--no-fail-fast");
+    every(&s, &s.ok(&["init"]));
+    let s = measured("--fail-fast");
+    s.error(&["init"], &["not run: calc tests::adds, calc tests::adult, calc tests::slow", "--fail-fast"]);
 }
 
 /// A sample of 2 draws 4 and runs them in one cargo-mutants run, which
