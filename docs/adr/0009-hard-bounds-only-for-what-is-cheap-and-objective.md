@@ -27,7 +27,10 @@ toward that work: an author's picks of its own change's mutants all died
    costly for every `check`, a number the host's load moves, or one an
    agent can raise without the quality it stands for, is no hard bound.
    `unrecorded_mutants` is not a bound on a number but the check of point
-   3. These three are all `check` fails on.
+   3; nor is `unrecorded_growth` (ADR 0012), which a change's net source
+   lines past an allowance ask for, and which a reviewed record clears
+   whatever the number. These four are all `check` fails on. Line counts
+   themselves are no hard bound: denser code games them.
 
    `test_seconds` is no hard bound (slimfit#59). It was one, as CPU time
    (slimfit#43, ADR 0010), on the claim that load does not move CPU time.
@@ -69,6 +72,7 @@ toward that work: an author's picks of its own change's mutants all died
 3. **slimfit checks that the step was taken, not that it was right.** The
    check is cheap and mechanical: a record the change carries (a
    `.slimfit/mutants/` record that names a picker other than its author, a
+   `.slimfit/growth/` record that names a reviewer other than its author, a
    `kept` verdict with its reason, a loosening with its reason), or a task
    `next` gives first. Who decided is the caller's word, compared as given.
    slimfit never re-decides the verdict a record holds.

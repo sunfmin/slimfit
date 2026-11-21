@@ -6,6 +6,7 @@ mod fault;
 mod fixtures;
 mod formats;
 mod git;
+mod growth;
 mod landing;
 mod loc;
 mod measure;
@@ -196,14 +197,23 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 code,
             ))
         }
-        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
+        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, growth, .. } => {
             let s = Session::open(&repo)?;
             let old = &s.base;
             // Timed as a gate times it: a test run inside `--mutants` takes the
             // time of one of the same files, or runs again (slimfit#74).
             let m = s.measure(measure::Options { fresh, dry_run, timed: true, ..Default::default() })?;
             let new = ratchet::ratchet(old, &m, &s.cfg.check, &loosen, reason.as_deref())?;
-            let record = record(&m, no_mutants, picker, author)?.map(|r| r.with_firsts(&repo).file()).transpose()?;
+            let grown = if growth.serves.is_some() {
+                landing::hold(&repo, &s.cfg, &s.tree, false)?.map_or(0, |h| h.growth)
+            } else {
+                0
+            };
+            let growth_record = growth.record(&m.tree, grown, author.as_deref())?;
+            let growth_record = growth_record.map(|r| landing::file_in(growth::DIR, &r)).transpose()?;
+            let author = author.filter(|_| growth_record.is_none() || picker.is_some() || no_mutants.is_some());
+            let record = record(&m, no_mutants, picker, author)?;
+            let record = record.map(|r| landing::file_in(landing::DIR, &r.with_firsts(&repo))).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
@@ -220,6 +230,12 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 }
                 changed = true;
             }
+            if let Some((path, text)) = &growth_record
+                && !repo.join(path).exists()
+            {
+                writes.put(path, text)?;
+                changed = true;
+            }
             let next = if changed {
                 "commit .slimfit/ with the change it records; then `slimfit next`"
             } else {
@@ -231,6 +247,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "baseline": new.suites,
                     "loosened": new.loosened,
                     "record": record.map(|(path, _)| path),
+                    "growth_record": growth_record.map(|(path, _)| path),
                     "next": next,
                 })),
                 EXIT_OK,
@@ -301,6 +318,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = s.measure(measure::Options { fresh, ..Default::default() })?;
             let history = report::history(&repo, &s.cfg, commits, points)?;
             let records = landing::records(&repo)?;
+            let growth_records = growth::Records::read(&repo)?;
             Ok((
                 json!({
                     "current": metrics_of(&m),
@@ -308,6 +326,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "loosened": s.base.loosened,
                     "history": history,
                     "mutants_records": records,
+                    "growth_records": growth_records,
                     "next": "slimfit next",
                 }),
                 EXIT_OK,
@@ -485,9 +504,10 @@ mod gitignore_tests {
 #[cfg(test)]
 mod answer_tests {
     use super::{fault::Fault, run};
+    use crate::growth;
     use crate::measure::t::{git, sample_repo};
     use crate::model::MutantStatus;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::path::Path;
 
     fn slimfit(repo: &Path, args: &str) -> anyhow::Result<(Value, i32)> {
@@ -684,6 +704,91 @@ mod answer_tests {
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let f = faults(repo, "check");
         assert!(f[0].fault.starts_with("slimfit.toml's [check] target gone shares no commit with HEAD"), "{f:?}");
+    }
+
+    /// A change past `growth_allowance` net fails every `check` as
+    /// `unrecorded_growth` until it adds a growth record that names a
+    /// reviewer other than its author (ADR 0012); one at or under it needs
+    /// none, and code it deletes pays for what it adds. `next` asks for the
+    /// review; `report` counts the records.
+    #[test]
+    fn growth_past_the_allowance_passes_only_with_a_reviewed_record() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.check.target = Some("target".into());
+        cfg.check.growth_allowance = 4;
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        git(repo, &["checkout", "-qb", "grow"]);
+        let lib = repo.join("src/lib.rs");
+        let original = std::fs::read_to_string(&lib).unwrap();
+        let growth = || {
+            let (out, _) = slimfit(repo, "check").unwrap();
+            let metrics: Vec<String> = out["verdict"]["violations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v["metric"].as_str().map(String::from))
+                .collect();
+            (out["landing"]["growth"].as_i64().unwrap(), metrics.contains(&"unrecorded_growth".into()), out)
+        };
+        std::fs::write(&lib, original.clone() + "\npub fn one() -> u8 {\n    1\n}\n// c\n").unwrap();
+        let (lines, due, _) = growth();
+        assert_eq!((lines, due), (3, false), "under the allowance: no record due");
+        std::fs::write(&lib, original.clone() + "\npub fn one() -> u8 {\n    1\n}\npub fn two() -> u8 {\n    2\n}\n")
+            .unwrap();
+        let (lines, due, out) = growth();
+        assert!(lines == 6 && due, "{out:#}");
+        let v = out["verdict"]["violations"].as_array().unwrap().iter().find(|v| v["metric"] == "unrecorded_growth");
+        let v = v.unwrap();
+        assert_eq!(
+            (v["suite"].as_str(), v["limit"].as_f64(), v["current"].as_f64()),
+            (Some("rust"), Some(4.0), Some(6.0))
+        );
+        assert!(v["fix"].as_str().unwrap().contains("`slimfit help reviewer`"), "{v:#}");
+        // Code deleted in the same change pays for what it adds.
+        let without_unused = original.replace("pub fn unused(x: i64) -> i64 {\n    let doubled = x * 2;\n", "");
+        std::fs::write(
+            &lib,
+            without_unused.clone() + "pub fn one() -> u8 {\n    1\n}\npub fn two() -> u8 {\n    2\n}\n",
+        )
+        .unwrap();
+        assert_eq!((growth().0, growth().1), (4, false));
+        std::fs::write(&lib, original.clone() + "\npub fn one() -> u8 {\n    1\n}\npub fn two() -> u8 {\n    2\n}\n")
+            .unwrap();
+        let (next, _) = slimfit(repo, "next --kind justify-growth").unwrap();
+        assert_eq!(
+            (next["task"]["evidence"]["lines"].as_i64(), &next["task"]["files"]),
+            (Some(6), &json!(["src/lib.rs"]))
+        );
+        // The author does not judge its own growth, and a record says what it serves and what was weighed.
+        let full = ["--serves", "#75", "--considered", "add() does not do it", "--reviewer", "r", "--author", "a"];
+        let refused =
+            |args: &[&str]| crate::fault::of(slimfit_args(repo, &[&["ratchet"][..], args].concat()).unwrap_err());
+        let f = refused(&["--as-is", "x", "--author", "a"]);
+        assert!(f[0].fix.contains("--serves <ISSUE>") && f[0].fix.contains("--reviewer <ID>"), "{f:?}");
+        assert!(refused(&[&full[..], &["--cut", "two()"]].concat())[0].fix.contains("--answer <WHAT>"));
+        assert!(refused(&[&full[..6], &["--as-is", "x"]].concat())[0].fault.contains("without `--author`"));
+        let blank = [&["--serves", " "], &full[2..], &["--as-is", "x"]].concat();
+        assert!(refused(&blank)[0].fault.contains("a field that is not one line"));
+        let mine = [&full[..6], &["--author", "r", "--as-is", "x"]].concat();
+        assert!(refused(&mine)[0].fault.contains("--reviewer is the change's author"));
+        assert!(!repo.join(growth::DIR).exists(), "a refused ratchet writes no record");
+        let (out, _) = slimfit_args(repo, &[&["ratchet"][..], &full, &["--as-is", "each fn is new"]].concat()).unwrap();
+        let record = out["growth_record"].as_str().unwrap();
+        let text = std::fs::read_to_string(repo.join(record)).unwrap();
+        assert!(text.contains("\"lines\": 6") && text.contains("\"reviewer\": \"r\""), "{text}");
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "grow"]);
+        let (_, due, out) = growth();
+        assert!(!due && out["landing"]["growth_records"] == json!([record]), "{out:#}");
+        let (report, _) = slimfit(repo, "report --points 1").unwrap();
+        assert_eq!(report["growth_records"], json!({ "as_is": 1, "cut": 0 }), "{report:#}");
+        assert_eq!(report["history"][0]["growth_records"], json!({ "as_is": 1, "cut": 0 }), "{report:#}");
     }
 
     /// Code from before the rule is not charged (slimfit#37): the baseline's

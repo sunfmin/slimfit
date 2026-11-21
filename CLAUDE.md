@@ -8,6 +8,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/formats/`: readers for the report files the tools write (JUnit, go test JSON, LCOV, Go coverprofile, JaCoCo, and the reports of cargo-mutants, Stryker, PIT, gremlins and muter). Each reads into the shapes in `src/model.rs`.
 - `src/config.rs`: `slimfit.toml` and the per-language presets. A language is just data: commands plus report formats.
 - `src/measure.rs`: runs a suite's commands, resolves the reports' paths to repo files, reduces everything to metrics, and caches the result per working tree. `src/measure/mutants.rs`: the change's mutants (ADR 0006-0008): what each tool lists of the change, the picks among them, and their run.
+- `src/growth.rs`: a change's growth (ADR 0012): the source lines it adds net, and the growth record a second agent's verdict on it writes.
 - `src/session.rs`: what every measuring command opens first: config, baseline and HEAD's tree (`Session::open`), then the tree's measurement (`Session::measure`).
 - `src/ratchet.rs`: the baseline, `check` and `ratchet`; `Baseline::next` is the one place a baseline is built from the one before it.
 - `src/tasks.rs`: turns a measurement into tasks for `slimfit next`.

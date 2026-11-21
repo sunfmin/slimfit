@@ -61,15 +61,34 @@ impl Record {
     /// Whether it names a picker other than the change's author: what the
     /// gate holds of a record, compared as given, never judged.
     pub fn picked_by_another(&self) -> bool {
-        let (p, a) = (self.picker.trim(), self.author.trim());
-        !p.is_empty() && !a.is_empty() && p != a
+        by_another(&self.picker, &self.author)
     }
+}
 
-    /// Its path, named by its contents, and its text.
-    pub fn file(&self) -> Result<(String, String)> {
-        let text = serde_json::to_string_pretty(self)? + "\n";
-        Ok((format!("{DIR}/{}.json", hash(&text)), text))
+/// Whether a record names `who` (its picker, or reviewer) and `author`, and
+/// they differ: compared as given, never judged.
+pub fn by_another(who: &str, author: &str) -> bool {
+    let (w, a) = (who.trim(), author.trim());
+    !w.is_empty() && !a.is_empty() && w != a
+}
+
+/// The path of `record` in `dir`, named by its contents, and its text.
+pub fn file_in(dir: &str, record: &impl Serialize) -> Result<(String, String)> {
+    let text = serde_json::to_string_pretty(record)? + "\n";
+    Ok((format!("{dir}/{}.json", hash(&text)), text))
+}
+
+/// The `.json` files in the working copy's `dir`: (path in the repo, text).
+pub fn json_files(repo: &Path, dir: &str) -> Result<Vec<(String, String)>> {
+    let Ok(entries) = std::fs::read_dir(repo.join(dir)) else { return Ok(vec![]) };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".json") {
+            out.push((format!("{dir}/{name}"), std::fs::read_to_string(e.path())?));
+        }
     }
+    Ok(out)
 }
 
 /// Where each pick's first outcome on the change waits for its record: a
@@ -168,11 +187,10 @@ pub const RECORDS_HELP: &str = "`with_picks` (records of picked mutants run), `w
 /// Counts the records in `.slimfit/mutants/`.
 pub fn records(repo: &Path) -> Result<Records> {
     let mut n = Records::default();
-    let Ok(dir) = std::fs::read_dir(repo.join(DIR)) else { return Ok(n) };
-    for p in dir.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "json")) {
-        let r: Record = serde_json::from_str(&std::fs::read_to_string(&p)?).map_err(|e| {
+    for (p, text) in json_files(repo, DIR)? {
+        let r: Record = serde_json::from_str(&text).map_err(|e| {
             fault(
-                format!("{} is not a record of picked mutants: {e}", p.display()),
+                format!("{} is not a record of picked mutants: {e}", repo.join(&p).display()),
                 format!("restore it from git: `git checkout -- {DIR}`"),
             )
         })?;
@@ -204,6 +222,8 @@ pub struct Landing {
     pub to: String,
     /// The lines it adds.
     pub added: Lines,
+    /// The files it adds, changes or deletes.
+    pub touched: Vec<String>,
 }
 
 /// The working tree as a command found it, read once, and what is found of
@@ -235,6 +255,12 @@ impl SuiteTree {
     /// The lines of `file`, when it is a source file of the tree.
     pub fn source_lines(&self, file: &str) -> Option<&FileLines> {
         self.totals.files.get(file).filter(|(k, _)| *k == Kind::Source).map(|(_, l)| l)
+    }
+
+    /// The source lines `file` would have with `text`: 0 unless it is a
+    /// source file of the suite.
+    pub fn prod(&self, file: &str, text: &str) -> u64 {
+        self.classifier.file(file, text).filter(|(k, _)| *k == Kind::Source).map_or(0, |(_, l)| l.prod)
     }
 }
 
@@ -305,7 +331,18 @@ fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Lan
     };
     let to = git::write_tree(repo, head)?;
     let patch = git::diff(repo, &from, &to, ".", &[])?;
-    Ok(Some(Landing { target, from, to, added: added_lines(&patch, "") }))
+    Ok(Some(Landing { target, from, to, added: added_lines(&patch, ""), touched: touched(&patch) }))
+}
+
+/// The files a unified diff made with `--no-renames` touches: each named
+/// on its `diff --git a/<path> b/<path>` line, the two paths being one.
+fn touched(patch: &str) -> Vec<String> {
+    patch
+        .lines()
+        .filter_map(|l| l.strip_prefix("diff --git a/"))
+        .filter_map(|both| both.get(..both.len().checked_sub(3)? / 2))
+        .map(String::from)
+        .collect()
 }
 
 /// Of `added`, the lines a suite's mutants run must measure, per suite whose
@@ -343,6 +380,17 @@ pub struct Held {
     pub lines: usize,
     /// The records of picked mutants it adds.
     pub records: Vec<String>,
+    /// The source lines it adds net, in all suites (ADR 0012).
+    pub growth: i64,
+    /// The growth records it adds.
+    pub growth_records: Vec<String>,
+    /// Per suite whose source lines it changes, each file's net lines: what `next` names. Not printed.
+    #[serde(skip)]
+    pub grown: BTreeMap<String, BTreeMap<String, i64>>,
+    /// Whether a growth record it adds names a reviewer other than its
+    /// author: what clears `unrecorded_growth`. Not printed.
+    #[serde(skip)]
+    pub growth_reviewed: bool,
     /// Every line it adds, by file: what `check` names the change's new
     /// uncovered spans from. Not printed.
     #[serde(skip)]
@@ -361,12 +409,24 @@ pub struct Unrecorded {
     pub first: String,
 }
 
+impl Held {
+    /// Whether it owes a growth record (ADR 0012): it adds more than
+    /// `allowance` source lines net and no record a reviewer other than its
+    /// author judged.
+    pub fn growth_due(&self, allowance: u64) -> bool {
+        self.growth > allowance as i64 && !self.growth_reviewed
+    }
+}
+
 /// What a [`Held`] prints, as the command pages name it.
 pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's merge base with it, or the baseline's cut \
      point, mutants_from, when that is later), `lines` (the source lines the change adds whose mutants can be \
-     picked) and `records` (the records of picked mutants it adds, in .slimfit/mutants/)";
+     picked), `records` (the records of picked mutants it adds, in .slimfit/mutants/), `growth` (the source lines it \
+     adds net, in all suites: in the files it touches, their lines now less their lines where the change starts) and `growth_records` (the \
+     growth records it adds, in .slimfit/growth/)";
 
-/// Holds the landing to its mutants: per suite that adds source lines, it
+/// Holds the landing to its records: its growth (ADR 0012), and its
+/// mutants: per suite that adds source lines, it
 /// is unrecorded when the landing adds no record that names a picker other
 /// than its author, nor did the measurement run picks (`picked`: `ratchet`
 /// records them, and refuses a record without such a picker). `None` when
@@ -379,14 +439,17 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
         );
         return Ok(None);
     };
-    let records: Vec<String> =
-        l.added.keys().filter(|f| f.starts_with(&format!("{DIR}/")) && f.ends_with(".json")).cloned().collect();
-    // A record that does not read names no picker: the gate does not refuse it, it just does not count.
-    let named = |f: &String| {
-        let text = std::fs::read_to_string(repo.join(f)).unwrap_or_default();
-        serde_json::from_str::<Record>(&text).is_ok_and(|r| r.picked_by_another())
+    let added_in = |dir: &str| -> Vec<String> {
+        l.added.keys().filter(|f| f.starts_with(&format!("{dir}/")) && f.ends_with(".json")).cloned().collect()
     };
+    let (records, growth_records) = (added_in(DIR), added_in(crate::growth::DIR));
+    // A record that does not read names no picker (nor reviewer): the gate does not refuse it, it just does not count.
+    let text = |f: &String| std::fs::read_to_string(repo.join(f)).unwrap_or_default();
+    let named = |f: &String| serde_json::from_str::<Record>(&text(f)).is_ok_and(|r| r.picked_by_another());
+    let reviewed =
+        |f: &String| serde_json::from_str::<crate::growth::Record>(&text(f)).is_ok_and(|r| r.reviewed_by_another());
     let held = picked || records.iter().any(named);
+    let grown = crate::growth::grown(repo, cfg, tree, l)?;
     let (mut lines, mut unrecorded) = (0, BTreeMap::new());
     for (suite, required) in required(cfg, tree, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
@@ -400,6 +463,10 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
         from: l.from.clone(),
         lines,
         records,
+        growth: grown.values().flat_map(|f| f.values()).sum(),
+        growth_reviewed: growth_records.iter().any(reviewed),
+        growth_records,
+        grown,
         added: l.added.clone(),
         unrecorded,
     }))

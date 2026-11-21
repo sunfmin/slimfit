@@ -203,6 +203,19 @@ pub fn tree_blobs(repo: &Path, commit: &str, keep: impl Fn(&str) -> bool) -> Res
             wanted.push((path.to_string(), oid.unwrap_or_default().to_string()));
         }
     }
+    let texts = cat_file(repo, wanted.iter().map(|(_, o)| o.clone()).collect())?;
+    Ok(wanted.into_iter().zip(texts).filter_map(|((p, _), t)| Some((p, t?))).collect())
+}
+
+/// The text of each of `paths` at `rev`, through one `cat-file --batch`;
+/// `None` for one `rev` does not hold.
+pub fn files_at(repo: &Path, rev: &str, paths: &[String]) -> Result<Vec<Option<String>>> {
+    cat_file(repo, paths.iter().map(|p| format!("{rev}:{p}")).collect())
+}
+
+/// Each object `specs` names, read through one `cat-file --batch`; `None`
+/// for one that is missing.
+fn cat_file(repo: &Path, specs: Vec<String>) -> Result<Vec<Option<String>>> {
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -211,23 +224,27 @@ pub fn tree_blobs(repo: &Path, commit: &str, keep: impl Fn(&str) -> bool) -> Res
         .stdout(Stdio::piped())
         .spawn()?;
     let mut stdin = child.stdin.take().context("stdin")?;
-    let oids: Vec<String> = wanted.iter().map(|(_, o)| o.clone()).collect();
+    let n = specs.len();
     let writer = std::thread::spawn(move || -> std::io::Result<()> {
-        for o in oids {
-            writeln!(stdin, "{o}")?;
+        for s in specs {
+            writeln!(stdin, "{s}")?;
         }
         Ok(())
     });
     let mut reader = BufReader::new(child.stdout.take().context("stdout")?);
-    let mut out = Vec::with_capacity(wanted.len());
-    for (path, _) in wanted {
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
         let mut header = String::new();
         reader.read_line(&mut header)?;
+        if header.trim_end().ends_with(" missing") {
+            out.push(None);
+            continue;
+        }
         let size: usize = header.split(' ').nth(2).context("cat-file header")?.trim().parse()?;
         let mut buf = vec![0; size + 1];
         reader.read_exact(&mut buf)?;
         buf.pop();
-        out.push((path, String::from_utf8_lossy(&buf).into_owned()));
+        out.push(Some(String::from_utf8_lossy(&buf).into_owned()));
     }
     writer.join().expect("writer thread")?;
     child.wait()?;
