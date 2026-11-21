@@ -204,13 +204,16 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             // time of one of the same files, or runs again (slimfit#74).
             let m = s.measure(measure::Options { fresh, dry_run, timed: true, ..Default::default() })?;
             let new = ratchet::ratchet(old, &m, &s.cfg.check, &loosen, reason.as_deref())?;
-            let grown = match growth.given() {
-                true => landing::hold(&repo, &s.cfg, &s.tree, false)?.map_or(0, |h| h.growth),
-                false => 0,
+            let grown = if growth.serves.is_some() {
+                landing::hold(&repo, &s.cfg, &s.tree, false)?.map_or(0, |h| h.growth)
+            } else {
+                0
             };
-            let growth_record = growth.record(&m.tree, grown, author.as_deref())?.map(|r| r.file()).transpose()?;
+            let growth_record = growth.record(&m.tree, grown, author.as_deref())?;
+            let growth_record = growth_record.map(|r| landing::file_in(growth::DIR, &r)).transpose()?;
             let author = author.filter(|_| growth_record.is_none() || picker.is_some() || no_mutants.is_some());
-            let record = record(&m, no_mutants, picker, author)?.map(|r| r.with_firsts(&repo).file()).transpose()?;
+            let record = record(&m, no_mutants, picker, author)?;
+            let record = record.map(|r| landing::file_in(landing::DIR, &r.with_firsts(&repo))).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
             // Nothing to ratchet is an answer, not a failure.
@@ -315,7 +318,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let m = s.measure(measure::Options { fresh, ..Default::default() })?;
             let history = report::history(&repo, &s.cfg, commits, points)?;
             let records = landing::records(&repo)?;
-            let growth_records = growth::Records::read(&repo);
+            let growth_records = growth::Records::read(&repo)?;
             Ok((
                 json!({
                     "current": metrics_of(&m),
@@ -766,10 +769,10 @@ mod answer_tests {
         let full = ["--serves", "#75", "--considered", "add() does not do it", "--reviewer", "r", "--author", "a"];
         let refused =
             |args: &[&str]| crate::fault::of(slimfit_args(repo, &[&["ratchet"][..], args].concat()).unwrap_err());
-        assert!(
-            refused(&["--as-is", "x", "--author", "a"])[0].fault.contains("without --serves, --considered, --reviewer")
-        );
-        assert!(refused(&[&full[..], &["--cut", "two()"]].concat())[0].fault.contains("without --answer"));
+        let f = refused(&["--as-is", "x", "--author", "a"]);
+        assert!(f[0].fix.contains("--serves <ISSUE>") && f[0].fix.contains("--reviewer <ID>"), "{f:?}");
+        assert!(refused(&[&full[..], &["--cut", "two()"]].concat())[0].fix.contains("--answer <WHAT>"));
+        assert!(refused(&[&full[..6], &["--as-is", "x"]].concat())[0].fault.contains("without `--author`"));
         let mine = [&full[..6], &["--author", "r", "--as-is", "x"]].concat();
         assert!(refused(&mine)[0].fault.contains("--reviewer is the change's author"));
         assert!(!repo.join(growth::DIR).exists(), "a refused ratchet writes no record");

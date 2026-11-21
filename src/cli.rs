@@ -402,22 +402,22 @@ pub(crate) enum Cmd {
 #[derive(clap::Args, Default)]
 pub(crate) struct GrowthArgs {
     /// The issue the change's growth serves (one line); kept in the growth record (see [the reviewer](help:reviewer)).
-    #[arg(long, value_name = "ISSUE", verbatim_doc_comment)]
+    #[arg(long, value_name = "ISSUE", requires_all = ["considered", "reviewer", "verdict"], verbatim_doc_comment)]
     pub serves: Option<String>,
     /// What existing code you weighed reusing or deleting instead of adding (one line); kept in the growth record.
-    #[arg(long, value_name = "WHAT", verbatim_doc_comment)]
+    #[arg(long, value_name = "WHAT", requires = "serves", verbatim_doc_comment)]
     pub considered: Option<String>,
     /// The reviewer's verdict that the change cannot be smaller, with its why (one line).
-    #[arg(long, value_name = "WHY", conflicts_with = "cut", verbatim_doc_comment)]
+    #[arg(long, value_name = "WHY", group = "verdict", requires = "serves", verbatim_doc_comment)]
     pub as_is: Option<String>,
     /// What the reviewer named to cut (one line); needs `--answer`.
-    #[arg(long, value_name = "WHAT", verbatim_doc_comment)]
+    #[arg(long, value_name = "WHAT", group = "verdict", requires_all = ["answer", "serves"], verbatim_doc_comment)]
     pub cut: Option<String>,
     /// What you did about each cut `--cut` names, or why not (one line).
     #[arg(long, value_name = "WHAT", requires = "cut", verbatim_doc_comment)]
     pub answer: Option<String>,
     /// Who judged the growth: the second agent, by an id its caller gives, as `--picker`'s is; kept in the growth record. It must differ from `--author`.
-    #[arg(long, value_name = "ID", verbatim_doc_comment)]
+    #[arg(long, value_name = "ID", requires = "serves", verbatim_doc_comment)]
     pub reviewer: Option<String>,
 }
 

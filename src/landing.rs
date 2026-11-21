@@ -61,15 +61,34 @@ impl Record {
     /// Whether it names a picker other than the change's author: what the
     /// gate holds of a record, compared as given, never judged.
     pub fn picked_by_another(&self) -> bool {
-        let (p, a) = (self.picker.trim(), self.author.trim());
-        !p.is_empty() && !a.is_empty() && p != a
+        by_another(&self.picker, &self.author)
     }
+}
 
-    /// Its path, named by its contents, and its text.
-    pub fn file(&self) -> Result<(String, String)> {
-        let text = serde_json::to_string_pretty(self)? + "\n";
-        Ok((format!("{DIR}/{}.json", hash(&text)), text))
+/// Whether a record names `who` (its picker, or reviewer) and `author`, and
+/// they differ: compared as given, never judged.
+pub fn by_another(who: &str, author: &str) -> bool {
+    let (w, a) = (who.trim(), author.trim());
+    !w.is_empty() && !a.is_empty() && w != a
+}
+
+/// The path of `record` in `dir`, named by its contents, and its text.
+pub fn file_in(dir: &str, record: &impl Serialize) -> Result<(String, String)> {
+    let text = serde_json::to_string_pretty(record)? + "\n";
+    Ok((format!("{dir}/{}.json", hash(&text)), text))
+}
+
+/// The `.json` files in the working copy's `dir`: (path in the repo, text).
+pub fn json_files(repo: &Path, dir: &str) -> Result<Vec<(String, String)>> {
+    let Ok(entries) = std::fs::read_dir(repo.join(dir)) else { return Ok(vec![]) };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".json") {
+            out.push((format!("{dir}/{name}"), std::fs::read_to_string(e.path())?));
+        }
     }
+    Ok(out)
 }
 
 /// Where each pick's first outcome on the change waits for its record: a
@@ -168,11 +187,10 @@ pub const RECORDS_HELP: &str = "`with_picks` (records of picked mutants run), `w
 /// Counts the records in `.slimfit/mutants/`.
 pub fn records(repo: &Path) -> Result<Records> {
     let mut n = Records::default();
-    let Ok(dir) = std::fs::read_dir(repo.join(DIR)) else { return Ok(n) };
-    for p in dir.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|e| e == "json")) {
-        let r: Record = serde_json::from_str(&std::fs::read_to_string(&p)?).map_err(|e| {
+    for (p, text) in json_files(repo, DIR)? {
+        let r: Record = serde_json::from_str(&text).map_err(|e| {
             fault(
-                format!("{} is not a record of picked mutants: {e}", p.display()),
+                format!("{} is not a record of picked mutants: {e}", repo.join(&p).display()),
                 format!("restore it from git: `git checkout -- {DIR}`"),
             )
         })?;
@@ -366,9 +384,9 @@ pub struct Held {
     pub growth: i64,
     /// The growth records it adds.
     pub growth_records: Vec<String>,
-    /// Per suite whose source lines it changes, how: what `next` names. Not printed.
+    /// Per suite whose source lines it changes, each file's net lines: what `next` names. Not printed.
     #[serde(skip)]
-    pub grown: BTreeMap<String, crate::growth::Grown>,
+    pub grown: BTreeMap<String, BTreeMap<String, i64>>,
     /// Whether a growth record it adds names a reviewer other than its
     /// author: what clears `unrecorded_growth`. Not printed.
     #[serde(skip)]
@@ -389,6 +407,15 @@ pub struct Unrecorded {
     pub lines: usize,
     /// The first of them, as `file:line`.
     pub first: String,
+}
+
+impl Held {
+    /// Whether it owes a growth record (ADR 0012): it adds more than
+    /// `allowance` source lines net and no record a reviewer other than its
+    /// author judged.
+    pub fn growth_due(&self, allowance: u64) -> bool {
+        self.growth > allowance as i64 && !self.growth_reviewed
+    }
 }
 
 /// What a [`Held`] prints, as the command pages name it.
@@ -436,7 +463,7 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
         from: l.from.clone(),
         lines,
         records,
-        growth: grown.values().map(|g| g.lines).sum(),
+        growth: grown.values().flat_map(|f| f.values()).sum(),
         growth_reviewed: growth_records.iter().any(reviewed),
         growth_records,
         grown,

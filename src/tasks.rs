@@ -207,10 +207,10 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
 /// and no growth record that names a reviewer other than its author, with
 /// the files that grew most first.
 fn justify_growth(h: &crate::landing::Held, allowance: u64) -> Option<Task> {
-    if h.growth <= allowance as i64 || h.growth_reviewed {
+    if !h.growth_due(allowance) {
         return None;
     }
-    let mut files: Vec<(&String, i64)> = h.grown.values().flat_map(|g| g.files.iter().map(|(f, n)| (f, *n))).collect();
+    let mut files: Vec<(&String, i64)> = h.grown.values().flatten().map(|(f, n)| (f, *n)).collect();
     files.sort_by_key(|(f, n)| (-n, f.to_string()));
     let suites: Vec<&str> = h.grown.keys().map(String::as_str).collect();
     Some(Task {
@@ -229,8 +229,8 @@ fn justify_growth(h: &crate::landing::Held, allowance: u64) -> Option<Task> {
             "grown": files.iter().map(|(f, n)| json!({ "file": f, "lines": n })).collect::<Vec<_>>(),
         }),
         steps: format!(
-            "Do not judge it yourself: you wrote the change, so you would find it all needed. {}.",
-            crate::growth::JUSTIFY_GROWTH.replacen("first", "First", 1)
+            "Do not judge it yourself: you wrote the change, so you would find it all needed. So {}.",
+            crate::growth::JUSTIFY_GROWTH
         ),
         accept: TaskKind::JustifyGrowth.accept().into(),
     })

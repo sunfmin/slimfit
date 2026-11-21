@@ -508,10 +508,11 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig, held: Option<&
 /// than `allowance` and no growth record naming a reviewer other than its
 /// author (ADR 0012).
 fn growth_violation(h: &Held, allowance: u64) -> Option<Violation> {
-    if h.growth <= allowance as i64 || h.growth_reviewed {
+    if !h.growth_due(allowance) {
         return None;
     }
-    let grew: Vec<&str> = h.grown.iter().filter(|(_, g)| g.lines > 0).map(|(s, _)| s.as_str()).collect();
+    let grew: Vec<&str> =
+        h.grown.iter().filter(|(_, f)| f.values().sum::<i64>() > 0).map(|(s, _)| s.as_str()).collect();
     let missing = if h.growth_records.is_empty() {
         "no growth record"
     } else {
