@@ -773,6 +773,8 @@ mod answer_tests {
         assert!(f[0].fix.contains("--serves <ISSUE>") && f[0].fix.contains("--reviewer <ID>"), "{f:?}");
         assert!(refused(&[&full[..], &["--cut", "two()"]].concat())[0].fix.contains("--answer <WHAT>"));
         assert!(refused(&[&full[..6], &["--as-is", "x"]].concat())[0].fault.contains("without `--author`"));
+        let blank = [&["--serves", " "], &full[2..], &["--as-is", "x"]].concat();
+        assert!(refused(&blank)[0].fault.contains("a field that is not one line"));
         let mine = [&full[..6], &["--author", "r", "--as-is", "x"]].concat();
         assert!(refused(&mine)[0].fault.contains("--reviewer is the change's author"));
         assert!(!repo.join(growth::DIR).exists(), "a refused ratchet writes no record");
