@@ -25,6 +25,8 @@ struct Work {
     copies: Vec<(String, PathBuf)>,
     stdout: Option<String>,
     exit: i32,
+    /// Files it writes beside the reports, each with its text: an archive.
+    files: Vec<(PathBuf, String)>,
     /// Done before the reports: e.g. the build directory a later step reads.
     prepare: Vec<Box<dyn FnOnce()>>,
     /// cargo-mutants' `-F` and `--in-diff`: only the mutants these keep are in its reports.
@@ -116,7 +118,7 @@ fn main() {
         "cargo" => cargo(&sub, args, &dir, &state.reports),
         "llvm-profdata" => llvm_profdata(&sub, args),
         "llvm-cov" => llvm_cov(&sub, args, &state.reports),
-        "cargo-nextest" => nextest(args),
+        "cargo-nextest" => nextest(args, &dir, &state.reports),
         "go" => go(&sub, args),
         "gremlins" => gremlins(&sub, args),
         "swift" => swift(&sub, args, &dir),
@@ -151,6 +153,9 @@ fn run(work: Work, reports: &Path, dir: &Path, fault: Fault, step: &str) {
                 }
                 None => copy(&reports.join(src), &dir.join(dst), &root),
             }
+        }
+        for (path, text) in &work.files {
+            std::fs::write(dir.join(path), text).unwrap();
         }
         if let Some(s) = &work.stdout {
             let text = read(&reports.join(s), &root);
@@ -232,6 +237,20 @@ fn value(args: &[String], name: &str) -> Option<String> {
         .or_else(|| args.iter().find_map(|a| a.strip_prefix(&format!("{name}=")).map(String::from)))
 }
 
+/// Every value of `name`, each given as `name value` or `name=value`.
+fn values(args: &[String], name: &str) -> Vec<String> {
+    let prefix = format!("{name}=");
+    let mut out = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        if a == name {
+            out.extend(args.get(i + 1).cloned());
+        } else if let Some(v) = a.strip_prefix(&prefix) {
+            out.push(v.to_string());
+        }
+    }
+    out
+}
+
 fn need(args: &[String], name: &str) -> Result<String, Refusal> {
     value(args, name).ok_or_else(|| format!("no {name}"))
 }
@@ -252,38 +271,16 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
             has(args, "--sh")?;
             Ok(Work { stdout: Some("show-env.sh".into()), ..Work::default() })
         }
+        // The tests, built (one binary, a script that records its test where
+        // `LLVM_PROFILE_FILE` says) into the archive alone, as if a build
+        // elsewhere had then taken the build directory's away.
         "llvm-cov" => {
-            if args.get(1).map(String::as_str) != Some("nextest") {
-                return Err("only `llvm-cov nextest` and `llvm-cov show-env` stand in".into());
+            if args.get(1).map(String::as_str) != Some("nextest-archive") {
+                return Err("only `llvm-cov nextest-archive` and `llvm-cov show-env` stand in".into());
             }
-            has(args, "--lcov")?;
-            let lcov = need(args, "--output-path")?;
-            // nextest takes a tool's config file as `tool:path`.
-            let config = need(args, "--tool-config-file")?;
-            let (_, config) = config.split_once(':').ok_or("--tool-config-file is not tool:path")?;
-            let text = std::fs::read_to_string(config).map_err(|e| format!("{config}: {e}"))?;
-            let toml: toml::Table = text.parse().map_err(|e| format!("{config}: {e}"))?;
-            let junit = toml
-                .get("profile")
-                .and_then(|p| p.get("default"))
-                .and_then(|p| p.get("junit"))
-                .and_then(|j| j.get("path"))
-                .and_then(|p| p.as_str())
-                .ok_or("the nextest config sets no profile.default.junit.path")?;
-            let mut prepare: Vec<Box<dyn FnOnce()>> = Vec::new();
-            if let Some(config) = value(args, "--config") {
-                let runner = runner(&config)?;
-                let (reports, dir) = (reports.to_path_buf(), dir.to_path_buf());
-                prepare.push(Box::new(move || run_tests(&runner, &reports, &dir)));
-            }
-            Ok(Work {
-                copies: vec![
-                    ("junit.xml".into(), dir.join(NEXTEST_DIR).join(junit)),
-                    ("lcov.info".into(), lcov.into()),
-                ],
-                prepare,
-                ..Work::default()
-            })
+            has(args, "--workspace")?;
+            let archive = need(args, "--archive-file")?;
+            Ok(Work { files: vec![(archive.into(), format!("{ARCHIVED}\n{TEST_BINARY}"))], ..Work::default() })
         }
         "mutants" => {
             let out = PathBuf::from(need(args, "--output")?);
@@ -309,10 +306,11 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
             let (reports, dir) = (reports.to_path_buf(), dir.to_path_buf());
             let skip = value(args, "--baseline").is_some_and(|b| b == "skip");
             let only = kept.clone();
+            let test_args = values(args, "--cargo-test-arg");
             Ok(Work {
                 copies: vec![("outcomes.json".into(), outcomes)],
                 exit: if missed { 2 } else { 0 },
-                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip, &only))],
+                prepare: vec![Box::new(move || test_mutants(&reports, &dir, &out, skip, &only, &test_args))],
                 named: Some(kept),
                 ..Work::default()
             })
@@ -333,10 +331,11 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
 /// directory under `out`, unmutated first unless `skip`, then once per
 /// mutant of the real list `kept` keeps, in the list's order, with the
 /// lines its diff takes out put back as its diff puts them in, `cargo
-/// nextest run --no-run`, then, if that built, `cargo nextest run`; the
+/// nextest run --no-run`, then, if that built, `cargo nextest run` and
+/// `test_args` (its `--cargo-test-arg`s); the
 /// names of those that did not build are written to `kept.unviable`. Only
 /// when there is a `cargo-nextest` to run.
-fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, kept: &Kept) {
+fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, kept: &Kept, test_args: &[String]) {
     let on_path =
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| d.join("cargo-nextest").is_file());
     if !on_path {
@@ -350,6 +349,7 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, kept: &Kept)
             .args(["nextest", "run"])
             .args(phase)
             .args(["--verbose", "--package=calc@0.1.0"])
+            .args(if phase.is_empty() { test_args } else { &[] })
             .current_dir(&build)
             .status()
             .unwrap();
@@ -369,7 +369,7 @@ fn test_mutants(reports: &Path, dir: &Path, out: &Path, skip: bool, kept: &Kept)
     };
     let files: std::collections::BTreeSet<&str> =
         listed.as_array().unwrap().iter().map(|m| m["file"].as_str().unwrap()).collect();
-    files.iter().for_each(|f| copy(f));
+    files.iter().chain(dir.join(NEXTEST_CONFIG).exists().then_some(&NEXTEST_CONFIG)).for_each(|f| copy(f));
     if !skip {
         test();
     }
@@ -414,19 +414,138 @@ fn changed(diff: &str) -> (usize, usize, Vec<String>) {
     (at, out, put)
 }
 
+/// The archive's one test binary, where it is under the build directory,
+/// and its text: it records its test (`$T`) as a profile.
+const ARCHIVED: &str = "target/debug/deps/calc-standin";
+const TEST_BINARY: &str = "#!/bin/sh\nprintf %s \"$T\" > \"${LLVM_PROFILE_FILE%-%p-%m.profraw}-$$-1.profraw\"\n";
+/// The repository's nextest configuration: its profiles.
+const NEXTEST_CONFIG: &str = ".config/nextest.toml";
+
 /// `cargo-nextest nextest run`: its tool configuration files must be
-/// nextest's TOML; every test it is given passes.
-fn nextest(args: &[String]) -> Result<Work, Refusal> {
+/// nextest's TOML, a `--profile` other than `default` one the repository
+/// configures, and its filtersets (`-E`, any one of which runs a test) in
+/// the grammar of [`matches`]. The tests are the reach report's, those
+/// the filtersets match; every one passes. From `--archive-file`, it
+/// extracts the binary to `--extract-to` and runs each test through the
+/// runner `--config` sets, writing the real JUnit report, of those tests
+/// only, under the profile's store; otherwise it prints each test it runs.
+fn nextest(args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
     if args.first().map(String::as_str) != Some("nextest") || args.get(1).map(String::as_str) != Some("run") {
         return Err("only `nextest run` stands in".into());
     }
-    for (i, _) in args.iter().enumerate().filter(|(_, a)| *a == "--tool-config-file") {
-        let config = args.get(i + 1).ok_or("--tool-config-file needs tool:path")?;
-        let (_, path) = config.split_once(':').ok_or("--tool-config-file is not tool:path")?;
+    let mut junit = None;
+    for config in values(args, "--tool-config-file") {
+        let (tool, path) = config.split_once(':').ok_or("--tool-config-file is not tool:path")?;
         let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-        text.parse::<toml::Table>().map_err(|e| format!("{path}: {e}"))?;
+        let toml: toml::Value = text.parse::<toml::Table>().map_err(|e| format!("{path}: {e}"))?.into();
+        let path = ["profile", "default", "junit", "path"].iter().try_fold(&toml, |v, k| v.get(k));
+        junit = junit.or(path.and_then(|p| p.as_str()).filter(|_| tool == "slimfit").map(String::from));
     }
-    Ok(Work::default())
+    let profile = value(args, "--profile").unwrap_or("default".into());
+    let configured = std::fs::read_to_string(dir.join(NEXTEST_CONFIG)).unwrap_or_default().parse::<toml::Table>();
+    if profile != "default" && configured.ok().and_then(|c| c.get("profile")?.get(&profile).cloned()).is_none() {
+        return Err(format!("profile {profile:?} not found in {NEXTEST_CONFIG}"));
+    }
+    let filters: Vec<String> = values(args, "-E").into_iter().chain(values(args, "--filterset")).collect();
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    let mut tests = Vec::new();
+    for (binary, name) in reach.lines().filter_map(|l| l.strip_prefix("test ")?.split_once('\t')) {
+        let hits = filters.iter().map(|f| matches(f, binary, name)).collect::<Result<Vec<bool>, _>>()?;
+        if filters.is_empty() || hits.contains(&true) {
+            tests.push((binary.to_string(), name.to_string()));
+        }
+    }
+    let Some(archive) = value(args, "--archive-file") else {
+        if !args.iter().any(|a| a == "--no-run") {
+            tests.iter().for_each(|(b, n)| println!("standin nextest: runs {b} {n}"));
+        }
+        return Ok(Work::default());
+    };
+    has(args, "--workspace-remap")?;
+    let into = PathBuf::from(need(args, "--extract-to")?);
+    let text = std::fs::read_to_string(dir.join(&archive)).map_err(|e| format!("--archive-file {archive}: {e}"))?;
+    let (path, binary) = text.split_once('\n').ok_or("--archive-file: not a stand-in's archive")?;
+    let into = into.canonicalize().map_err(|e| format!("--extract-to {}: {e}", into.display()))?.join(path);
+    std::fs::create_dir_all(into.parent().unwrap()).unwrap();
+    std::fs::write(&into, binary).unwrap();
+    std::fs::set_permissions(&into, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let runner = runner(&need(args, "--config")?)?;
+    let junit = junit.ok_or("the nextest config sets no profile.default.junit.path")?;
+    let kept = std::fs::read_to_string(reports.join("junit.xml")).unwrap();
+    let ran = |l: &&str| !l.contains("<testcase ") || tests.iter().any(|(_, n)| l.contains(&format!("name=\"{n}\"")));
+    let report = kept.lines().filter(ran).map(|l| format!("{l}\n")).collect();
+    let store = dir.join(NEXTEST_STORE).join(&profile);
+    std::fs::create_dir_all(&store).unwrap();
+    Ok(Work {
+        files: vec![(store.join(junit), report)],
+        prepare: vec![Box::new(move || run_tests(&runner, &tests, &into))],
+        ..Work::default()
+    })
+}
+
+/// Whether filterset `expr` matches test `name` of `binary`: nextest's
+/// grammar as far as slimfit's runs write it (`test(=name)`, `test(part)`,
+/// `binary_id(=id)`, `all()`, `not`, `&`, `|`, parentheses, `\` escaping
+/// in an argument).
+fn matches(expr: &str, binary: &str, name: &str) -> Result<bool, Refusal> {
+    struct P<'a> {
+        rest: &'a str,
+        binary: &'a str,
+        name: &'a str,
+    }
+    impl P<'_> {
+        fn eat(&mut self, t: &str) -> bool {
+            self.rest = self.rest.trim_start();
+            self.rest.strip_prefix(t).map(|r| self.rest = r).is_some()
+        }
+        fn or(&mut self) -> Result<bool, Refusal> {
+            let mut v = self.and()?;
+            while self.eat("|") {
+                v |= self.and()?;
+            }
+            Ok(v)
+        }
+        fn and(&mut self) -> Result<bool, Refusal> {
+            let mut v = self.atom()?;
+            while self.eat("&") {
+                v &= self.atom()?;
+            }
+            Ok(v)
+        }
+        fn atom(&mut self) -> Result<bool, Refusal> {
+            if self.eat("not") {
+                return Ok(!self.atom()?);
+            }
+            if self.eat("all()") {
+                return Ok(true);
+            }
+            if self.eat("(") {
+                let v = self.or()?;
+                return if self.eat(")") { Ok(v) } else { Err(format!("no `)` before {:?}", self.rest)) };
+            }
+            let of = if self.eat("test(") {
+                self.name
+            } else if self.eat("binary_id(") {
+                self.binary
+            } else {
+                return Err(format!("no filter at {:?}", self.rest));
+            };
+            let mut arg = String::new();
+            let mut chars = self.rest.char_indices();
+            loop {
+                match chars.next() {
+                    Some((i, ')')) => break self.rest = &self.rest[i + 1..],
+                    Some((_, '\\')) => arg.extend(chars.next().map(|(_, c)| c)),
+                    Some((_, c)) => arg.push(c),
+                    None => return Err("an unclosed filter".into()),
+                }
+            }
+            Ok(arg.strip_prefix('=').map_or(of.contains(&arg), |a| of == a))
+        }
+    }
+    let mut p = P { rest: expr, binary, name };
+    let v = p.or()?;
+    if p.rest.trim().is_empty() { Ok(v) } else { Err(format!("filterset {expr:?}: {:?} is left over", p.rest)) }
 }
 
 /// The runner `--config` sets for every target (`target.'cfg(all())'.runner
@@ -442,49 +561,59 @@ fn runner(config: &str) -> Result<Vec<String>, Refusal> {
     Ok(runner.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 }
 
-/// nextest's run, as the runner sees it: each test of the real reach
-/// report, run through `runner` with the variables nextest sets, as a
-/// process that writes a profile where `LLVM_PROFILE_FILE` says (holding
-/// its test, which the `llvm-cov` stand-in reads back).
-fn run_tests(runner: &[String], reports: &Path, dir: &Path) {
-    let target = dir.join("target/llvm-cov-target");
-    std::fs::create_dir_all(&target).unwrap();
-    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
-    for test in reach.lines().filter_map(|l| l.strip_prefix("test ")) {
-        let (binary, name) = test.split_once('\t').unwrap();
+/// nextest's run, as the runner sees it: each test run through `runner`
+/// with the variables nextest sets, as the extracted `binary`, which
+/// writes a profile where `LLVM_PROFILE_FILE` says (holding its test,
+/// which the `llvm-cov` stand-in reads back).
+fn run_tests(runner: &[String], tests: &[(String, String)], binary: &Path) {
+    for (b, name) in tests {
         let ok = std::process::Command::new(&runner[0])
             .args(&runner[1..])
-            .args(["sh", "-c", "printf %s \"$T\" > \"${LLVM_PROFILE_FILE%-%p-%m.profraw}-$$-1.profraw\""])
-            .env("NEXTEST_BINARY_ID", binary)
+            .arg(binary)
+            .env("NEXTEST_BINARY_ID", b)
             .env("NEXTEST_TEST_NAME", name)
-            .env("LLVM_PROFILE_FILE", target.join("calc-%p-%m.profraw"))
-            .env("T", test)
+            .env("T", format!("{b}\t{name}"))
             .status()
             .unwrap()
             .success();
-        assert!(ok, "the runner failed on {test}");
+        assert!(ok, "the runner failed on {b} {name}");
     }
 }
 
 /// `llvm-profdata merge -sparse <profile>... -o <out>`: the profiles
 /// `run_tests` wrote each hold their test; the merged one holds it too.
+/// Merged from a list (`-f`), of every test's: the whole run's, `MERGED`.
 fn llvm_profdata(sub: &str, args: &[String]) -> Result<Work, Refusal> {
     sub_is(sub, "merge")?;
     has(args, "-sparse")?;
     let out = need(args, "-o")?;
+    if let Some(list) = value(args, "-f") {
+        std::fs::read_to_string(&list).map_err(|e| format!("-f {list}: {e}"))?;
+        std::fs::write(out, MERGED).unwrap();
+        return Ok(Work::default());
+    }
     let profile = args.iter().skip_while(|a| *a != "-sparse").nth(1).ok_or("no profile")?;
     std::fs::copy(profile, out).map_err(|e| format!("{profile}: {e}"))?;
     Ok(Work::default())
 }
 
+const MERGED: &str = "every test";
+
 /// `llvm-cov export -format=lcov -instr-profile=<profile> -object <binary>...`:
-/// of a merged profile, the real report's section for its test.
+/// of a merged profile, the real report's section for its test; of the
+/// whole run's, the real report. Each object must be there.
 fn llvm_cov(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal> {
     sub_is(sub, "export")?;
     has(args, "-format=lcov")?;
     has(args, "-object")?;
+    if let Some(gone) = values(args, "-object").into_iter().find(|o| !Path::new(o).is_file()) {
+        return Err(format!("{gone}: No such file or directory"));
+    }
     let profile = args.iter().find_map(|a| a.strip_prefix("-instr-profile=")).ok_or("no -instr-profile")?;
     let test = std::fs::read_to_string(profile).map_err(|e| format!("{profile}: {e}"))?;
+    if test == MERGED {
+        return Ok(Work { stdout: Some("lcov.info".into()), ..Work::default() });
+    }
     let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
     let section: Vec<&str> = reach
         .lines()

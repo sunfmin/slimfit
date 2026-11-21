@@ -228,6 +228,26 @@ pub fn filter(plan: &Plan, chosen: &BTreeSet<u32>) -> String {
         .join(" | ")
 }
 
+/// `filter` within the filtersets `args` give before `--` (a suite's
+/// `test_args`), which it takes out of them: nextest runs the tests of any
+/// one of its `-E`s, so another beside them would add theirs.
+fn within(args: &mut Vec<OsString>, filter: String) -> String {
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let mut given = Vec::new();
+    let mut rest = args.drain(..end).collect::<Vec<_>>().into_iter();
+    let mut kept = Vec::new();
+    while let Some(a) = rest.next() {
+        let a = a.to_string_lossy().into_owned();
+        match a.strip_prefix("--filterset=") {
+            Some(v) => given.push(v.to_string()),
+            None if a == "-E" || a == "--filterset" => given.extend(rest.next().map(|v| v.to_string_lossy().into())),
+            None => kept.push(a.into()),
+        }
+    }
+    args.splice(..0, kept);
+    if given.is_empty() { filter } else { format!("(({})) & ({filter})", given.join(") | (")) }
+}
+
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace(',', "\\,").replace(')', "\\)")
 }
@@ -269,7 +289,7 @@ pub fn shim(args: Vec<OsString>) -> ! {
 
 /// A test run's `args`, narrowed to the mutant's tests; none to run: exit.
 fn narrow(args: &mut Vec<OsString>) {
-    match narrowed() {
+    match narrowed(args) {
         Ok(Some(extra)) => {
             let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
             args.splice(at..at, extra);
@@ -322,9 +342,10 @@ fn real(args: &[OsString]) -> Result<i32> {
     Ok(status.with_context(|| format!("running {}", Path::new(&real).display()))?.code().unwrap_or(101))
 }
 
-/// The arguments that narrow this run to the mutant's tests, each under its
-/// timeout; `None` when no test runs the mutant's function, so none runs.
-fn narrowed() -> Result<Option<Vec<OsString>>> {
+/// The arguments that narrow this run (`args`, whose own filtersets they
+/// take in) to the mutant's tests, each under its timeout; `None` when no
+/// test runs the mutant's function, so none runs.
+fn narrowed(args: &mut Vec<OsString>) -> Result<Option<Vec<OsString>>> {
     let path = PathBuf::from(std::env::var_os(PLAN_ENV).context(format!("{PLAN_ENV} is not set"))?);
     let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let plan: Plan = serde_json::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
@@ -337,7 +358,7 @@ fn narrowed() -> Result<Option<Vec<OsString>>> {
     std::fs::write(&config, timeouts(&plan, chosen.as_ref()))?;
     let mut extra: Vec<OsString> = vec!["--tool-config-file".into(), format!("slimfit:{}", config.display()).into()];
     if let Some(c) = &chosen {
-        extra.extend(["-E".into(), filter(&plan, c).into()]);
+        extra.extend(["-E".into(), within(args, filter(&plan, c)).into()]);
     }
     Ok(Some(extra))
 }
@@ -455,6 +476,12 @@ mod tests {
             "[[profile.default.overrides]]\nfilter = \"binary_id(=calc) & test(=z)\"\n\
              slow-timeout = { period = \"7s\", terminate-after = 1 }\n\n"
         );
+        // A run's own filtersets (a suite's `test_args`) hold the chosen tests in.
+        let mut args: Vec<OsString> =
+            ["run", "-E", "a", "--profile", "fast", "--filterset=b", "--", "-E", "c"].map(Into::into).into();
+        assert_eq!(within(&mut args, "x".into()), "((a) | (b)) & (x)");
+        assert_eq!(args, ["run", "--profile", "fast", "--", "-E", "c"].map(OsString::from));
+        assert_eq!(within(&mut args, "x".into()), "x");
         let all: toml::Table = timeouts(&plan, None).parse().unwrap();
         assert_eq!(all["profile"]["default"]["overrides"].as_array().unwrap().len(), 3);
     }

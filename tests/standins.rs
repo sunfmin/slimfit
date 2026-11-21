@@ -22,6 +22,8 @@ struct Lang {
     /// The build command's steps, run before the test command's.
     build_steps: &'static [&'static str],
     test_steps: &'static [&'static str],
+    /// The test step that runs the tests: failing, it still writes reports.
+    runs_tests: &'static str,
     /// Steps after the test run that read each test's own profile, sorted:
     /// their report is optional (without it every mutant runs every test).
     reach_steps: &'static [&'static str],
@@ -34,12 +36,17 @@ const RUST: Lang = Lang {
     name: "rust",
     test_tools: &["cargo"],
     build_steps: &[],
-    test_steps: &["cargo llvm-cov"],
+    // The archive, then cargo's `nextest` subcommand runs `cargo-nextest`.
+    test_steps: &["cargo llvm-cov", "cargo nextest", "cargo-nextest nextest"],
+    runs_tests: "cargo-nextest nextest",
+    // The whole run's coverage, then each test's.
     reach_steps: &[
         "llvm-cov export",
         "llvm-cov export",
         "llvm-cov export",
         "llvm-cov export",
+        "llvm-cov export",
+        "llvm-profdata merge",
         "llvm-profdata merge",
         "llvm-profdata merge",
         "llvm-profdata merge",
@@ -54,6 +61,7 @@ const GO: Lang = Lang {
     test_tools: &["go"],
     build_steps: &["go test"],
     test_steps: &["go test"],
+    runs_tests: "go test",
     reach_steps: &[],
     mutants_tool: "gremlins",
     mutants_step: "gremlins unleash",
@@ -64,6 +72,7 @@ const TYPESCRIPT: Lang = Lang {
     test_tools: &["npx"],
     build_steps: &[],
     test_steps: &["npx vitest"],
+    runs_tests: "npx vitest",
     reach_steps: &[],
     mutants_tool: "npx",
     mutants_step: "npx stryker",
@@ -74,6 +83,7 @@ const KOTLIN: Lang = Lang {
     test_tools: &["gradlew"],
     build_steps: &["gradlew test"],
     test_steps: &["gradlew test"],
+    runs_tests: "gradlew test",
     reach_steps: &[],
     mutants_tool: "gradlew",
     mutants_step: "gradlew pitest",
@@ -84,6 +94,7 @@ const SWIFT: Lang = Lang {
     test_tools: &["swift", "xcrun"],
     build_steps: &["swift build"],
     test_steps: &["swift test", "xcrun llvm-cov"],
+    runs_tests: "swift test",
     reach_steps: &[],
     mutants_tool: "muter",
     mutants_step: "muter run",
@@ -92,8 +103,10 @@ const SWIFT: Lang = Lang {
 
 /// The tools the stand-in binary answers to, and what slimfit and the
 /// presets' shell lines need from the host.
-const STANDINS: &[&str] = &["cargo", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
-const HOST: &[&str] = &["sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf"];
+const STANDINS: &[&str] =
+    &["cargo", "cargo-nextest", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
+const HOST: &[&str] =
+    &["sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf", "cut", "sort", "mkdir"];
 
 struct Sample {
     _tmp: tempfile::TempDir,
@@ -299,6 +312,7 @@ fn every_preset_through_its_standins() {
     rust(&s, &mut printed);
     every_printed_key_is_on_its_page(&printed);
     faults_reach_the_agent(&s, &RUST);
+    rust_test_args();
 
     go();
     for lang in [&TYPESCRIPT, &KOTLIN, &SWIFT] {
@@ -310,7 +324,7 @@ fn every_preset_through_its_standins() {
 
 /// `doctor` reads and writes nothing: on a fresh sample it says to run
 /// `init` and names the tools the detected suite needs that are not on
-/// PATH (the stand-in is `cargo` alone), and exits 0. The load is the
+/// PATH (the stand-ins are `cargo` and `cargo-nextest`), and exits 0. The load is the
 /// host's own, so a `host_busy` finding is left out.
 fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
     let status = || {
@@ -332,12 +346,7 @@ fn doctor_names_each_fix_and_changes_nothing(s: &Sample) -> Value {
     };
     let doctor = s.ok(&["doctor"]);
     let tool = |exe: &str| ("tool_missing".to_string(), exe.to_string());
-    let want = vec![
-        ("no_config".to_string(), "no".to_string()),
-        tool("cargo-llvm-cov"),
-        tool("cargo-nextest"),
-        tool("cargo-mutants"),
-    ];
+    let want = vec![("no_config".to_string(), "no".to_string()), tool("cargo-llvm-cov"), tool("cargo-mutants")];
     assert_eq!(found(&doctor), want, "{doctor:#}");
     assert!(doctor["next"].as_str().unwrap().contains("slimfit init"), "{doctor:#}");
     assert!(doctor["host"]["cores"].as_u64() >= Some(1), "{doctor:#}");
@@ -463,7 +472,7 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
         s.relink(&link);
     }
     let no_report = Some(Fault { exit: 0, no_report: true });
-    let (first, mutants) = (lang.test_steps[0], lang.mutants_step);
+    let (first, mutants) = (lang.runs_tests, lang.mutants_step);
     s.fault(first, Some(Fault { exit: 3, no_report: false }));
     if mutates {
         s.fault(mutants, no_report);
@@ -480,7 +489,8 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     assert_eq!(code, 0, "{}: {json:#}\n{stderr}", lang.name);
     s.fault(first, None);
     s.fault(mutants, None);
-    for step in lang.test_steps {
+    // cargo's `nextest` writes nothing: `cargo-nextest` does.
+    for step in lang.test_steps.iter().filter(|s| **s != "cargo nextest") {
         s.fault(step, no_report);
         s.error(
             args,
@@ -591,6 +601,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     assert!(mutants.clone().count() == 1 && mutants.clone().all(|c| c.args.contains(&"--list".into())), "{calls:#?}");
     let picked = ["--mutants", PICK_KILLED, PICK_MISSED, PICK_ADULT, "--why", "the sum", "the result", "the bound"];
     // No nextest to hand on to: every mutant runs every test, and stderr says why.
+    let nextest = s.unlink("cargo-nextest");
     let (_, _, stderr) = s.slimfit(&[&["check"], &picked[..]].concat());
     assert!(
         stderr.contains("no cargo-nextest on PATH or in cargo's bin directory: every mutant runs every test"),
@@ -598,7 +609,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     );
     let lists = |calls: &[state::Call]| calls.iter().filter(|c| c.args.contains(&"--list".to_string())).count();
     assert_eq!(lists(&s.take()), 1, "listed for a plan with no nextest");
-    std::os::unix::fs::symlink(standin(), s.bin.join("cargo-nextest")).unwrap();
+    s.relink(&nextest);
     let check = run("check", &[&picked[..], &["--fresh"]].concat(), 1);
     let plan: Value = serde_json::from_str(&s.read(".slimfit/out/rust/shim/plan.json")).unwrap();
     let tests = |f: &Value| -> Vec<String> {
@@ -633,6 +644,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // through the shim as it came; its test run, narrowed: `add`'s with its
     // 3 tests, `is_adult`'s with its one, each under its timeout; `unused`'s
     // runs none.
+    // The test run's own nextest runs from its archive.
+    let calls: Vec<_> = calls.into_iter().filter(|c| !c.args.contains(&"--archive-file".into())).collect();
     let runs = calls.iter().filter(|c| c.step == "cargo nextest").count() / 2;
     let builds = calls.iter().filter(|c| c.step == "cargo-nextest nextest" && c.args.contains(&"--no-run".into()));
     assert!(builds.clone().count() == 3 && builds.clone().all(|c| c.args.len() == 5), "{calls:#?}");
@@ -670,6 +683,58 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // A second `fn slow` its path cannot tell apart: no text to keep it by.
     std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "fn slow() {}\n").unwrap();
     s.error(&["keep", "calc::tests::slow", "--reason", "r"], &["calc::tests::slow's own function was not found"]);
+}
+
+/// A suite's `test_args` reach nextest in the test run and in each
+/// mutant's, expanded as the commands run (a filterset from a file, which
+/// a change to the file changes): only the tests it leaves run, under its
+/// profile, whose JUnit report is read; and they run from copies of the
+/// test binaries outside the build directory (which holds none).
+fn rust_test_args() {
+    let s = Sample::new(&RUST);
+    let toml = "[[suite]]\nname = \"rust\"\npreset = \"rust\"\n\
+                test_args = '--profile fast -E \"not ($(cat .config/slow-tests))\"'\n";
+    std::fs::write(s.repo.join("slimfit.toml"), toml).unwrap();
+    std::fs::create_dir_all(s.repo.join(".config")).unwrap();
+    std::fs::write(s.repo.join(".config/nextest.toml"), "[profile.fast]\nslow-timeout = \"30s\"\n").unwrap();
+    let slow = |filter: &str| std::fs::write(s.repo.join(".config/slow-tests"), filter).unwrap();
+    slow("test(=tests::slow)");
+    git(&s.repo, &["add", "-A"]);
+    git(&s.repo, &["commit", "-qm", "fast tests"]);
+    let ran = |s: &Sample| -> Vec<String> {
+        let run = s.take().into_iter().find(|c| c.step == "cargo-nextest nextest").unwrap();
+        let profile = run.args.iter().skip_while(|a| *a != "--profile").nth(1).cloned();
+        assert_eq!(profile.as_deref(), Some("fast"), "{run:?}");
+        let map = s.read(".slimfit/out/rust/tests.map");
+        let copies = s.repo.join(".slimfit/out/rust/bin/target/debug/deps/calc-standin");
+        assert!(map.lines().all(|l| l.ends_with(&*copies.to_string_lossy())), "{map}");
+        map.lines().map(|l| l.split('\t').nth(2).unwrap().to_string()).collect()
+    };
+    let init = s.ok(&["init"]);
+    assert_eq!(init["baseline"]["rust"]["tests"], 3, "{init:#}");
+    assert_eq!(ran(&s), ["tests::adds_again", "tests::adds", "tests::adult"]);
+    assert!(s.repo.join("target/nextest/fast/junit.xml").exists() && !s.repo.join("target/nextest/default").exists());
+    assert!(!s.repo.join("target/debug").exists(), "the build directory holds a test binary");
+    slow("test(=tests::adult)");
+    let check = s.ok(&["check"]);
+    assert_eq!(check["metrics"]["rust"]["tests"], 3, "{check:#}");
+    assert_eq!(ran(&s), ["tests::adds_again", "tests::adds", "tests::slow"]);
+    // A mutant of `add`, which `adds`, `adds_again` and `slow` run: only
+    // those `test_args` leave run it, under its profile.
+    slow("test(=tests::slow)");
+    let lib = s.repo.join("src/lib.rs");
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap().replacen("a + b", "a + b // changed", 1)).unwrap();
+    s.ok(&["check", "--mutants", PICK_KILLED, "--why", "the sum"]);
+    let calls = s.take();
+    let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
+    let given: Vec<&str> = mutants.args.iter().filter_map(|a| a.strip_prefix("--cargo-test-arg=")).collect();
+    assert_eq!(given, ["--profile", "fast", "-E", "not (test(=tests::slow))"], "{mutants:?}");
+    let run = calls.iter().rfind(|c| c.step == "cargo-nextest nextest" && !c.args.contains(&"--no-run".into()));
+    let run = run.unwrap();
+    assert_eq!(run.args.iter().filter(|a| *a == "-E").count(), 1, "{run:?}");
+    let log = s.read(".slimfit/out/rust/mutants.log");
+    let runs: Vec<&str> = log.lines().filter_map(|l| l.strip_prefix("standin nextest: runs calc ")).collect();
+    assert_eq!(runs, ["tests::adds_again", "tests::adds"], "{log}");
 }
 
 /// A sample of 2 draws 4 and runs them in one cargo-mutants run, which
