@@ -724,7 +724,8 @@ mod t {
                 commit: format!("c{i}"),
                 date: String::new(),
                 subject: String::new(),
-                measured: [("s".to_string(), Measured { uncovered_lines: *u, test_seconds: Some(*t) })].into(),
+                measured: [("s".to_string(), Measured { uncovered_lines: *u, test_seconds: Some(*t), untimed: None })]
+                    .into(),
             };
             values.iter().enumerate().map(at).collect()
         };

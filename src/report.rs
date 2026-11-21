@@ -124,7 +124,7 @@ pub struct Lines {
 
 /// What a history point's suite prints, as the command pages name it.
 pub const LINES_HELP: &str = "`prod` and `test` lines, and what the baseline committed then held: `tests`, \
-     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept), `kept_files` (deepen verdicts kept) and `measured` (what was measured when the baseline was written: `uncovered_lines` and `test_seconds`, which only it shows rising; absent before baselines kept it)";
+     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept), `kept_files` (deepen verdicts kept) and `measured` (what was measured when the baseline was written: `uncovered_lines` and `test_seconds`, which only it shows rising, or in place of `test_seconds` why none was measured, `untimed`; absent before baselines kept it)";
 
 /// The baseline's numbers for `suite` in `baseline` (a commit's
 /// `.slimfit/baseline.json`), read field by field: a baseline written by an
@@ -251,7 +251,7 @@ mod t {
         );
         assert!(rust.iter().all(|l| l.prod > 0), "{rust:?}");
         // Beside the ratcheted numbers, what was measured: a rise shows there.
-        let measured = Some(ratchet::Measured { uncovered_lines: 6, test_seconds: Some(2.0) });
+        let measured = Some(ratchet::Measured { uncovered_lines: 6, test_seconds: Some(2.0), untimed: None });
         assert_eq!(rust.iter().map(|l| l.measured.clone()).collect::<Vec<_>>(), [None, None, measured]);
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
         assert_eq!(records, [None, None, Some(&Records { with_picks: 2, without_picks: 1, older: 1 })]);

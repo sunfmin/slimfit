@@ -47,10 +47,39 @@ pub struct Options {
     pub timed: bool,
 }
 
+/// The last test run of a gate's priority (no `--mutants` in it), kept by
+/// the contents it ran on, not by HEAD: a commit of the same files, or a
+/// `--mutants` run's own test run since, leaves its time standing.
+const TIMED: &str = "timed.json";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Timed {
+    content: String,
+    measurement: Measurement,
+}
+
+/// `cached`, the measurement of the tree, or else `timed`'s, of the same
+/// contents: a test run of it untimed takes `timed`'s instead, keeping its
+/// mutants; `timed`'s own mutants, of a change taken from another commit
+/// maybe, are not kept.
+fn retimed(cached: Option<Measurement>, timed: Option<Measurement>, key: &str) -> Option<Measurement> {
+    let Some(t) = timed else { return cached };
+    let Some(mut c) = cached else {
+        let suites = t.suites.into_iter().map(|s| SuiteMeasurement { mutants: vec![], mutated: None, ..s }).collect();
+        return Some(Measurement { tree: key.into(), with_mutants: false, suites });
+    };
+    for (s, t) in c.suites.iter_mut().zip(t.suites).filter(|(s, _)| s.untimed) {
+        *s = SuiteMeasurement { mutants: std::mem::take(&mut s.mutants), mutated: s.mutated.take(), ..t };
+    }
+    Some(c)
+}
+
 /// The measurement of the tree as it is now: from the cache when it was
 /// taken of this exact tree (with as many mutants as are wanted, of a change
 /// taken from the same commit). A cached measurement of the tree that lacks
-/// those mutants keeps its test run: only the mutation tool runs.
+/// those mutants keeps its test run: only the mutation tool runs. A test
+/// run of the same contents at a gate's priority stands for the tree's,
+/// and for one inside `--mutants` (`untimed`).
 pub fn current(repo: &Path, tree: &crate::landing::Tree, cfg: &Config, opts: &Options) -> Result<Measurement> {
     let wt = &tree.wt;
     let key = wt.key.clone();
@@ -60,12 +89,18 @@ pub fn current(repo: &Path, tree: &crate::landing::Tree, cfg: &Config, opts: &Op
         Mutants::None => &[],
     };
     let with_mutants = !picks.is_empty();
+    let timed_cache = repo.join(OUT).join(TIMED);
+    let same_suites = |m: &Measurement| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name));
     // The cached measurement of this tree, when not asked to measure afresh.
     let tested = std::fs::read_to_string(&cache)
         .ok()
         .and_then(|text| serde_json::from_str::<Measurement>(&text).ok())
-        .filter(|m| !opts.fresh && m.tree == key)
-        .filter(|m| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name)));
+        .filter(|m| !opts.fresh && m.tree == key && same_suites(m));
+    let timed_run = std::fs::read_to_string(&timed_cache)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Timed>(&text).ok())
+        .filter(|t| !opts.fresh && t.content == wt.content && same_suites(&t.measurement));
+    let tested = retimed(tested, timed_run.map(|t| t.measurement), &key);
     let wanted: BTreeSet<&str> = picks.iter().map(|p| p.name.as_str()).collect();
     let fresh_mutants = |m: &Measurement| m.with_mutants && mutants::picked(m) == wanted;
     let timed = |m: &Measurement| !opts.timed || m.suites.iter().all(|s| !s.untimed);
@@ -105,6 +140,10 @@ pub fn current(repo: &Path, tree: &crate::landing::Tree, cfg: &Config, opts: &Op
     let m = Measurement { tree: key, with_mutants: with_mutants || kept, suites };
     if !opts.dry_run {
         std::fs::write(&cache, serde_json::to_string_pretty(&m)?)?;
+        if m.suites.iter().all(|s| !s.untimed) {
+            let t = Timed { content: wt.content.clone(), measurement: m.clone() };
+            std::fs::write(&timed_cache, serde_json::to_string(&t)?)?;
+        }
     }
     Ok(m)
 }
