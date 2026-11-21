@@ -1,0 +1,10 @@
+{
+  "tree": "ddd0481a3f2e9dff9e42b12d227adc958ff6bbcb+d1fba762150c532c",
+  "lines": 295,
+  "serves": "slimfit#75",
+  "considered": "the mutants record's file, by-another check and records reader (now shared with it), its ratchet flow and Held, report's history reader",
+  "reviewer": "claude-code:growth-reviewer-subagent-of-2f04a864:opus",
+  "author": "claude-code:2f04a864-d0c7-5b02-aa2e-ea026bfdd754:opus",
+  "cut": "8 cuts: share by_another/file_in/json_files with the mutants record; Held::growth_due; drop Grown.lines; clap requires for the growth flags; if/else and borrowed author in ratchet; one filter and no replacen in justify_growth; a generic record counter for report",
+  "answer": "made 1-4, 6, 8 and the if/else of 7 as named; kept the author filter (record() refuses --author with no mutants record); not 5: a generic counter costs the lines it saves, the two tallies count different verdicts"
+}

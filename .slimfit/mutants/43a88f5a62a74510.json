@@ -1,0 +1,39 @@
+{
+  "tree": "ddd0481a3f2e9dff9e42b12d227adc958ff6bbcb+d1fba762150c532c",
+  "picker": "codex:01a1fc36-ba08-74f0-b2eb-a2e13c5784b7:default",
+  "author": "claude-code:2f04a864-d0c7-5b02-aa2e-ea026bfdd754:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:214:88: replace || with && in run",
+        "why": "A ratchet that records growth and picked mutants together can lose its author when it omits --no-mutants. The growth test writes only a growth record.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/growth.rs:74:40: replace += with *= in Records::of",
+        "why": "The report test asserts an as-is count and never tallies a valid cut verdict, so the cut count can stay at zero.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/growth.rs:161:58: replace && with || in one_line",
+        "why": "Blank and multiline growth fields pass this check, while the test supplies only nonblank single-line values.",
+        "outcome": "killed",
+        "first_outcome": "survived"
+      },
+      {
+        "name": "src/tasks.rs:214:33: delete - in justify_growth",
+        "why": "The task test has one changed file, so it cannot detect a reversal of the largest-growth-first order.",
+        "outcome": "unviable",
+        "first_outcome": "unviable"
+      },
+      {
+        "name": "src/ratchet.rs:515:64: replace > with >= in growth_violation",
+        "why": "A suite with offsetting gains and losses would be listed as growing. The violation test checks only a suite with positive net growth.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
