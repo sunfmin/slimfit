@@ -62,7 +62,17 @@ const GO: Lang = Lang {
     build_steps: &["go test"],
     test_steps: &["go test"],
     runs_tests: "go test",
-    reach_steps: &[],
+    // Its package listed and its test binary built, which lists the tests
+    // and runs each on its own.
+    reach_steps: &[
+        "1.test -test.list",
+        "1.test -test.run",
+        "1.test -test.run",
+        "1.test -test.run",
+        "1.test -test.run",
+        "go list",
+        "go test -c",
+    ],
     mutants_tool: "gremlins",
     mutants_step: "gremlins unleash",
     source: "calc.go",
@@ -105,8 +115,10 @@ const SWIFT: Lang = Lang {
 /// presets' shell lines need from the host.
 const STANDINS: &[&str] =
     &["cargo", "cargo-nextest", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
-const HOST: &[&str] =
-    &["sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf", "cut", "sort", "mkdir"];
+const HOST: &[&str] = &[
+    "sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf", "cut", "sort", "mkdir",
+    "nice",
+];
 
 struct Sample {
     _tmp: tempfile::TempDir,
@@ -376,10 +388,10 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let mut steps = s.steps();
     steps[lang.build_steps.len() + lang.test_steps.len()..].sort();
     assert_eq!(steps, [lang.build_steps, lang.test_steps, lang.reach_steps].concat(), "{}", lang.name);
-    // Rust's runner records each test's CPU time, as many as it ran; the
-    // others' test commands record none.
+    // Rust's runner and Go's runs of each test record each test's CPU
+    // time, as many as ran; the others' test commands record none.
     let records = std::fs::read_dir(s.repo.join(".slimfit/out").join(lang.name).join("test-cpu")).unwrap().count();
-    assert_eq!(records, if lang.name == "rust" { 4 } else { 0 }, "{}", lang.name);
+    assert_eq!(records, if ["rust", "go"].contains(&lang.name) { 4 } else { 0 }, "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
         // What the dry run said it would write, but for `test_seconds` (CPU
@@ -944,6 +956,21 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
 fn go() {
     let s = Sample::new(&GO);
     measures_through_its_tools(&s, &GO, false);
+    // Each test's own run gives its lines: `TestAdds`, `TestAddsAgain` and
+    // `TestSlow` run the same ones, so two of them are proposed, in the
+    // test file their funcs are in; one kept is not proposed again.
+    let next = s.ok(&["next", "--all", "--kind", "redundant-test"]);
+    let tasks = next["tasks"].as_array().unwrap();
+    let twins = ["example.com/calc::TestAdds", "example.com/calc::TestAddsAgain", "example.com/calc::TestSlow"];
+    assert!(
+        tasks.len() == 2 && tasks.iter().all(|t| twins.contains(&t["evidence"]["test"].as_str().unwrap())),
+        "{next:#}"
+    );
+    assert_eq!(tasks[0]["files"], serde_json::json!(["calc_test.go"]), "{next:#}");
+    let twin = tasks[0]["evidence"]["test"].as_str().unwrap();
+    s.ok(&["keep", twin, "--reason", "it checks its own case"]);
+    assert_eq!(s.ok(&["next", "--all", "--kind", "redundant-test"])["tasks"].as_array().unwrap().len(), 1);
+    s.take();
     faults_reach_the_agent(&s, &GO);
     let cfg = std::fs::read_to_string(s.repo.join("slimfit.toml")).unwrap();
     let cfg = cfg.replace(

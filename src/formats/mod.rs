@@ -57,4 +57,8 @@ pub enum ReachFormat {
     /// test's profiles ran (`llvm-cov export -format=lcov`, records of counts
     /// above 0 only): the Rust preset's test command writes it (ADR 0007).
     Lcov,
+    /// `test <package>\t<name>` lines, each followed by the blocks of that
+    /// test's own Go coverprofile (counts above 0 only): the Go preset's
+    /// test command writes it, running each top-level test on its own.
+    GoCover,
 }

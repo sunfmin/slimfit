@@ -6,6 +6,7 @@ mod fault;
 mod fixtures;
 mod formats;
 mod git;
+mod go_source;
 mod growth;
 mod landing;
 mod loc;

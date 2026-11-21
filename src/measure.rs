@@ -8,7 +8,7 @@ use crate::formats;
 use crate::landing::SuiteTree;
 use crate::loc::{Kind, Totals};
 use crate::model::*;
-use crate::rust_source;
+use crate::{go_source, rust_source};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -539,7 +539,7 @@ pub(crate) fn reduce(
             functions.entry(file.clone()).or_default().push(Function { file, ..f });
         }
     }
-    let reach = reach.map(|r| reached(r, &functions, totals, resolver, suite.preset == Preset::Rust));
+    let reach = reach.map(|r| reached(r, &functions, totals, resolver, suite.preset));
     let covered = lines.values().flat_map(|l| l.values()).filter(|h| **h > 0).count() as u64;
     let uncovered_total = lines.values().flat_map(|l| l.values()).filter(|h| **h == 0).count() as u64;
     let mut uncovered = Vec::new();
@@ -577,14 +577,15 @@ pub(crate) fn reduce(
 /// Which tests ran each source function, from what each test ran by symbol:
 /// every function the coverage report names in a source file, outside
 /// tests, keyed by its first line; and the source lines each ran, outside
-/// tests. Each test's own function is located by its path, and hashed,
-/// in a Rust suite (`rust`): the one whose tests are `fn`s.
+/// tests. Each test's own function is located, and hashed, in a Rust suite
+/// (a test is a `fn`, by its path) and a Go one (a top-level `func Test…`
+/// of its package).
 fn reached(
     tests: Vec<formats::TestReach>,
     functions: &BTreeMap<String, Vec<Function>>,
     totals: &Totals,
     resolver: &Resolver,
-    rust: bool,
+    preset: Preset,
 ) -> Reach {
     let mut reach = Reach { lines: Some(Vec::new()), ..Reach::default() };
     let mut at: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
@@ -595,7 +596,24 @@ fn reached(
             at.insert(if f.symbol.is_empty() { &f.name } else { &f.symbol }, (file, f.line));
         }
     }
-    let fns = if rust { rust_source::functions(totals.files.keys(), |f| resolver.read(f)) } else { BTreeMap::new() };
+    let fns = if preset == Preset::Rust {
+        rust_source::functions(totals.files.keys(), |f| resolver.read(f))
+    } else {
+        BTreeMap::new()
+    };
+    let source_of = |t: &formats::TestReach| match preset {
+        Preset::Rust => rust_source::test_function(&fns, &t.name)
+            .and_then(|(file, line)| test_source(file, line, resolver, rust_source::item_text)),
+        Preset::Go => go_source::test_function(
+            totals.files.keys(),
+            |f| resolver.read(f),
+            |p| resolver.resolve(p),
+            &t.binary,
+            &t.name,
+        )
+        .and_then(|(file, line)| test_source(&file, line, resolver, go_source::func_text)),
+        _ => None,
+    };
     let every: Vec<(String, u32)> =
         reach.functions.iter().flat_map(|(f, ls)| ls.keys().map(|l| (f.clone(), *l))).collect();
     for (i, t) in tests.into_iter().enumerate() {
@@ -621,17 +639,21 @@ fn reached(
         }
         lines.retain(|_, ls| !ls.is_empty());
         reach.lines.as_mut().expect("set above").push(lines);
-        let source =
-            rust_source::test_function(&fns, &t.name).and_then(|(file, line)| test_source(file, line, resolver));
+        let source = source_of(&t);
         reach.tests.push(ReachTest { binary: t.binary, name: t.name, source });
     }
     reach
 }
 
-/// Where the test function at `file:line` is and the hash of its text: the
-/// item from its `fn` line to where it ends (`rust_source::item_text`).
-fn test_source(file: &str, line: u32, resolver: &Resolver) -> Option<TestSource> {
-    let text = rust_source::item_text(&resolver.read(file)?, line)?;
+/// Where the test function at `file:line` is and the hash of its text, from
+/// its first line to where it ends (`text`, the language's reader).
+fn test_source(
+    file: &str,
+    line: u32,
+    resolver: &Resolver,
+    text: fn(&str, u32) -> Option<String>,
+) -> Option<TestSource> {
+    let text = text(&resolver.read(file)?, line)?;
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in text.bytes() {
         hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
@@ -971,7 +993,7 @@ pub(crate) mod t {
         // The hash is of the function's text: an edit inside it changes it, one outside does not.
         let hash = |text: &str| {
             std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
-            test_source("src/a.rs", 5, &st.resolver).map(|s| s.hash)
+            test_source("src/a.rs", 5, &st.resolver, rust_source::item_text).map(|s| s.hash)
         };
         assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
         assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash.clone()));

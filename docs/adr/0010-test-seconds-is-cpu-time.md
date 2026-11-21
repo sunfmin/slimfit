@@ -32,13 +32,19 @@ test's `cpu` is what slow-test and redundant-test tasks rank by.
   in `$SLIMFIT_OUT/test-cpu/` (`tools::TEST_CPU`), its first line the test's
   id as the JUnit report gives it; a retried test spent the sum. The build
   runs in cargo, outside the runner, so it is not counted.
+  The Go preset (slimfit#89) runs each top-level test again on its own,
+  from its package's test binary, for the lines it ran; the shell's `times`
+  after each such run is the test's CPU time. The plain run before them is
+  then not counted, nor is building the binaries; a package's setup
+  (`TestMain`, `init`) counts in each of its tests, as a nextest process's
+  does.
 - **Otherwise, the test command's process tree, after a separate build.**
   slimfit takes `getrusage(RUSAGE_CHILDREN)` around the test command: every
   process the command started and waited for. A preset whose test command
   builds first gets a `build_command` that slimfit runs before it, so the
   test command finds the build done: Go builds the test binaries with
-  coverage (`go test -cover -run '^$'`) and runs with `-count=1` (a cached
-  result spent no CPU); Swift `swift build --build-tests`; Kotlin
+  coverage (`go test -cover -run '^$'`), which its plain run and the test
+  binaries reuse; Swift `swift build --build-tests`; Kotlin
   `gradlew testClasses`, both without the daemon, so Gradle's test workers
   are in the tree (a daemon is no child of ours). Vitest has no separate
   build: it transforms as it runs. The tree's CPU time is shared out to

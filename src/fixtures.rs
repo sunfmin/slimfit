@@ -5,7 +5,7 @@
 //! test, and a slow test.
 
 use crate::config::{CheckConfig, Config, Preset, preset};
-use crate::formats::{self, CoverageFormat, MutantsFormat, ReachFormat, TestsFormat};
+use crate::formats::{self, CoverageFormat, MutantsFormat, TestsFormat};
 use crate::landing::Tree;
 use crate::measure::{Timing, reduce};
 use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
@@ -67,9 +67,9 @@ fn measure_with_coverage(
     for x in &mut m {
         x.file = st.resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    // The Rust sample's test run also records which functions each test ran.
-    let reach =
-        (p == Preset::Rust).then(|| formats::read_reach(ReachFormat::Lcov, &here(read(lang, &["reach.txt"]))).unwrap());
+    // The Rust and Go samples' test runs also record what each test ran.
+    let r = preset(p).reach_report;
+    let reach = (!r.path.is_empty()).then(|| formats::read_reach(r.format, &here(read(lang, &["reach.txt"]))).unwrap());
     // The tests' CPU time as their wall time: the sample's reports hold no other.
     let tree_cpu = t.iter().map(|t| t.seconds).sum();
     reduce(st, t, c, reach, Some(m.into()), Timing { command_seconds: 0.0, tree_cpu, test_cpu: Default::default() })
@@ -179,6 +179,12 @@ fn go_sample() {
         (MutantsFormat::Gremlins, &["gremlins.json"]),
     );
     assert_the_five_situations(&s, "calc.go", 14);
+    // Each test's own run gives its lines, so the copy of the add test is
+    // proposed, in the test file its func is in.
+    let tasks = of_measurement(&s, &[]);
+    let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
+    assert!(!redundant.is_empty(), "{tasks:#?}");
+    assert!(redundant.iter().all(|t| t.files == ["calc_test.go"]), "{redundant:#?}");
 }
 
 #[test]

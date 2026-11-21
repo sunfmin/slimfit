@@ -26,7 +26,7 @@ pub const STRYKER_JSON: &str = "reports/mutation/mutation.json";
 /// SwiftPM's debug build directory (a symlink) and its coverage profile.
 pub const SWIFT_DEBUG: &str = ".build/debug";
 pub const SWIFT_PROFDATA: &str = ".build/debug/codecov/default.profdata";
-/// The Rust preset's report of which functions each test ran, under
+/// The Rust and Go presets' report of what each test ran, under
 /// `$SLIMFIT_OUT`.
 pub const REACH: &str = "reach.txt";
 /// The directory where a test command records each test's CPU time, under
