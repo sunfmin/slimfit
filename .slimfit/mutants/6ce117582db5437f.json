@@ -1,0 +1,6 @@
+{
+  "tree": "438d5d0fa5706df253a39f9dfbe239b2280fa9d9+d1fba762150c532c",
+  "picker": "codex:01a1fb81-f4a9-7fb2-83e5-9536ebb1b51d:default",
+  "author": "claude-code:2cdd085e-59b9-5e2a-a59f-dc444724d48d:opus",
+  "none": "The shown assertions should catch every buildable candidate through config validation, required reports, or the exact filter and test selections."
+}
