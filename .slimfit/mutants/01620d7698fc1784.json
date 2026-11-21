@@ -1,0 +1,6 @@
+{
+  "tree": "a69a01d2cc95ae09855cf7855e5bb38269d0828e+d1fba762150c532c",
+  "picker": "codex:01a1fcac-7b3c-75b2-b7f8-2ed171ad87da:default",
+  "author": "claude-code:466f4db2-427d-5e69-83eb-033257aa3cc0:opus",
+  "none": "The only candidate bypasses listing entirely, and the existing stand-in test expects mutants for changes to src/lib.rs."
+}
