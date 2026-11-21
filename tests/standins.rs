@@ -450,7 +450,8 @@ fn faults(json: &Value) -> String {
 /// their reports (a mutants tool's exit is covered in `rust`). No report
 /// is, and the error names the report and ends with the tool's own words.
 /// The mutants tool runs only on a change, and only where it can list its
-/// mutants and run them by name (Rust's); its listing runs first.
+/// mutants and run them by name (Rust's); its listing runs first, and fails
+/// only with a failing exit.
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     let mutates = lang.name == "rust";
     let mut tools = lang.test_tools.to_vec();
@@ -475,7 +476,9 @@ fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
     let (first, mutants) = (lang.runs_tests, lang.mutants_step);
     s.fault(first, Some(Fault { exit: 3, no_report: false }));
     if mutates {
-        s.fault(mutants, no_report);
+        // A listing with no report and exit 0 is cargo-mutants' empty one
+        // (`rust`): the listing that fails also exits non-zero.
+        s.fault(mutants, Some(Fault { exit: 1, no_report: true }));
     }
     let (code, json, stderr) = s.slimfit(args);
     if mutates {
