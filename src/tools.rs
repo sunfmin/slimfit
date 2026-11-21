@@ -7,8 +7,10 @@
 /// commands; report paths may start with `$SLIMFIT_OUT`.
 pub const OUT_ENV: &str = "SLIMFIT_OUT";
 
-/// nextest's directory for the default profile's JUnit report.
-pub const NEXTEST_DIR: &str = "target/nextest/default";
+/// The environment variable that gives a suite's commands its `test_args`.
+pub const TEST_ARGS_ENV: &str = "SLIMFIT_TEST_ARGS";
+/// nextest's store: a directory per profile, holding its JUnit report.
+pub const NEXTEST_STORE: &str = "target/nextest";
 /// The JUnit file name slimfit configures nextest with.
 pub const NEXTEST_JUNIT: &str = "junit.xml";
 /// cargo-mutants' report, under its `--output` directory.

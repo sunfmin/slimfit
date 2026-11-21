@@ -97,7 +97,7 @@ pub(crate) enum Cmd {
     /// ## What it answers
     ///
     /// - `config`: `"written"` or `"kept"`.
-    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `build_command` (run first, so the tests' CPU time leaves the build out; empty when the test command builds for itself), `test_command`, `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_pick_flag` (the flag that runs one mutant by name; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
+    /// - `suites`: each suite's settings, the preset filled in: `name`, `preset`, `root` (its directory in the repo), `sources`, `tests` and `excludes` (globs of source, test and ignored files), `inline_tests` (whether tests sit inside source files), `build_command` (run first, so the tests' CPU time leaves the build out; empty when the test command builds for itself), `test_command`, `test_args` (arguments the Rust preset appends to nextest's test run and to each mutant's, such as a profile and a filterset; empty when there are none: see below), `tests_report` and `coverage_report` (each a `format` and a `path`), `reach_report` (where the test run records which functions and lines each test ran; an empty `path` when it does not), `mutants_command`, `mutants_report`, `mutants_diff_flag` (the flag that limits the mutation tool to the lines of a diff; empty when it has none), `mutants_pick_flag` (the flag that runs one mutant by name; empty when it has none) and `mutants_tests` ("reached": a mutant runs only the tests that ran its function, see [mutants scope](help:mutants-scope); "all": every test).
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `next`: commit `slimfit.toml`, `.slimfit/baseline.json` and `.gitignore`, then `slimfit next`.
     /// - `would_write`: with `--dry-run` only, each file it would change, with its whole new text.
@@ -111,6 +111,7 @@ pub(crate) enum Cmd {
     ///
     /// - A test that fails now is recorded as it is: `failures` above 0 in the baseline. Fix it first, then run `init` again.
     /// - Run again, it keeps `.slimfit/mutants/`: the records there stay.
+    /// - A Rust suite's tests run as the repo's own gate runs them only with its `test_args`: in the shell's syntax, expanded each time a command runs, so a list kept in a file is read from it then and lives nowhere else, e.g. `test_args = '--profile fast -E "not ($(cat .config/slow-tests))"'`. The JUnit report is then read from that profile's directory (`target/nextest/fast/`). Only the Rust preset reads them (as `$SLIMFIT_TEST_ARGS`, which a suite's own `test_command` may read too); no `test_command` of the repo's own is needed for this.
     #[command(next_help_heading = "Run once, to adopt slimfit on a repo", verbatim_doc_comment)]
     Init {
         #[command(flatten)]

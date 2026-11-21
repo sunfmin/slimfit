@@ -102,6 +102,8 @@ pub struct Overrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_args: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tests_report: Option<Report<TestsFormat>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_report: Option<Report<CoverageFormat>>,
@@ -156,6 +158,10 @@ pub struct Suite {
     /// records each test's CPU time itself (the Rust preset).
     pub build_command: String,
     pub test_command: String,
+    /// Arguments to the test runner, in the shell's syntax, expanded when
+    /// a command runs (`tools::TEST_ARGS_ENV`): the Rust preset appends
+    /// them to nextest's test run, and to every mutant's.
+    pub test_args: String,
     pub tests_report: Report<TestsFormat>,
     pub coverage_report: Report<CoverageFormat>,
     /// Which tests ran each function, one profile per test; an empty path:
@@ -204,6 +210,9 @@ impl SuiteConfig {
         if let Some(v) = o.test_command {
             s.test_command = v
         }
+        if let Some(v) = o.test_args {
+            s.test_args = v
+        }
         if let Some(v) = o.tests_report {
             s.tests_report = v
         }
@@ -245,12 +254,15 @@ const RUST_TEST: &str = include_str!("presets/rust-test.sh");
 /// builds cold, as before. show-env's `LLVM_PROFILE_FILE` (the test run's
 /// target directory) is left out: a mutant's test processes keep the one
 /// they had, unset in an agent's shell, so they write their profiles in
-/// the copy, which cargo-mutants deletes.
-const RUST_MUTANTS: &str = "eval \"$(cargo llvm-cov show-env --sh 2>/dev/null | sed '/^export LLVM_PROFILE_FILE=/d')\"; \
+/// the copy, which cargo-mutants deletes. `test_args` go to each mutant's
+/// test run as cargo-mutants' `--cargo-test-arg`s.
+const RUST_MUTANTS: &str = "eval \"set -- ${SLIMFIT_TEST_ARGS:-}\" && n=$# && \
+    for a in \"$@\"; do set -- \"$@\" \"--cargo-test-arg=$a\"; done && shift $n || exit 64; \
+    eval \"$(cargo llvm-cov show-env --sh 2>/dev/null | sed '/^export LLVM_PROFILE_FILE=/d')\"; \
     if [ -n \"${CARGO_LLVM_COV_TARGET_DIR:-}\" ]; then \
     export CARGO_TARGET_DIR=\"$CARGO_LLVM_COV_TARGET_DIR/llvm-cov-target\"; fi; \
     cargo mutants --workspace --test-workspace=true --no-shuffle --test-tool nextest --baseline skip \
-    --output \"$SLIMFIT_OUT\"";
+    --output \"$SLIMFIT_OUT\" \"$@\"";
 
 fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -281,6 +293,7 @@ pub fn preset(p: Preset) -> Suite {
         inline_tests: false,
         build_command: String::new(),
         test_command: String::new(),
+        test_args: String::new(),
         tests_report: report(TestsFormat::Junit, ""),
         coverage_report: report(CoverageFormat::Lcov, "$SLIMFIT_OUT/lcov.info"),
         reach_report: report(ReachFormat::Lcov, ""),
@@ -297,7 +310,9 @@ pub fn preset(p: Preset) -> Suite {
                 .replace("{NEXTEST_JUNIT}", NEXTEST_JUNIT)
                 .replace("{REACH}", REACH)
                 .replace("{TEST_CPU}", TEST_CPU),
-            tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_DIR}/{NEXTEST_JUNIT}")),
+            // Under whichever profile `test_args` names: the run clears every
+            // profile's report first, so only its own is left.
+            tests_report: report(TestsFormat::Junit, &format!("{NEXTEST_STORE}/*/{NEXTEST_JUNIT}")),
             reach_report: report(ReachFormat::Lcov, &format!("$SLIMFIT_OUT/{REACH}")),
             // nextest stops a mutant's tests at its first failure: only whether a
             // mutant is caught is read (ADR 0006). No baseline: the test run
@@ -449,6 +464,16 @@ pub fn parse(repo: &Path, text: &str) -> Result<Config> {
                 fix: format!("rename all but one of the suites named {:?}: each needs its own name", s.name),
             });
         }
+        if s.overrides.test_args.is_some() && s.preset != Preset::Rust {
+            faults.push(Fault {
+                fault: format!("{FILE}: suite {:?} sets test_args, which only the rust preset's commands read", s.name),
+                fix: format!(
+                    "remove test_args from suite {:?}, or put the arguments in its test_command (which may read \
+                     them as ${TEST_ARGS_ENV})",
+                    s.name
+                ),
+            });
+        }
         if !repo.join(&s.root).is_dir() {
             faults.push(Fault {
                 fault: format!("{FILE}: suite {:?} has root {:?}, which is no directory", s.name, s.root),
@@ -503,13 +528,16 @@ mod tests {
         let f = faults(Some("suite = []\n"));
         assert!(f[0].fix.starts_with("add one: `[[suite]]`"), "{f:?}");
         let s = |name: &str, root: &str| format!("[[suite]]\nname = \"{name}\"\npreset = \"go\"\nroot = \"{root}\"\n");
-        let f = faults(Some(&[s("a", "."), s("a", "."), s("a", "."), s("b", "gone")].concat()));
+        let args = "test_args = \"-v\"\n";
+        let f = faults(Some(&[s("a", "."), s("a", "."), s("a", "."), s("b", "gone"), s("c", ".") + args].concat()));
         let fixes: Vec<&str> = f.iter().map(|f| f.fix.as_str()).collect();
         assert_eq!(
             fixes,
             [
                 "rename all but one of the suites named \"a\": each needs its own name",
-                "set root of suite \"b\" to its directory, relative to the repository"
+                "set root of suite \"b\" to its directory, relative to the repository",
+                "remove test_args from suite \"c\", or put the arguments in its test_command (which may read them \
+                 as $SLIMFIT_TEST_ARGS)"
             ]
         );
         std::fs::write(dir.path().join(FILE), s("a", ".")).unwrap();

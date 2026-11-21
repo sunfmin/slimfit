@@ -244,7 +244,7 @@ impl<'a> Run<'a> {
         if root == "." { String::new() } else { format!("{}/", root.trim_end_matches('/')) }
     }
 
-    /// Runs `command`, with `env` added. A failing exit status is not an
+    /// Runs `command`, with `env` added, and the suite's `test_args`. A failing exit status is not an
     /// error: failing tests still write reports. The log is kept; the flag
     /// says whether the command exited 0.
     fn shell(&self, command: &str, label: &str, env: &[(String, std::ffi::OsString)]) -> Result<(PathBuf, bool)> {
@@ -261,6 +261,7 @@ impl<'a> Run<'a> {
             .arg(command)
             .current_dir(&self.root)
             .env(crate::tools::OUT_ENV, &self.out)
+            .env(crate::tools::TEST_ARGS_ENV, &self.suite.test_args)
             .envs(env.iter().map(|(k, v)| (k, v)))
             .stdout(file.try_clone()?)
             .stderr(file)
