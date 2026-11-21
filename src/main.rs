@@ -313,24 +313,30 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             Ok((json!({ "findings": findings, "host": host, "next": next }), EXIT_OK))
         }
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
-        Cmd::Report { commits, points, fresh, .. } => {
+        Cmd::Report { commits, points, fresh, by, lines_only, .. } => {
             let s = Session::open(&repo)?;
-            let m = s.measure(measure::Options { fresh, ..Default::default() })?;
-            let history = report::history(&repo, &s.cfg, commits, points)?;
+            let globs = report::By::new(&by)?;
+            let (lines, by_dir) = report::lines(&repo, &s.cfg, &globs)?;
+            let current = match lines_only {
+                true => json!(lines),
+                false => metrics_of(&s.measure(measure::Options { fresh, ..Default::default() })?),
+            };
+            let history = report::history(&repo, &s.cfg, commits, points, &globs)?;
             let records = landing::records(&repo)?;
             let growth_records = growth::Records::read(&repo)?;
-            Ok((
-                json!({
-                    "current": metrics_of(&m),
-                    "baseline": s.base.suites,
-                    "loosened": s.base.loosened,
-                    "history": history,
-                    "mutants_records": records,
-                    "growth_records": growth_records,
-                    "next": "slimfit next",
-                }),
-                EXIT_OK,
-            ))
+            let mut answer = json!({
+                "current": current,
+                "baseline": s.base.suites,
+                "loosened": s.base.loosened,
+                "history": history,
+                "mutants_records": records,
+                "growth_records": growth_records,
+                "next": "slimfit next",
+            });
+            if !by.is_empty() {
+                answer["by"] = json!(by_dir);
+            }
+            Ok((answer, EXIT_OK))
         }
     }
 }
@@ -1046,6 +1052,35 @@ mod answer_tests {
         // A task, never a bound.
         let (held, code) = slimfit(repo, "check").unwrap();
         assert_eq!((code, held["verdict"]["ok"].as_bool()), (crate::EXIT_OK, Some(true)), "{held:#}");
+    }
+
+    /// `report --lines-only` runs no test, and answers `by` only when asked;
+    /// `report --fresh` measures again where the cache would answer.
+    #[test]
+    fn report_lines_only_runs_no_test_and_fresh_measures_again() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        let runs = repo.join("runs");
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        *tests = format!("echo run >> '{}'; {tests}", runs.display());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\nruns\n").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "config"]);
+        let ran = || std::fs::read_to_string(&runs).map_or(0, |t| t.lines().count());
+        let (out, _) = slimfit(repo, "report --lines-only --by src --points 0").unwrap();
+        assert_eq!(
+            (ran(), out["by"]["src"]["rust"]["prod_lines"].clone()),
+            (0, out["current"]["rust"]["prod_lines"].clone())
+        );
+        assert!(
+            out["current"]["rust"]["tests"].is_null() && out["by"]["src"]["rust"]["prod_lines"].as_u64() > Some(0),
+            "{out:#}"
+        );
+        let (out, _) = slimfit(repo, "report --points 0").unwrap();
+        assert!(out.get("by").is_none() && ran() == 1, "{out:#}");
+        slimfit(repo, "report --fresh --points 0").unwrap();
+        assert_eq!(ran(), 2);
     }
 
     /// A landing whose ratchet followed `--mutants` keeps its time

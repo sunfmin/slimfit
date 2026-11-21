@@ -352,14 +352,15 @@ pub(crate) enum Cmd {
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the records in `.slimfit/mutants/` and `.slimfit/growth/`, the samples in `.slimfit/samples/`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else.
+    /// It reads `slimfit.toml`, `.slimfit/baseline.json`, the records in `.slimfit/mutants/` and `.slimfit/growth/`, the samples in `.slimfit/samples/`, and the source and test files at commits spread over the first-parent history. It measures as `slimfit check` does, without mutants (from the cache in `.slimfit/out/` when the tree is unchanged), and writes nothing else. With `--lines-only` it measures nothing: it reads HEAD's files from git, in seconds.
     ///
     /// ## What it answers
     ///
-    /// - `current`: per suite, the metrics measured now: {const:METRICS}.
+    /// - `current`: per suite, the metrics measured now: {const:METRICS}. With `--lines-only`, only `prod_lines` and `test_lines`, of HEAD.
+    /// - `by` (with `--by`): per directory a glob matches, per suite, the `prod_lines` and `test_lines` of the files in it at HEAD, counted as `current`'s are (the same files, the same blank and `//` rule, a test crate's files as test). A directory with no file a suite counts is absent; one inside another match counts in both. The directories' lines sum to `current`'s when every counted file is in exactly one.
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
-    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below), `growth_records` (the growth records `.slimfit/growth/` held then, by verdict, as below; absent when none) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. The trend: `measured` shows each landing's `uncovered_lines` and `test_seconds` as measured, so a run of rises the ratcheted numbers hide shows here (and as a `rising-trend` task of `slimfit next`). The tally: `first_survived` per source is how many gaps its picks found, survivors since killed included, where `survived` counts only those still alive when recorded; a `picker` count above the `author` one is what a second agent buys. A number from before the baseline held it (or before any record) is absent, not zero.
+    /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `by` (with `--by`: as above, at that commit), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below), `growth_records` (the growth records `.slimfit/growth/` held then, by verdict, as below; absent when none) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. The trend: `measured` shows each landing's `uncovered_lines` and `test_seconds` as measured, so a run of rises the ratcheted numbers hide shows here (and as a `rising-trend` task of `slimfit next`). The tally: `first_survived` per source is how many gaps its picks found, survivors since killed included, where `survived` counts only those still alive when recorded; a `picker` count above the `author` one is what a second agent buys. A number from before the baseline held it (or before any record) is absent, not zero.
     /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is a `picker` rate far below the `sampled` one in `mutants_survival`.
     /// - `growth_records`: how many growth records `.slimfit/growth/` holds: {const:GROWTH_RECORDS}. Beside `history`'s `prod` lines: lines that keep climbing while every record says `as_is` is a review kept in form only (see [the reviewer](help:reviewer)).
     /// - `next`: `slimfit next`.
@@ -372,6 +373,7 @@ pub(crate) enum Cmd {
     ///
     /// - `history` counts lines with today's `slimfit.toml` (and a Rust suite's test crates by today's Cargo manifests): a commit from before a suite existed counts it as it is configured now.
     /// - `history`'s `tests`, `test_seconds` and `uncovered_lines` are what the baseline held at that commit, not a measurement of it: for `test_seconds` and `uncovered_lines`, the lowest ratcheted so far; a rise shows in `measured` beside them, which baselines written before it was kept lack; `test_seconds` changed how it is measured over time (load-corrected, then CPU time), so a step in it can be the measure, not the code.
+    /// - `by` counts HEAD, not the working tree: without `--lines-only`, `current` is the working tree's measurement, so the two differ by what is not committed.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Report {
@@ -384,8 +386,14 @@ pub(crate) enum Cmd {
         #[arg(long, default_value_t = 10, verbatim_doc_comment)]
         points: usize,
         /// Measure again even if the working tree is unchanged.
-        #[arg(long, verbatim_doc_comment)]
+        #[arg(long, conflicts_with = "lines_only", verbatim_doc_comment)]
         fresh: bool,
+        /// Also count each suite's lines per directory the glob matches, relative to the repo's root (a `*` does not cross a `/`), e.g. `--by 'crates/*'`; repeatable.
+        #[arg(long, value_name = "GLOB", verbatim_doc_comment)]
+        by: Vec<String>,
+        /// Count lines only, from git at HEAD: no test run, so `current` holds only `prod_lines` and `test_lines`.
+        #[arg(long, verbatim_doc_comment)]
+        lines_only: bool,
     },
     /// Shows one topic of this manual, or all of it.
     ///

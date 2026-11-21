@@ -1,0 +1,21 @@
+{
+  "tree": "648fa65218a134d98bac8d448bdda1d0770c4074+d1fba762150c532c",
+  "picker": "codex:01a1fd26-49ce-7fd2-920e-563b7ed27e05:default",
+  "author": "claude-code:3ad16b46-aa51-5dd7-ac2b-b324d9699d02:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:336:16: delete ! in run",
+        "why": "Reverses when the top-level `by` field appears, while the shown test checks directory counts through report helpers.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:322:67: delete field fresh from struct measure::Options expression in run",
+        "why": "Lets `report --fresh` reuse a cached measurement, while the shown test only counts committed lines.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
