@@ -71,7 +71,7 @@ Together they fit: coverage proposes, the review decides.
      the lines either runs); the slower of the two is proposed, so a pair
      is named once.
 
-   The overlap is computed without the suite's shared setup: a line more
+   The overlap is computed without the shared setup: a line more
    than half the tests run (`COMMON_LINES`, 0.5) is left out of both
    tests' lines first, and a test with no line left overlaps nothing. On
    factorium nearly every scenario runs the daemon's tick and its world's
@@ -81,6 +81,16 @@ Together they fit: coverage proposes, the review decides.
    scenarios), so the count barely moves with it. With the cut, 71 of 178
    candidates drop, all overlap, all sharing only setup in a sample of ten
    (evidence: slimfit#40, comment "Evidence of slimfit#34").
+
+   The setup is each test binary's, not the suite's: a line is left out of
+   a test's lines when more than half the tests of its own binary run it
+   (for a language whose tests have no binary, the unit `ReachTest::binary`
+   holds: its package or test file). On guild each binary has its own
+   setup (a scheduler's world, a started guildd) and none reaches half the
+   suite, so the suite-wide cut kept it and most candidates paired two
+   tests of one binary; cut per binary, the redundant-test tasks fell from
+   1,058 to 644: overlap from 670 to 256, while the same 388 tests stayed
+   subsets (evidence: slimfit#85).
 
    The subset is of all lines: setup both run cannot make one test a
    subset of another, and leaving it out would drop real subsets in small

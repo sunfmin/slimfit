@@ -1,0 +1,6 @@
+{
+  "tree": "8b8c156894a62b8196e397676ad59d66ba3b01d7+d1fba762150c532c",
+  "picker": "grok:01a20061-1c7f-7502-b7cc-15fb60fbae2c:grok-4.7-build",
+  "author": "claude-code:0603fc17-45a5-5390-a4f1-ade99d6da0c3:opus",
+  "none": "Every listed mutant is killed by the pair assertions or cannot build: a whole-function return, the inverted empty-lines guard, zeroing or underflowing the per-binary counters, or flipping COMMON_LINES * tests_of or the <= setup cut, which each_binarys_own_setup_is_left_out_of_overlap already rejects."
+}

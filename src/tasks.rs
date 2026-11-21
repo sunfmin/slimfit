@@ -28,7 +28,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of the suite's tests run (their shared setup), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. Read both tests' assertions and decide: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
@@ -270,9 +270,9 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
 /// are at least this share of the lines either runs (ADR 0006).
 pub const MERGE_OVERLAP: f64 = 0.8;
 
-/// A line more than this share of a suite's tests run is shared setup (a
-/// scenario's world, a daemon's tick): overlap is computed without it (ADR
-/// 0006).
+/// A line more than this share of a test binary's tests run is its shared
+/// setup (a scenario's world, a daemon's tick): overlap is computed without
+/// it (ADR 0006).
 pub const COMMON_LINES: f64 = 0.5;
 
 /// Redundant-test candidates from per-test coverage (ADR 0006): a test whose
@@ -280,7 +280,7 @@ pub const COMMON_LINES: f64 = 0.5;
 /// slower of the two is proposed), or that shares at least [`MERGE_OVERLAP`]
 /// of the lines either runs with another (the slower of the two is
 /// proposed). Overlap is computed without the lines more than
-/// [`COMMON_LINES`] of the tests run, which shared setup makes, not what a
+/// [`COMMON_LINES`] of the test's binary's tests run, which shared setup makes, not what a
 /// test checks; a subset is of all lines, as setup cannot make one. Each is named once, with the other test it most overlaps;
 /// the slowest first. Coverage only proposes:
 /// the steps decide by reading the assertions. A test kept, unchanged since,
@@ -289,25 +289,36 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     let Some((reach, per_test)) = s.reach.as_ref().and_then(|r| Some((r, r.lines.as_ref()?))) else { return vec![] };
     let seconds = |id: &str| s.tests.iter().find(|t| t.id == id).map_or(0.0, |t| t.cpu);
     let ids: Vec<String> = reach.tests.iter().map(ReachTest::id).collect();
-    // Each test, the (file, line)s it runs, and its CPU seconds.
+    // Each test, its binary, the (file, line)s it runs, and its CPU seconds.
     let lines: Vec<_> = ids
         .iter()
+        .zip(&reach.tests)
         .zip(per_test)
-        .map(|(t, files)| {
+        .map(|((t, rt), files)| {
             let ls: BTreeSet<(&str, u32)> =
                 files.iter().flat_map(|(f, ls)| ls.iter().map(move |l| (f.as_str(), *l))).collect();
-            (t, ls, seconds(t))
+            (t, rt.binary.as_str(), ls, seconds(t))
         })
-        .filter(|(_, ls, _)| !ls.is_empty())
+        .filter(|(_, _, ls, _)| !ls.is_empty())
+        .map(|(t, bin, ls, secs)| ((t, ls, secs), bin))
         .collect();
-    // Each test's own lines: those COMMON_LINES of the tests or fewer run.
-    let mut runs: HashMap<(&str, u32), usize> = HashMap::new();
-    for l in lines.iter().flat_map(|(_, ls, _)| ls) {
-        *runs.entry(*l).or_default() += 1;
+    // Each test's own lines: those COMMON_LINES of its binary's tests or fewer run.
+    let mut runs: HashMap<(&str, (&str, u32)), usize> = HashMap::new();
+    let mut tests_of: HashMap<&str, usize> = HashMap::new();
+    for ((_, ls, _), bin) in &lines {
+        *tests_of.entry(*bin).or_default() += 1;
+        for l in ls {
+            *runs.entry((*bin, *l)).or_default() += 1;
+        }
     }
-    let shared = COMMON_LINES * lines.len() as f64;
-    let own: Vec<BTreeSet<_>> =
-        lines.iter().map(|(_, ls, _)| ls.iter().filter(|l| runs[*l] as f64 <= shared).copied().collect()).collect();
+    let own: Vec<BTreeSet<_>> = lines
+        .iter()
+        .map(|((_, ls, _), bin)| {
+            let shared = COMMON_LINES * tests_of[bin] as f64;
+            ls.iter().filter(|l| runs[&(*bin, **l)] as f64 <= shared).copied().collect()
+        })
+        .collect();
+    let lines: Vec<_> = lines.into_iter().map(|(l, _)| l).collect();
     let at = |id: &str| reach.tests.iter().find(|t| t.id() == id);
     let mut out: Vec<(f64, Task)> = Vec::new();
     for ((t, mine, secs), mine_own) in lines.iter().zip(&own) {
@@ -340,7 +351,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                 summary: if within {
                     format!("{other} runs every line {t} runs ({} lines)", mine.len())
                 } else {
-                    format!("{t} shares {:.0}% of its lines past the suite's shared setup with {other}", share * 100.0)
+                    format!("{t} shares {:.0}% of its lines past its binary's shared setup with {other}", share * 100.0)
                 },
                 files: [at(t), at(other)].into_iter().flatten().filter_map(|rt| Some(rt.source.as_ref()?.file.clone())).collect::<BTreeSet<_>>().into_iter().collect(),
                 evidence: json!({ "test": t, "seconds": secs, "lines": mine.len(), "other_test": other }),
@@ -654,11 +665,13 @@ mod t {
     fn suite(tests: impl IntoIterator<Item = (&'static str, f64, Vec<u32>)>) -> SuiteMeasurement {
         let mut reach = crate::model::Reach { lines: Some(vec![]), ..Default::default() };
         let mut cases = Vec::new();
-        for (name, secs, lines) in tests {
+        for (id, secs, lines) in tests {
+            // `binary::name`, or a name alone, in binary `t`.
+            let (binary, name) = id.split_once("::").unwrap_or(("t", id));
             let source = crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into() };
-            reach.tests.push(ReachTest { binary: "t".into(), name: name.into(), source: Some(source) });
+            reach.tests.push(ReachTest { binary: binary.into(), name: name.into(), source: Some(source) });
             reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.into_iter().collect())].into());
-            cases.push(TestCase { id: format!("t::{name}"), seconds: 0.0, passed: true, cpu: secs });
+            cases.push(TestCase { id: format!("{binary}::{name}"), seconds: 0.0, passed: true, cpu: secs });
         }
         SuiteMeasurement {
             suite: "s".into(),
@@ -856,5 +869,27 @@ mod t {
         let s = suite(tests);
         assert_eq!(pairs(&s, &[]), [("t::same".to_string(), "t::same2".to_string())]);
         assert_eq!(redundant(&s, &[])[0].evidence["lines"], 96);
+    }
+
+    /// Shared setup is each binary's: lines more than COMMON_LINES of its
+    /// own tests run, though under half of the suite's do. A pair inside a
+    /// binary that overlaps only in its setup is not proposed; one that
+    /// overlaps past it is.
+    #[test]
+    fn each_binarys_own_setup_is_left_out_of_overlap() {
+        let with =
+            |setup: std::ops::RangeInclusive<u32>, own: std::ops::RangeInclusive<u32>| setup.chain(own).collect();
+        let tests = [
+            ("x::a", 0.2, with(100..=190, 1..=5)),
+            ("x::b", 0.1, with(100..=190, 11..=15)),
+            ("x::c", 0.1, with(100..=190, 21..=25)),
+            ("y::near", 0.2, with(200..=290, 31..=40)),
+            ("y::near2", 0.1, with(200..=290, 32..=41)),
+            ("y::d", 0.1, with(200..=290, 51..=55)),
+            ("y::g", 0.1, with(200..=290, 81..=85)),
+            ("z::e", 0.1, with(0..=0, 61..=65)),
+            ("z::f", 0.1, with(0..=0, 71..=75)),
+        ];
+        assert_eq!(pairs(&suite(tests), &[]), [("y::near".to_string(), "y::near2".to_string())]);
     }
 }
