@@ -1,0 +1,39 @@
+{
+  "tree": "acff9617f0e9c35fa4fe0ecc7d20a8f6cfb8d397+d1fba762150c532c",
+  "picker": "codex:01a1ff50-1a63-72c2-a9e2-f10b180e19e2:default",
+  "author": "claude-code:ccc82b55-1083-57fb-9ecd-07cdf048f8c3:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:213:88: replace || with && in run",
+        "why": "A ratchet that writes both a growth record and a picked-mutants record can lose the author when no `--no-mutants` flag is supplied.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:99:33: replace || with && in Record::of",
+        "why": "With no picks or no-mutants reason, supplying exactly one identity would silently succeed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:108:95: replace && with || in Record::of",
+        "why": "An identity containing an embedded newline would pass validation, while ordinary IDs still work.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:37:24: replace > with >= in Mutants::of",
+        "why": "The mutant rejects exactly five picks, which can slip past tests using one pick and an over-limit case.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:46:79: replace || with && in Mutants::of",
+        "why": "A nonblank multiline `--why` would pass when every pick has a reason.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
