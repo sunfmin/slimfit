@@ -580,6 +580,15 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // `cargo-nextest`), slimfit writes the plan and its shim.
     // Lines of `add`, `unused` and `is_adult` changed: cargo-mutants lists
     // only the mutants whose span touches one.
+    // A change of a nested crate's example alone, which the preset counts as
+    // source and cargo-mutants lists no mutant of ("No mutants to filter",
+    // exit 0): nothing to pick, not a fault.
+    let example = s.repo.join("crates/e/examples/e.rs");
+    std::fs::create_dir_all(example.parent().unwrap()).unwrap();
+    std::fs::write(&example, "fn main() {\n    if 1 == 1 {}\n}\n").unwrap();
+    let none = run("check", &["--mutants"], 0);
+    assert_eq!(none["candidates"], serde_json::json!({"rust": []}), "{none:#}");
+    std::fs::remove_dir_all(s.repo.join("crates")).unwrap();
     let lib = s.repo.join("src/lib.rs");
     let text = std::fs::read_to_string(&lib).unwrap();
     let edit = |(i, l): (usize, &str)| {

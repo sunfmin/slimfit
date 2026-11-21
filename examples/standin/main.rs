@@ -295,6 +295,11 @@ fn cargo(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work,
             let list = serde_json::from_str(&list).unwrap_or_default();
             let unviable = Some(out.join("standin-unviable"));
             let kept = Kept { names: names(args)?, lines, list, unviable };
+            // As cargo-mutants returns when `--in-diff` keeps no mutant: no report, exit 0.
+            if kept.lines.is_some() && !kept.list.iter().any(|m| kept.keeps(m)) {
+                eprintln!(" INFO No mutants to filter");
+                return Ok(Work::default());
+            }
             if args.iter().any(|a| a == "--list") {
                 has(args, "--json")?;
                 return Ok(Work { stdout: Some("mutants.list.json".into()), named: Some(kept), ..Work::default() });

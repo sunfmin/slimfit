@@ -124,7 +124,13 @@ pub(super) fn list_suite(
     );
     let (log, ok) = run.shell(&command, "mutants-list", &[])?;
     let listing = std::fs::read_to_string(&list).unwrap_or_default();
-    let read = formats::read_mutants_list(&listing).ok().filter(|_| ok);
+    // A diff that holds none of its mutants: cargo-mutants says "No mutants
+    // to filter", prints nothing and exits 0. That is the empty listing.
+    let read = match listing.trim() {
+        "" => Some(Vec::new()),
+        l => formats::read_mutants_list(l).ok(),
+    }
+    .filter(|_| ok);
     let Some(mut candidates) = read else {
         return Err(fault(
             format!("its mutation tool listed no mutants of the change; the command's log ends:\n{}", tail(&log)),
