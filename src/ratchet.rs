@@ -77,7 +77,16 @@ pub struct Measured {
     pub uncovered_lines: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_seconds: Option<f64>,
+    /// Why `test_seconds` is absent, when the measurement held no time: a
+    /// landing not timed, told from one whose time was dropped unsaid
+    /// (baselines before slimfit#74).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untimed: Option<String>,
 }
+
+/// Why a measurement holds no `test_seconds` of a suite.
+pub const UNTIMED: &str = "its tests ran inside `--mutants`, at background priority, and no test run of a gate's \
+     priority timed the same files";
 
 impl Measured {
     /// Each suite's trends in `m`.
@@ -85,6 +94,7 @@ impl Measured {
         let of = |s: &SuiteMeasurement| Measured {
             uncovered_lines: s.metrics.uncovered_lines,
             test_seconds: (!s.untimed).then_some(s.metrics.test_seconds),
+            untimed: s.untimed.then(|| UNTIMED.to_string()),
         };
         m.suites.iter().map(|s| (s.suite.clone(), of(s))).collect()
     }
@@ -746,7 +756,10 @@ mod t {
         let kept = |cur: u64| ratchet(&base(m(10, 10.0)), &measurement(m(cur, 10.0), None), &cfg, &[], None);
         assert_eq!([14, 9, 8].map(|c| kept(c).unwrap().suites["s"].uncovered_lines), [10, 10, 8]);
         // Beside the bound, what was measured: the rise shows there.
-        assert_eq!(kept(14).unwrap().measured["s"], Measured { uncovered_lines: 14, test_seconds: Some(10.0) });
+        assert_eq!(
+            kept(14).unwrap().measured["s"],
+            Measured { uncovered_lines: 14, test_seconds: Some(10.0), untimed: None }
+        );
         let f = crate::fault::of(
             ratchet(&base(m(10, 10.0)), &more, &cfg, &[Bound::UncoveredLines], Some("x")).unwrap_err(),
         );
@@ -867,6 +880,9 @@ mod t {
         for cur in [&slow, &fast] {
             assert_eq!(ratchet(&base(m(10, 10.0)), cur, &cfg, &[], None).unwrap().suites["s"].test_seconds, 10.0);
         }
+        // What was measured says why it holds no time: not measured, not dropped unsaid.
+        let measured = &ratchet(&base(m(10, 10.0)), &slow, &cfg, &[], None).unwrap().measured["s"];
+        assert_eq!((measured.test_seconds, measured.untimed.as_deref()), (None, Some(UNTIMED)));
         let refused = |b: &Baseline, loosen: &[Bound]| {
             let f = crate::fault::of(ratchet(b, &slow, &cfg, loosen, None).unwrap_err());
             assert!(

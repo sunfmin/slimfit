@@ -79,6 +79,10 @@ pub struct Worktree {
     /// HEAD plus a hash of every local change outside `.slimfit/`, so a
     /// measurement can be reused exactly while the tree is unchanged.
     pub key: String,
+    /// A hash of every file outside `.slimfit/`, whatever HEAD is: the same
+    /// before a commit and after it, so a test run's time outlives the
+    /// commit of what it timed.
+    pub content: String,
 }
 
 /// The working tree of `head`'s repository.
@@ -94,20 +98,24 @@ pub fn worktree(head: &Head) -> Result<Worktree> {
         Some(commit) => differing(repo, commit, &untracked)?,
         None => files.iter().filter(|f| outside(f)).cloned().collect(),
     };
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    for f in &changed {
-        f.hash(&mut h);
-        let p = repo.join(f);
-        // A symlink by its target, as git records it; the rest by contents and mode.
-        std::fs::read_link(&p).ok().hash(&mut h);
-        std::fs::read(&p).ok().hash(&mut h);
-        std::fs::symlink_metadata(&p)
-            .ok()
-            .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
-            .hash(&mut h);
-    }
-    let key = format!("{}+{:016x}", head.commit.as_deref().unwrap_or("unborn"), h.finish());
-    Ok(Worktree { files, head: head.clone(), key })
+    let hash = |files: &mut dyn Iterator<Item = &String>| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for f in files {
+            f.hash(&mut h);
+            let p = repo.join(f);
+            // A symlink by its target, as git records it; the rest by contents and mode.
+            std::fs::read_link(&p).ok().hash(&mut h);
+            std::fs::read(&p).ok().hash(&mut h);
+            std::fs::symlink_metadata(&p)
+                .ok()
+                .map(|m| std::os::unix::fs::PermissionsExt::mode(&m.permissions()))
+                .hash(&mut h);
+        }
+        format!("{:016x}", h.finish())
+    };
+    let key = format!("{}+{}", head.commit.as_deref().unwrap_or("unborn"), hash(&mut changed.iter()));
+    let content = hash(&mut files.iter().filter(|f| outside(f)));
+    Ok(Worktree { files, head: head.clone(), key, content })
 }
 
 #[cfg(test)]
@@ -116,7 +124,7 @@ impl Worktree {
     /// directory.
     pub fn of(top: &Path, files: Vec<String>) -> Self {
         let head = Head { top: top.into(), commit: None, index: Default::default(), scratch: Default::default() };
-        Self { files, head, key: String::new() }
+        Self { files, head, key: String::new(), content: String::new() }
     }
 }
 

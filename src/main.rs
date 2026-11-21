@@ -199,7 +199,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, .. } => {
             let s = Session::open(&repo)?;
             let old = &s.base;
-            let m = s.measure(measure::Options { fresh, dry_run, ..Default::default() })?;
+            // Timed as a gate times it: a test run inside `--mutants` takes the
+            // time of one of the same files, or runs again (slimfit#74).
+            let m = s.measure(measure::Options { fresh, dry_run, timed: true, ..Default::default() })?;
             let new = ratchet::ratchet(old, &m, &s.cfg.check, &loosen, reason.as_deref())?;
             let record = record(&m, no_mutants, picker, author)?.map(|r| r.with_firsts(&repo).file()).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
@@ -939,6 +941,71 @@ mod answer_tests {
         // A task, never a bound.
         let (held, code) = slimfit(repo, "check").unwrap();
         assert_eq!((code, held["verdict"]["ok"].as_bool()), (crate::EXIT_OK, Some(true)), "{held:#}");
+    }
+
+    /// A landing whose ratchet followed `--mutants` keeps its time
+    /// (slimfit#74). The gate's run before the commit times the files the
+    /// mutants run then finds under a new HEAD: its time stands, not the
+    /// mutants run's own. With no such run, `ratchet` times the tests
+    /// itself. Landings so recorded show their rise to `rising-trend`.
+    #[test]
+    fn a_landing_recorded_after_mutants_keeps_its_time() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        // The slow test's CPU time, as the test command finds it when it runs.
+        let clock = tempfile::tempdir().unwrap();
+        let cpu = clock.path().join("cpu");
+        let set = |secs: &str| std::fs::write(&cpu, format!("0m{secs}s")).unwrap();
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        *tests = tests.replace("0m0.600s", &format!("'\"$(cat {})\"'", cpu.display()));
+        cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        set("1.000");
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        let lib = repo.join("src/lib.rs");
+        let killed = "src/lib.rs:12:9: replace >= with < in is_adult";
+        let land = |n: u32, secs: &str, gated: bool| {
+            let text = std::fs::read_to_string(&lib).unwrap();
+            std::fs::write(&lib, format!("{text}\npub fn f{n}() -> u8 {{\n    {n}\n}}\n")).unwrap();
+            set(secs);
+            if gated {
+                slimfit(repo, "check").unwrap();
+            }
+            git(repo, &["commit", "-qam", &format!("change {n}")]);
+            // A time no gate took: the mutants run's own test run would, and
+            // a ratchet timing the tests again would.
+            set("9.000");
+            let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the age bound"]).unwrap();
+            assert_eq!(code, crate::EXIT_OK, "{out:#}");
+            if !gated {
+                set(secs);
+            }
+            slimfit(repo, "ratchet --picker p --author a").unwrap();
+            git(repo, &["add", "-A"]);
+            git(repo, &["commit", "-qm", &format!("landing {n}")]);
+            crate::session::Session::open(repo).unwrap().base.measured["rust"].test_seconds
+        };
+        assert_eq!(land(1, "1.500", true), Some(1.525));
+        // No gate's run of these files: the ratchet's own.
+        assert_eq!(land(2, "2.000", false), Some(2.025));
+        assert_eq!(land(3, "4.000", true), Some(4.025));
+
+        let (next, _) = slimfit(repo, "next --all --kind rising-trend").unwrap();
+        let tasks: Vec<&Value> =
+            next["tasks"].as_array().unwrap().iter().filter(|t| t["evidence"]["metric"] == "test_seconds").collect();
+        assert_eq!(tasks.len(), 1, "{next:#}");
+        let landed: Vec<(&str, f64)> = tasks[0]["evidence"]["landings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| (l["subject"].as_str().unwrap(), l["value"].as_f64().unwrap()))
+            .collect();
+        assert_eq!(landed, [("adopt", 1.025), ("landing 1", 1.525), ("landing 2", 2.025), ("landing 3", 4.025)]);
     }
 
     /// A pick that survives its first run and is then killed (slimfit#68):

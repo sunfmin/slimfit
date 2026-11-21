@@ -1,0 +1,27 @@
+{
+  "tree": "9c85f841b9b0dfc21df2d3317fed2c063cfcd00e+d1fba762150c532c",
+  "picker": "codex:01a1fc03-f4a3-7812-a808-8574c72c9781:default",
+  "author": "claude-code:57245979-e0ed-5746-8714-f4454affabcd:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure.rs:98:21: delete ! in current",
+        "why": "The new landing test checks the recorded time, so it could pass even if ratchet ignores the cached mutant picks.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:98:50: replace && with || in current",
+        "why": "Matching suite names would let a cached measurement bypass both the tree check and --fresh, which the new test never requests.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:98:33: replace && with || in current",
+        "why": "An ordinary run could accept a cached measurement after the configured suites change, but the landing test keeps the suite list fixed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

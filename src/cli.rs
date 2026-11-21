@@ -263,6 +263,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - It runs no mutant, and takes no `--mutants`: mutants run one way, `slimfit check --mutants` at background priority, and `ratchet` reuses that measurement while the tree is unchanged. A second path would run them at the agent's own priority.
+    /// - When the tests ran inside `--mutants` and no gate's run timed the same files, it runs the tests again, at your priority, to time them (see [host load](help:host-load)): run it as you run a gate, not at background priority.
     /// - A `ratchet` of a measurement without picks, and without `--no-mutants`, writes no record: the gate's `check` fails on a change that adds source lines until one is committed.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
