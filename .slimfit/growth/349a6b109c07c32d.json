@@ -1,0 +1,10 @@
+{
+  "tree": "d9473ade878d9bc2924d22be1204ff7eb1e89c05+d1fba762150c532c",
+  "lines": 81,
+  "serves": "slimfit#89",
+  "considered": "rust_source's reader of a test fn (Go's func needs gofmt's rule, not Rust's brace/char-literal one, so go_source is its own 50 lines); the existing go_cover block parser, now shared with the reach reader (go_block) instead of a second one; the Rust preset's per-test runner, which Go cannot reuse (no nextest)",
+  "reviewer": "claude-code:56ab8190-2ef8-4493-8ed1-5e5acf97a8a8:claude-opus-5-5",
+  "author": "claude-code:2e2fba6d-08a8-50f7-bf02-7487c54fae9a:opus",
+  "cut": "src/measure.rs `reached`: fold the 5-line `let fns = if preset == Preset::Rust {…} else { BTreeMap::new() }` into one `(preset == Preset::Rust).then(|| rust_source::functions(…)).unwrap_or_default()`; src/formats/reach.rs `go_cover`: delete the `mode:`/blank-line skip, since go-test.sh already writes only blocks that ran (`grep -v -e '^mode:' -e ' 0$'`) and `tests` never sees a mode line, then drop `mode: set` from `reads_the_lines_of_each_tests_coverprofile`; examples/standin/main.rs: `go`'s `package()` and `go_test_binary` each read REACH and parse its `test ` lines, so have one helper that returns the (package, name) pairs and use it in both; e2e.sh `inject`: write the case once as `{ case … esac; } >> \"$(source_of \"$1\")\"` instead of repeating the redirect in all five branches.",
+  "answer": "Folded fns into then().unwrap_or_default(): clippy -D warnings refuses it (obfuscated_if_else), so the if/else stays. Deleted go_cover's mode/blank skip and the test's mode line. One go_tests helper in the stand-in now serves go list and the test binary. e2e's inject writes the case once with one redirect."
+}
