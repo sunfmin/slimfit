@@ -187,6 +187,9 @@ pub enum Bound {
     /// Source lines the change adds while it adds no record of its mutants (picks, or a reason none is worth one) that names a picker other than its author: none, checked by every `check`, plain ones too, though no mutant runs there (see [what the gate holds](help:mutants-scope)); never loosened.
     #[value(verbatim_doc_comment)]
     UnrecordedMutants,
+    /// Source lines the change adds net, in all suites, past `growth_allowance` under `[check]` (by default {const:GROWTH_ALLOWANCE}), while it adds no growth record that names a reviewer other than its author: checked by every `check`, of the change as a whole; never on the number alone, and never loosened (see [the reviewer](help:reviewer)). Its `limit` is the allowance and `suite` names the suites that grew.
+    #[value(verbatim_doc_comment)]
+    UnrecordedGrowth,
 }
 
 /// What a [`Loosening`] prints, as the command pages name it.
@@ -326,7 +329,7 @@ impl Bound {
             Bound::Failures => b.map(|m| m.failures as f64),
             Bound::TestSeconds => b.map(|m| m.test_seconds),
             Bound::UncoveredLines => b.map(|m| m.uncovered_lines as f64),
-            Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
+            Bound::SurvivedMutants | Bound::UnrecordedMutants | Bound::UnrecordedGrowth => Some(0.0),
         }
     }
 
@@ -339,6 +342,8 @@ impl Bound {
             Bound::TestSeconds if s.untimed => None,
             Bound::SurvivedMutants => survivors(s),
             Bound::UnrecordedMutants => held.map(|h| h.unrecorded.get(&s.suite).map_or(0.0, |u| u.lines as f64)),
+            // Of the change as a whole, not of a suite: `check` holds it once.
+            Bound::UnrecordedGrowth => None,
             _ => self.kept(Some(&s.metrics)),
         }
     }
@@ -349,14 +354,14 @@ impl Bound {
             Bound::Failures => m.failures = v as u64,
             Bound::TestSeconds => m.test_seconds = v,
             Bound::UncoveredLines => m.uncovered_lines = v as u64,
-            Bound::SurvivedMutants | Bound::UnrecordedMutants => {}
+            Bound::SurvivedMutants | Bound::UnrecordedMutants | Bound::UnrecordedGrowth => {}
         }
     }
 
     /// The most it may be, whatever the baseline keeps; none for a trend.
     fn limit(self) -> Option<f64> {
         match self {
-            Bound::TestSeconds | Bound::UncoveredLines => None,
+            Bound::TestSeconds | Bound::UncoveredLines | Bound::UnrecordedGrowth => None,
             Bound::Failures | Bound::SurvivedMutants | Bound::UnrecordedMutants => Some(0.0),
         }
     }
@@ -379,6 +384,7 @@ impl Bound {
             Bound::UnrecordedMutants => Some(format!(
                 "{PICK_THE_MUTANTS}; a survivor that changes nothing observable is loosened as `--loosen survived_mutants`"
             )),
+            Bound::UnrecordedGrowth => Some(crate::growth::JUSTIFY_GROWTH.into()),
             Bound::TestSeconds => Some(SLOW_TESTS.into()),
             Bound::UncoveredLines => Some(UNCOVERED.into()),
             Bound::SurvivedMutants => None,
@@ -419,6 +425,7 @@ fn fix(b: Bound, s: &SuiteMeasurement, held: Option<&Held>) -> String {
                 u.lines, h.from, h.target, u.first
             )
         }
+        Bound::UnrecordedGrowth => unreachable!("held of the change as a whole: `growth_violation`"),
     }
 }
 
@@ -492,8 +499,39 @@ pub fn check(base: &Baseline, m: &Measurement, cfg: &CheckConfig, held: Option<&
             }
         }
     }
+    v.violations.extend(held.and_then(|h| growth_violation(h, cfg.growth_allowance)));
     v.ok = v.violations.is_empty();
     v
+}
+
+/// `unrecorded_growth` of the landing `h`: when it adds more source lines net
+/// than `allowance` and no growth record naming a reviewer other than its
+/// author (ADR 0012).
+fn growth_violation(h: &Held, allowance: u64) -> Option<Violation> {
+    if h.growth <= allowance as i64 || h.growth_reviewed {
+        return None;
+    }
+    let grew: Vec<&str> = h.grown.iter().filter(|(_, g)| g.lines > 0).map(|(s, _)| s.as_str()).collect();
+    let missing = if h.growth_records.is_empty() {
+        "no growth record"
+    } else {
+        "no growth record that names a reviewer other than its author"
+    };
+    Some(Violation {
+        suite: grew.join(", "),
+        metric: Bound::UnrecordedGrowth,
+        baseline: 0.0,
+        limit: allowance as f64,
+        current: h.growth as f64,
+        fix: format!(
+            "the change adds {} source line(s) net since {} ({}), more than growth_allowance ({allowance}), and \
+             {missing}: {}",
+            h.growth,
+            h.from,
+            h.target,
+            crate::growth::JUSTIFY_GROWTH
+        ),
+    })
 }
 
 /// The new baseline: each bound at current where that is a gain (as `check`

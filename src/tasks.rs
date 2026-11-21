@@ -22,6 +22,9 @@ pub enum TaskKind {
     /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
     #[value(verbatim_doc_comment)]
     PickMutants,
+    /// The change adds more than `growth_allowance` source lines net and no growth record: the gate's `check` fails until it does. Cut what you can, then ask a second agent, never yourself, whether it could be smaller (see [the reviewer](help:reviewer)), do or answer what it names, and ratchet with its verdict.
+    #[value(verbatim_doc_comment)]
+    JustifyGrowth,
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
@@ -120,7 +123,9 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
 }
 
 pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
-    let mut out = pick_mutants(repo, tree, cfg, m.with_mutants)?;
+    let held = crate::landing::hold(repo, cfg, tree, m.with_mutants)?;
+    let mut out = pick_mutants(repo, tree, cfg, held.as_ref())?;
+    out.extend(held.as_ref().and_then(|h| justify_growth(h, cfg.check.growth_allowance)));
     let landed = landed(repo);
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
         out.extend(of_measurement(s, &base.kept));
@@ -156,8 +161,8 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
 /// A task per suite whose change adds source lines and no record of its
 /// mutants (none due once `picked` ran: `ratchet` records them), with what
 /// its tool lists of the change to pick from.
-fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, picked: bool) -> Result<Vec<Task>> {
-    let unrecorded = crate::landing::hold(repo, cfg, tree, picked)?.map(|h| h.unrecorded).unwrap_or_default();
+fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::landing::Held>) -> Result<Vec<Task>> {
+    let unrecorded = held.map(|h| h.unrecorded.clone()).unwrap_or_default();
     if unrecorded.is_empty() {
         return Ok(vec![]);
     }
@@ -196,6 +201,39 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, picked: bool) -> Result<
             }
         })
         .collect())
+}
+
+/// A task when the landing `h` adds more than `allowance` source lines net
+/// and no growth record that names a reviewer other than its author, with
+/// the files that grew most first.
+fn justify_growth(h: &crate::landing::Held, allowance: u64) -> Option<Task> {
+    if h.growth <= allowance as i64 || h.growth_reviewed {
+        return None;
+    }
+    let mut files: Vec<(&String, i64)> = h.grown.values().flat_map(|g| g.files.iter().map(|(f, n)| (f, *n))).collect();
+    files.sort_by_key(|(f, n)| (-n, f.to_string()));
+    let suites: Vec<&str> = h.grown.keys().map(String::as_str).collect();
+    Some(Task {
+        kind: TaskKind::JustifyGrowth,
+        suite: suites.join(", "),
+        summary: format!(
+            "the change adds {} source line(s) net, more than growth_allowance ({allowance}), and no growth record: \
+             have a second agent judge whether it could be smaller",
+            h.growth
+        ),
+        files: files.iter().filter(|(_, n)| *n > 0).map(|(f, _)| f.to_string()).collect(),
+        evidence: json!({
+            "lines": h.growth,
+            "allowance": allowance,
+            "from": h.from,
+            "grown": files.iter().map(|(f, n)| json!({ "file": f, "lines": n })).collect::<Vec<_>>(),
+        }),
+        steps: format!(
+            "Do not judge it yourself: you wrote the change, so you would find it all needed. {}.",
+            crate::growth::JUSTIFY_GROWTH.replacen("first", "First", 1)
+        ),
+        accept: TaskKind::JustifyGrowth.accept().into(),
+    })
 }
 
 fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {

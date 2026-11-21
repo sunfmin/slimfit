@@ -25,6 +25,10 @@ pub struct Point {
     /// held none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_records: Option<Records>,
+    /// The growth records `.slimfit/growth/` held at the commit, by verdict;
+    /// absent when it held none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub growth_records: Option<crate::growth::Records>,
     /// The survival of the mutants that ran, by who chose them, over the
     /// records and samples committed by then; absent when there were none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,7 +180,12 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
         resolved.iter().map(|s| Classifier::new(s, repo, &[], |_| None)).collect::<Result<_>>()?;
     let mut out = Vec::new();
     for (commit, date) in picked {
-        let ours = |p: &str| p == ratchet::FILE || p.starts_with(landing::DIR) || p.starts_with(sample::DIR);
+        let ours = |p: &str| {
+            p == ratchet::FILE
+                || p.starts_with(landing::DIR)
+                || p.starts_with(sample::DIR)
+                || p.starts_with(crate::growth::DIR)
+        };
         let blobs = git::tree_blobs(repo, commit, |p| ours(p) || claims.iter().any(|c| c.kind(p).is_some()))?;
         let texts: BTreeMap<&str, &str> = blobs.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
         let baseline: Option<Value> = texts.get(ratchet::FILE).and_then(|t| serde_json::from_str(t).ok());
@@ -191,8 +200,9 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize) -> Resu
         }
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
         let mutants_survival = survival(texts.iter().map(|(p, t)| (*p, *t)));
+        let growth_records = crate::growth::Records::of(texts.iter().map(|(p, t)| (*p, *t)));
         let commit = commit[..12].to_string();
-        out.push(Point { commit, date: date.to_string(), suites, mutants_records, mutants_survival });
+        out.push(Point { commit, date: date.to_string(), suites, mutants_records, growth_records, mutants_survival });
     }
     Ok(out)
 }

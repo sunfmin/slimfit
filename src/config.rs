@@ -29,11 +29,15 @@ pub struct CheckConfig {
     /// HEAD's merge base with it (`landing::DEFAULT_TARGET` when unset).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// The source lines a change may add net, in all suites, without a
+    /// growth record (ADR 0012).
+    pub growth_allowance: u64,
 }
 
 impl Default for CheckConfig {
     fn default() -> Self {
-        Self { coverage_slack: 1, target: None }
+        // 50: of slimfit's first 73 landings, the median added 22 source lines net and 21 added more than 50 (ADR 0012).
+        Self { coverage_slack: 1, target: None, growth_allowance: 50 }
     }
 }
 
