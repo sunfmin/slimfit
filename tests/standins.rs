@@ -583,12 +583,23 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // `cargo-nextest`), slimfit writes the plan and its shim.
     // Lines of `add`, `unused` and `is_adult` changed: cargo-mutants lists
     // only the mutants whose span touches one.
-    // A change of a nested crate's example alone, which the preset counts as
-    // source and cargo-mutants lists no mutant of ("No mutants to filter",
-    // exit 0): nothing to pick, not a fault.
-    let example = s.repo.join("crates/e/examples/e.rs");
-    std::fs::create_dir_all(example.parent().unwrap()).unwrap();
-    std::fs::write(&example, "fn main() {\n    if 1 == 1 {}\n}\n").unwrap();
+    // A nested crate's example grows: the preset counts it as a test, not
+    // source, so the change adds no source line, no growth, no candidate.
+    let nested = |path: &str| {
+        let f = s.repo.join(path);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "fn main() {\n    if 1 == 1 {}\n}\n").unwrap();
+    };
+    nested("crates/e/examples/e.rs");
+    let example = run("check", &[], 0);
+    assert_eq!((&example["landing"]["lines"], &example["landing"]["growth"]), (&0.into(), &0.into()), "{example:#}");
+    s.take();
+    assert_eq!(run("check", &["--mutants"], 0)["candidates"], serde_json::json!({"rust": []}));
+    assert!(!s.take().iter().any(|c| c.step == "cargo mutants"), "no source line: cargo-mutants not run");
+    // A nested crate's source that cargo-mutants lists no mutant of ("No
+    // mutants to filter", exit 0): nothing to pick, not a fault.
+    std::fs::remove_dir_all(s.repo.join("crates")).unwrap();
+    nested("crates/e/src/main.rs");
     let none = run("check", &["--mutants"], 0);
     assert_eq!(none["candidates"], serde_json::json!({"rust": []}), "{none:#}");
     std::fs::remove_dir_all(s.repo.join("crates")).unwrap();

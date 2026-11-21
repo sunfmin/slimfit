@@ -245,6 +245,10 @@ impl SuiteConfig {
     }
 }
 
+/// The Rust preset's test globs: tests, benches and examples, at the root and
+/// in any crate under it.
+pub(crate) const RUST_TESTS: &[&str] =
+    &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**", "**/examples/**"];
 /// The Rust preset's test command: a profile per test beside the merged
 /// coverage, and which functions each test ran (ADR 0007).
 const RUST_TEST: &str = include_str!("presets/rust-test.sh");
@@ -328,7 +332,7 @@ pub fn preset(p: Preset) -> Suite {
             mutants_diff_flag: "--in-diff".into(),
             mutants_pick_flag: "-F".into(),
             mutants_tests: MutantTests::Reached,
-            ..base(&["**/*.rs"], &["tests/**", "**/tests/**", "benches/**", "**/benches/**", "examples/**"])
+            ..base(&["**/*.rs"], RUST_TESTS)
         },
         Preset::Go => Suite {
             // Builds the test binaries as the test run does (coverage on), and
