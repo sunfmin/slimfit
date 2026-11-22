@@ -55,8 +55,8 @@ fn grammar(preset: Preset) -> Option<Grammar> {
             comments: &["line_comment", "block_comment"],
             is_assert: |n, src| {
                 let name = n.child_by_field_name("macro").map(|m| text(m, src).rsplit("::").next().unwrap_or(""));
-                n.kind() == "macro_invocation"
-                    && name.is_some_and(|m| m.starts_with("assert") || m.starts_with("debug_assert"))
+                // Only a macro invocation has a `macro`.
+                name.is_some_and(|m| m.starts_with("assert") || m.starts_with("debug_assert"))
             },
         }),
         Preset::Go => Some(Grammar {
@@ -212,6 +212,9 @@ mod tests {
         assert_eq!((a.asserts.len(), a.asserts[1] == b.asserts[1], a.asserts[0] == b.asserts[0]), (2, true, false));
         assert!(c.asserts.is_empty());
         assert_eq!(shape(Preset::Kotlin, "fun a() {}"), None);
+        assert!(reads(Preset::Rust) && reads(Preset::Go) && !reads(Preset::Kotlin));
+        // FNV-1a 64, as kept verdicts were hashed before shapes.
+        assert_eq!((fnv(""), fnv("a")), ("cbf29ce484222325".into(), "af63dc4c8601ec8c".into()));
         assert_eq!(shape(Preset::Rust, "struct S;"), None);
     }
 }

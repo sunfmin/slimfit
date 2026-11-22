@@ -971,18 +971,18 @@ mod t {
     #[test]
     fn candidates_are_classed_by_their_tests_shapes() {
         let rust = [
-            "fn start_gmail() {\n    let d = start(\"gmail\");\n    assert_eq!(d.sources(), 1);\n}",
-            "fn start_gh() {\n    let d = start(\"gh\");\n    assert_eq!(d.sources(), 1);\n}",
-            "fn start_none() {\n    let d = start(\"\");\n    assert_eq!(d.sources(), 0);\n}",
+            "fn start_gmail() {\n    let d = start(\"gmail\", 7);\n    assert_eq!(d.sources(), 1);\n}",
+            "fn start_gh() {\n    let d = start(\"gh\", 7);\n    assert_eq!(d.sources(), 1);\n}",
+            "fn start_none() {\n    let d = start(\"\", 7);\n    assert_eq!(d.sources(), 0);\n}",
             "fn copy() {\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
             "fn orig() {\n    let x = add(2, 3);\n    assert!(x > 0);\n    assert_eq!(x, 5);\n}",
             "fn differ() {\n    let _y = 0;\n    assert_eq!(add(1, 1), 3);\n}",
             "fn base() {\n    assert_eq!(add(1, 1), 2);\n}",
         ];
         let go = [
-            "func TestStartGmail(t *testing.T) {\n\tif Start(\"gmail\").Sources() != 1 {\n\t\tt.Fatal(\"gmail\")\n\t}\n}",
-            "func TestStartGh(t *testing.T) {\n\tif Start(\"gh\").Sources() != 1 {\n\t\tt.Fatal(\"gh\")\n\t}\n}",
-            "func TestStartNone(t *testing.T) {\n\tif Start(\"\").Sources() != 0 {\n\t\tt.Fatal(\"none\")\n\t}\n}",
+            "func TestStartGmail(t *testing.T) {\n\tif Start(\"gmail\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gmail\")\n\t}\n}",
+            "func TestStartGh(t *testing.T) {\n\tif Start(\"gh\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gh\")\n\t}\n}",
+            "func TestStartNone(t *testing.T) {\n\tif Start(\"\", 7).Sources() != 0 {\n\t\tt.Fatal(\"none\")\n\t}\n}",
             "func TestCopy(t *testing.T) {\n\tx := Add(2, 3)\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
             "func TestOrig(t *testing.T) {\n\tx := Add(2, 3)\n\tif x <= 0 {\n\t\tt.Fatal(\"positive\")\n\t}\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
             "func TestDiffer(t *testing.T) {\n\t_ = 0\n\tif Add(1, 1) != 3 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
