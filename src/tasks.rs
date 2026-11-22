@@ -174,9 +174,18 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
         .into_iter()
         .map(|(suite, u)| {
             let lines = u.lines as f64;
-            let listed = candidates.remove(&suite).unwrap_or_default();
-            let files: BTreeSet<String> = listed.iter().map(|c| c.file.clone()).collect();
-            let removed = removed.get(&suite).cloned().unwrap_or_default();
+            let listed = BTreeMap::from([(suite.clone(), candidates.remove(&suite).unwrap_or_default())]);
+            let files: BTreeSet<String> = listed[&suite].iter().map(|c| c.file.clone()).collect();
+            let count = listed[&suite].len();
+            let mut listing = crate::listing::of(&listed, &removed, &[]);
+            let mut evidence = json!({
+                "lines": lines,
+                "removed_tests": listing.removed_tests.remove(&suite).unwrap_or_default(),
+                "candidates": listing.candidates.remove(&suite).unwrap_or_default(),
+            });
+            if let Some(functions) = listing.functions.remove(&suite) {
+                evidence["functions"] = json!(functions);
+            }
             let what = match u.tests {
                 0 => format!("adds {lines} source line(s)"),
                 t => format!("adds {lines} source line(s) and removes {t} test(s)"),
@@ -184,22 +193,22 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
             Task {
                 kind: TaskKind::PickMutants,
                 summary: format!(
-                    "the change {what} and no record of its mutants: have a second agent pick the few worth running, of {}",
-                    listed.len()
+                    "the change {what} and no record of its mutants: have a second agent pick the few worth running, of {count}"
                 ),
                 suite,
                 files: files.into_iter().collect(),
-                evidence: json!({ "lines": lines, "removed_tests": removed, "candidates": listed }),
+                evidence,
                 steps: format!(
                     "Do not pick yourself: you wrote the change, so you would pick what your tests already hold. \
                      Ask a second agent, giving it only the goal (`slimfit help picker`), the change's diff and \
-                     `candidates` (what `slimfit check --mutants` lists); in factorium, as `slimfit help factorium` \
+                     the listing (`removed_tests`, `candidates` and, grouped past the budget, `functions`: what \
+                     `slimfit check --mutants` lists); in factorium, as `slimfit help factorium` \
                      says. It answers at most {} picks, each with a why, or why none is worth one. Run its picks at \
                      background priority: `factorium worker exclusive --background -- slimfit check --mutants \
                      <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit check ...`). A survivor: assert \
                      what it changes with a fast test through the interface, or simplify the code; if it changes \
                      nothing observable, `slimfit ratchet --loosen survived_mutants --reason \"<why>\"`; one on a removed \
-                     test's line (`removed_tests`) is a test removed too many: put it back, or assert what it \
+                     test's line (`removed`, indexes into `removed_tests`) is a test removed too many: put it back, or assert what it \
                      changes in the test it was merged into. Then \
                      `slimfit ratchet --picker <its id> --author <yours>` writes the record; when it picked none, \
                      `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`. Commit \

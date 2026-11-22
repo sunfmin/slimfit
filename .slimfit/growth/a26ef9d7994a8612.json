@@ -1,0 +1,10 @@
+{
+  "tree": "37bec42a919b6d2f12054b181c805dcd02357b69+d1fba762150c532c",
+  "lines": 150,
+  "serves": "slimfit#99",
+  "considered": "reusing tasks.rs's pick-mutants evidence shape and Candidate's own serialization; deleting the per-candidate removed_tests list (kept internally, as the table's source)",
+  "reviewer": "codex:01a202cc-9570-7b10-a060-c01a74fc91bd:default",
+  "author": "claude-code:e5f12947-168f-56b6-9683-c37824034340:opus",
+  "cut": "In src/listing.rs, delete `places` and the zip-and-rebuild pass. Use the suite’s output vector being empty to identify its guaranteed first example, then stable-sort the accepted examples by their function’s position in `listing.functions` to preserve both function order and example order. In src/main.rs, reuse `listing::EXPAND` in the `--function` error instead of repeating the command.",
+  "answer": "made both cuts (2ec3f23..HEAD): places and the rebuild are gone, examples stable-sorted by their function's place; the --function fault uses listing::EXPAND"
+}
