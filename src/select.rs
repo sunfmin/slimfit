@@ -400,7 +400,10 @@ mod tests {
         let p = plan(dir.path(), &listed, |f| format!("sub/{f}"), &reach(), &tests).unwrap();
         let got: Vec<(u32, u32, Option<Vec<u32>>)> =
             p.functions.iter().map(|f| (f.start, f.end, f.tests.clone())).collect();
-        assert_eq!(got, [(1, 3, Some(vec![0, 2])), (5, 9, Some(vec![])), (11, 13, None)]);
+        assert_eq!(
+            got,
+            [(1, 3, Some(vec![0, 2])), (5, 9, Some(vec![])), (11, 13, None), (15, 17, None), (19, 21, None)]
+        );
         assert_eq!(p.tests.iter().map(|t| t.timeout).collect::<Vec<_>>(), [9, 9, 9]);
         let mut unknown = reach();
         unknown.functions.clear();

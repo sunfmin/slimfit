@@ -1,39 +1,6 @@
 {
   "outcomes": [
     {
-      "scenario": "Baseline",
-      "summary": "Success",
-      "log_path": "log/baseline.log",
-      "diff_path": null,
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 17.50249,
-          "process_status": "Success",
-          "argv": [
-            "cargo",
-            "nextest",
-            "run",
-            "--no-run",
-            "--verbose",
-            "--package=calc@0.1.0"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 1.9874869579999999,
-          "process_status": "Success",
-          "argv": [
-            "cargo",
-            "nextest",
-            "run",
-            "--verbose",
-            "--package=calc@0.1.0"
-          ]
-        }
-      ]
-    },
-    {
       "scenario": {
         "Mutant": {
           "name": "src/lib.rs:2:5: replace add -> i64 with 0",
@@ -73,10 +40,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 5.23355275,
+          "duration": 0.402008208,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -86,12 +53,12 @@
         },
         {
           "phase": "Test",
-          "duration": 4.159819125,
+          "duration": 0.70152825,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -140,10 +107,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 5.838408709,
+          "duration": 0.401772375,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -153,12 +120,12 @@
         },
         {
           "phase": "Test",
-          "duration": 1.454475875,
+          "duration": 0.702051,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -207,10 +174,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.064405584,
+          "duration": 0.401547334,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -220,12 +187,12 @@
         },
         {
           "phase": "Test",
-          "duration": 1.162156791,
+          "duration": 0.751853708,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -274,10 +241,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.164361667,
+          "duration": 0.451697042,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -287,12 +254,12 @@
         },
         {
           "phase": "Test",
-          "duration": 1.330145,
+          "duration": 0.751531417,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -341,10 +308,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.566922167,
+          "duration": 0.401888,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -354,12 +321,12 @@
         },
         {
           "phase": "Test",
-          "duration": 1.165271458,
+          "duration": 0.751863708,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -408,10 +375,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.057777459,
+          "duration": 0.451552375,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -421,10 +388,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.217890083,
+          "duration": 0.701839917,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -473,10 +440,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.257776916,
+          "duration": 0.40171525,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -486,10 +453,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.12685175,
+          "duration": 0.7017725,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -538,10 +505,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 2.939231917,
+          "duration": 0.401770083,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -551,10 +518,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.264895,
+          "duration": 0.701654,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -603,10 +570,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.316319625,
+          "duration": 0.451479042,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -616,10 +583,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.7159495,
+          "duration": 0.701834791,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -668,10 +635,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.5320883749999998,
+          "duration": 0.40158025,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -681,10 +648,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.3739715000000001,
+          "duration": 0.701758291,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -733,10 +700,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.844330625,
+          "duration": 0.401809041,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -746,10 +713,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.414533584,
+          "duration": 0.701547375,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -798,10 +765,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.280460542,
+          "duration": 0.401808333,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -811,10 +778,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.006297459,
+          "duration": 0.751563458,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -863,10 +830,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.056060291,
+          "duration": 0.4018055,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -876,10 +843,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.131511167,
+          "duration": 0.751561541,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -928,10 +895,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.257592208,
+          "duration": 0.401808084,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -941,10 +908,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.15944,
+          "duration": 0.751926792,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -993,10 +960,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.224557375,
+          "duration": 0.401476542,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -1006,10 +973,10 @@
         },
         {
           "phase": "Test",
-          "duration": 1.09613325,
+          "duration": 0.701837417,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -1058,10 +1025,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 2.481440709,
+          "duration": 0.401646375,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -1071,12 +1038,12 @@
         },
         {
           "phase": "Test",
-          "duration": 1.007811625,
+          "duration": 0.701628292,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -1125,10 +1092,10 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.369602833,
+          "duration": 0.401606375,
           "process_status": "Success",
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--no-run",
@@ -1138,12 +1105,615 @@
         },
         {
           "phase": "Test",
-          "duration": 1.7409382089999998,
+          "duration": 0.751857584,
           "process_status": {
             "Failure": 100
           },
           "argv": [
-            "cargo",
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: replace negate -> i64 with 0",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "negate",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 7
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401257959,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.751681459,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: replace negate -> i64 with 1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "negate",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 7
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401488083,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.701887041,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: replace negate -> i64 with -1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "negate",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 7
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401814791,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.752009708,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:16:5: delete - in negate",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "negate",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 15,
+                "column": 1
+              },
+              "end": {
+                "line": 17,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 16,
+              "column": 5
+            },
+            "end": {
+              "line": 16,
+              "column": 6
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_16_col_5_003.log",
+      "diff_path": "diff/src__lib.rs_line_16_col_5_003.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.501311834,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.751894167,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:20:5: replace triple -> i64 with 0",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "triple",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 5
+            },
+            "end": {
+              "line": 20,
+              "column": 10
+            }
+          },
+          "replacement": "0",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_20_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_20_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.451876458,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.701780916,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:20:5: replace triple -> i64 with 1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "triple",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 5
+            },
+            "end": {
+              "line": 20,
+              "column": 10
+            }
+          },
+          "replacement": "1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_20_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_20_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401577625,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.701569334,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:20:5: replace triple -> i64 with -1",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "triple",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 5
+            },
+            "end": {
+              "line": 20,
+              "column": 10
+            }
+          },
+          "replacement": "-1",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_20_col_5_002.log",
+      "diff_path": "diff/src__lib.rs_line_20_col_5_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.45147275,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.751759917,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:20:7: replace * with + in triple",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "triple",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 7
+            },
+            "end": {
+              "line": 20,
+              "column": 8
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_20_col_7.log",
+      "diff_path": "diff/src__lib.rs_line_20_col_7.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.551609625,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.751705375,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--verbose",
+            "--workspace"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/lib.rs:20:7: replace * with / in triple",
+          "package": "calc",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "triple",
+            "return_type": "-> i64",
+            "span": {
+              "start": {
+                "line": 19,
+                "column": 1
+              },
+              "end": {
+                "line": 21,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 7
+            },
+            "end": {
+              "line": 20,
+              "column": 8
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_20_col_7_001.log",
+      "diff_path": "diff/src__lib.rs_line_20_col_7_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401338,
+          "process_status": "Success",
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
+            "nextest",
+            "run",
+            "--no-run",
+            "--verbose",
+            "--workspace"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.75158125,
+          "process_status": {
+            "Failure": 100
+          },
+          "argv": [
+            "/HOME/.rustup/toolchains/nightly-2026-10-22-aarch64-apple-darwin/bin/cargo",
             "nextest",
             "run",
             "--verbose",
@@ -1153,13 +1723,13 @@
       ]
     }
   ],
-  "total_mutants": 17,
+  "total_mutants": 26,
   "missed": 10,
-  "caught": 7,
+  "caught": 16,
   "timeout": 0,
   "unviable": 0,
   "success": 0,
-  "start_time": "2026-11-18T17:32:51.004826Z",
-  "end_time": "2026-11-18T17:34:08.609398Z",
+  "start_time": "2026-11-22T02:26:57.677405Z",
+  "end_time": "2026-11-22T02:27:27.549031Z",
   "cargo_mutants_version": "27.1.0"
 }

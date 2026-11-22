@@ -10,3 +10,11 @@ def unused(x):
 
 def is_adult(age):
     return age >= 18
+
+
+def negate(x):
+    return -x
+
+
+def triple(x):
+    return x * 3

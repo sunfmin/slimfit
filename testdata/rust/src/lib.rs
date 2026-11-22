@@ -12,6 +12,14 @@ pub fn is_adult(age: u32) -> bool {
     age >= 18
 }
 
+pub fn negate(x: i64) -> i64 {
+    -x
+}
+
+pub fn triple(x: i64) -> i64 {
+    x * 3
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -29,6 +37,16 @@ mod tests {
     #[test]
     fn adult() {
         assert!(is_adult(30));
+    }
+
+    #[test]
+    fn negates() {
+        assert_eq!(negate(5), -5);
+    }
+
+    #[test]
+    fn triples() {
+        assert_eq!(triple(4), 12);
     }
 
     #[test]

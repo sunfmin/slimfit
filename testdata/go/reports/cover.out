@@ -1,4 +1,6 @@
 mode: set
-example.com/calc/calc.go:3.24,5.2 1 1
-example.com/calc/calc.go:7.24,11.2 3 0
-example.com/calc/calc.go:13.28,15.2 1 1
+example.com/calc/calc.go:4.2,5.1 1 1
+example.com/calc/calc.go:8.2,11.1 3 0
+example.com/calc/calc.go:14.2,15.1 1 1
+example.com/calc/calc.go:18.2,19.1 1 1
+example.com/calc/calc.go:22.2,23.1 1 1

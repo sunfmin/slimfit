@@ -4,5 +4,9 @@ test example.com/calc	TestAddsAgain
 example.com/calc/calc.go:4.2,5.1 1 1
 test example.com/calc	TestAdult
 example.com/calc/calc.go:14.2,15.1 1 1
+test example.com/calc	TestNegates
+example.com/calc/calc.go:18.2,19.1 1 1
+test example.com/calc	TestTriples
+example.com/calc/calc.go:22.2,23.1 1 1
 test example.com/calc	TestSlow
 example.com/calc/calc.go:4.2,5.1 1 1

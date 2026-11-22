@@ -817,7 +817,7 @@ pub(crate) mod t {
         std::fs::write(repo.join("src/new.rs"), "pub fn n() -> u8 {\n    1\n}\n").unwrap();
         let listed = candidates(repo, &cfg, &tree(repo)).unwrap();
         let first = &listed["rust"][0];
-        assert_eq!((listed["rust"].len(), first.file.as_str(), first.line), (17, "src/lib.rs", 2));
+        assert_eq!((listed["rust"].len(), first.file.as_str(), first.line), (26, "src/lib.rs", 2));
         assert_eq!((first.function.as_str(), first.replacement.as_str()), ("add", "0"));
         let diff = repo.join(OUT).join("rust/change.diff");
         let list = std::fs::read_to_string(repo.join(OUT).join("rust/list-args")).unwrap();

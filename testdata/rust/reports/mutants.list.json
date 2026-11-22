@@ -160,7 +160,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 0\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 0\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -192,7 +192,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with 1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -224,7 +224,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with -1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "diff": "--- src/lib.rs\n+++ replace unused -> i64 with -1\n@@ -1,16 +1,14 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n-    let doubled = x * 2;\n-    let shifted = doubled + 7;\n-    shifted / 3\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -320,7 +320,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace + with - in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled - /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n",
+    "diff": "--- src/lib.rs\n+++ replace + with - in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled - /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -352,7 +352,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace + with * in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled * /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n",
+    "diff": "--- src/lib.rs\n+++ replace + with * in unused\n@@ -1,15 +1,15 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n-    let shifted = doubled + 7;\n+    let shifted = doubled * /* ~ changed by cargo-mutants ~ */ 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -384,7 +384,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace / with % in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted % /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "diff": "--- src/lib.rs\n+++ replace / with % in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted % /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -416,7 +416,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace / with * in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted * /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "diff": "--- src/lib.rs\n+++ replace / with * in unused\n@@ -1,16 +1,16 @@\n pub fn add(a: i64, b: i64) -> i64 {\n     a + b\n }\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n-    shifted / 3\n+    shifted * /* ~ changed by cargo-mutants ~ */ 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "unused",
@@ -448,7 +448,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with true\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    true /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with true\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    true /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "is_adult",
@@ -480,7 +480,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with false\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    false /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "diff": "--- src/lib.rs\n+++ replace is_adult -> bool with false\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    false /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "is_adult",
@@ -512,7 +512,7 @@
     }
   },
   {
-    "diff": "--- src/lib.rs\n+++ replace >= with < in is_adult\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    age < /* ~ changed by cargo-mutants ~ */ 18\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "diff": "--- src/lib.rs\n+++ replace >= with < in is_adult\n@@ -4,17 +4,17 @@\n \n pub fn unused(x: i64) -> i64 {\n     let doubled = x * 2;\n     let shifted = doubled + 7;\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n-    age >= 18\n+    age < /* ~ changed by cargo-mutants ~ */ 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n",
     "file": "src/lib.rs",
     "function": {
       "function_name": "is_adult",
@@ -540,6 +540,294 @@
       "start": {
         "column": 9,
         "line": 12
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace negate -> i64 with 0\n@@ -8,17 +8,17 @@\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n-    -x\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "negate",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 17
+        },
+        "start": {
+          "column": 1,
+          "line": 15
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:16:5: replace negate -> i64 with 0",
+    "package": "calc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 7,
+        "line": 16
+      },
+      "start": {
+        "column": 5,
+        "line": 16
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace negate -> i64 with 1\n@@ -8,17 +8,17 @@\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n-    -x\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "negate",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 17
+        },
+        "start": {
+          "column": 1,
+          "line": 15
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:16:5: replace negate -> i64 with 1",
+    "package": "calc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 7,
+        "line": 16
+      },
+      "start": {
+        "column": 5,
+        "line": 16
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace negate -> i64 with -1\n@@ -8,17 +8,17 @@\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n-    -x\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "negate",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 17
+        },
+        "start": {
+          "column": 1,
+          "line": 15
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:16:5: replace negate -> i64 with -1",
+    "package": "calc",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 7,
+        "line": 16
+      },
+      "start": {
+        "column": 5,
+        "line": 16
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ delete - in negate\n@@ -8,17 +8,17 @@\n     shifted / 3\n }\n \n pub fn is_adult(age: u32) -> bool {\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n-    -x\n+     /* ~ changed by cargo-mutants ~ */x\n }\n \n pub fn triple(x: i64) -> i64 {\n     x * 3\n }\n \n #[cfg(test)]\n mod tests {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "negate",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 17
+        },
+        "start": {
+          "column": 1,
+          "line": 15
+        }
+      }
+    },
+    "genre": "UnaryOperator",
+    "name": "src/lib.rs:16:5: delete - in negate",
+    "package": "calc",
+    "replacement": "",
+    "span": {
+      "end": {
+        "column": 6,
+        "line": 16
+      },
+      "start": {
+        "column": 5,
+        "line": 16
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace triple -> i64 with 0\n@@ -12,17 +12,17 @@\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n-    x * 3\n+    0 /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "triple",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 21
+        },
+        "start": {
+          "column": 1,
+          "line": 19
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:20:5: replace triple -> i64 with 0",
+    "package": "calc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 20
+      },
+      "start": {
+        "column": 5,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace triple -> i64 with 1\n@@ -12,17 +12,17 @@\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n-    x * 3\n+    1 /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "triple",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 21
+        },
+        "start": {
+          "column": 1,
+          "line": 19
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:20:5: replace triple -> i64 with 1",
+    "package": "calc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 20
+      },
+      "start": {
+        "column": 5,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace triple -> i64 with -1\n@@ -12,17 +12,17 @@\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n-    x * 3\n+    -1 /* ~ changed by cargo-mutants ~ */\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "triple",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 21
+        },
+        "start": {
+          "column": 1,
+          "line": 19
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/lib.rs:20:5: replace triple -> i64 with -1",
+    "package": "calc",
+    "replacement": "-1",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 20
+      },
+      "start": {
+        "column": 5,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with + in triple\n@@ -12,17 +12,17 @@\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n-    x * 3\n+    x + /* ~ changed by cargo-mutants ~ */ 3\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "triple",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 21
+        },
+        "start": {
+          "column": 1,
+          "line": 19
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:20:7: replace * with + in triple",
+    "package": "calc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 20
+      },
+      "start": {
+        "column": 7,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- src/lib.rs\n+++ replace * with / in triple\n@@ -12,17 +12,17 @@\n     age >= 18\n }\n \n pub fn negate(x: i64) -> i64 {\n     -x\n }\n \n pub fn triple(x: i64) -> i64 {\n-    x * 3\n+    x / /* ~ changed by cargo-mutants ~ */ 3\n }\n \n #[cfg(test)]\n mod tests {\n     use super::*;\n \n     #[test]\n     fn adds() {\n",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "triple",
+      "return_type": "-> i64",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 21
+        },
+        "start": {
+          "column": 1,
+          "line": 19
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "src/lib.rs:20:7: replace * with / in triple",
+    "package": "calc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 8,
+        "line": 20
+      },
+      "start": {
+        "column": 7,
+        "line": 20
       }
     }
   }

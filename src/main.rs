@@ -521,7 +521,7 @@ mod answer_tests {
         // `next` asks for the picks first, with the candidates to pick from.
         let (next, _) = slimfit(repo, "next").unwrap();
         assert_eq!(next["task"]["kind"], "pick-mutants", "{next:#}");
-        assert_eq!(next["task"]["evidence"]["candidates"].as_array().unwrap().len(), 17, "{next:#}");
+        assert_eq!(next["task"]["evidence"]["candidates"].as_array().unwrap().len(), 26, "{next:#}");
         let (listed, code) = slimfit(repo, "check --mutants").unwrap();
         assert_eq!((listed["candidates"]["rust"][16]["name"].as_str(), code), (Some(killed), 0));
         // Committing it changes nothing: the change is the branch's, not the working tree's.
@@ -691,18 +691,18 @@ mod answer_tests {
         let v = &out["verdict"]["violations"][0];
         assert_eq!(v["current"].as_f64(), Some(1.0), "{v:#}");
         assert!(v["fix"].as_str().unwrap().starts_with("the change removes 1 test(s) since "), "{v:#}");
-        assert_eq!(out["landing"]["removed_tests"], json!({ "rust": ["src/lib.rs:30: adult"] }), "{out:#}");
+        assert_eq!(out["landing"]["removed_tests"], json!({ "rust": ["src/lib.rs:38: adult"] }), "{out:#}");
         // `next` asks for picks over what `adult` ran, `is_adult`'s lines; the tool is given those lines.
         let (next, _) = slimfit(repo, "next").unwrap();
         let task = &next["task"];
         assert_eq!(
             (task["kind"].as_str(), &task["evidence"]["removed_tests"]),
-            (Some("pick-mutants"), &json!(["src/lib.rs:30: adult"]))
+            (Some("pick-mutants"), &json!(["src/lib.rs:38: adult"]))
         );
         let candidates = task["evidence"]["candidates"].as_array().unwrap();
         let named: Vec<u64> = candidates
             .iter()
-            .filter(|c| c["removed_tests"] == json!(["src/lib.rs:30: adult"]))
+            .filter(|c| c["removed_tests"] == json!(["src/lib.rs:38: adult"]))
             .map(|c| c["line"].as_u64().unwrap())
             .collect();
         assert_eq!(named, [12, 12, 12], "{task:#}");
@@ -730,13 +730,13 @@ mod answer_tests {
         let (listed, _) = slimfit(repo, "check --mutants").unwrap();
         let pick =
             listed["candidates"]["rust"].as_array().unwrap().iter().find(|c| c["name"] == killed).unwrap().clone();
-        assert_eq!(pick["removed_tests"], json!(["src/lib.rs:25: adds_again"]), "{listed:#}");
+        assert_eq!(pick["removed_tests"], json!(["src/lib.rs:33: adds_again"]), "{listed:#}");
         let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the sum"]).unwrap();
         assert_eq!(code, crate::EXIT_OK, "{out:#}");
         let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();
         let record = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
         let record: Value = serde_json::from_str(&record).unwrap();
-        assert_eq!(record["removed_tests"], json!({ "rust": ["src/lib.rs:25: adds_again"] }), "{record:#}");
+        assert_eq!(record["removed_tests"], json!({ "rust": ["src/lib.rs:33: adds_again"] }), "{record:#}");
         assert_eq!(record["picks"]["rust"][0]["outcome"], "killed", "{record:#}");
         git(repo, &["add", "-A"]);
         git(repo, &["commit", "-qm", "b"]);
@@ -973,7 +973,7 @@ mod answer_tests {
         git(repo, &["commit", "-qam", "cut"]);
         git(repo, &["branch", "-f", "target"]);
 
-        let (out, code) = slimfit(repo, "next --all --sample 20").unwrap();
+        let (out, code) = slimfit(repo, "next --all --sample 25").unwrap();
         assert_eq!(code, 0, "{out:#}");
         let tasks = out["tasks"].as_array().unwrap();
         let of = |kind: &str| tasks.iter().filter(|t| t["kind"] == kind).collect::<Vec<_>>();
@@ -990,16 +990,16 @@ mod answer_tests {
         let text = record[0]["evidence"]["text"].as_str().unwrap();
         let sample: crate::measure::sample::Sample = serde_json::from_str(text).unwrap();
         let drawn: Vec<&str> = sample.drawn["rust"].iter().map(|d| d.name.as_str()).collect();
-        assert_eq!((drawn.len(), sample.pool), (16, 16), "{text}");
+        assert_eq!((drawn.len(), sample.pool), (25, 25), "{text}");
         assert_eq!(sample.from, adopt, "{text}");
         assert!(!drawn.contains(&killed), "{drawn:?}");
         // Every viable one ran in the first round: none is unviable in the fixture.
         assert_eq!(sample.counts().unviable, 0);
         // The same tip draws the same, from the cache or not.
-        let (again, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        let (again, _) = slimfit(repo, "next --all --sample 25").unwrap();
         assert_eq!(again["tasks"], out["tasks"]);
         std::fs::remove_file(repo.join(".slimfit/out/sample.json")).unwrap();
-        let (fresh, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        let (fresh, _) = slimfit(repo, "next --all --sample 25").unwrap();
         assert_eq!(fresh["tasks"], out["tasks"]);
         // Never a bound: `check` passes with the sampled survivors outstanding.
         let (held, code) = slimfit(repo, "check").unwrap();
@@ -1017,8 +1017,8 @@ mod answer_tests {
         let (report, _) = slimfit(repo, "report --points 1").unwrap();
         let survival = &report["history"][0]["mutants_survival"];
         assert_eq!((survival["picker"]["ran"].as_u64(), survival["picker"]["survived"].as_u64()), (Some(1), Some(0)));
-        assert_eq!(survival["sampled"]["ran"].as_u64(), Some(16), "{survival:#}");
-        let (next, _) = slimfit(repo, "next --all --sample 20").unwrap();
+        assert_eq!(survival["sampled"]["ran"].as_u64(), Some(25), "{survival:#}");
+        let (next, _) = slimfit(repo, "next --all --sample 25").unwrap();
         assert!(next["tasks"].as_array().unwrap().iter().all(|t| t["evidence"]["source"] != "sampled"), "{next:#}");
         assert!(next["notes"][0].as_str().unwrap().contains("of 0 mutants"), "{next:#}");
     }
