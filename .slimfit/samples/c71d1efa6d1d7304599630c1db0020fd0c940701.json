@@ -1,0 +1,29 @@
+{
+  "tip": "c71d1efa6d1d7304599630c1db0020fd0c940701",
+  "from": "79dfb3c2a0cb14a6c97f62b4542111217d5f3b84",
+  "pool": 448,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/main.rs:55:5: replace run -> Result<(serde_json::Value, i32)> with Ok((Default::default(), 0))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:228:13: replace && with || in KeptSpan::holds",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/measure/mutants.rs:345:5: replace adding -> Result<String> with Ok(\"xyzzy\".into())",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/go_source.rs:31:5: replace func_text -> Option<String> with Some(String::new())",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:514:76: delete ! in slow",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
