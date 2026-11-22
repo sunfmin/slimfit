@@ -614,6 +614,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let k = &mutant["kept_mutants"][0];
     assert_eq!((&k["mutant"], k["hash"].is_string()), (&"src/lib.rs: replace >= with < in is_adult".into(), true));
     s.error(&["keep", "--mutant", "no place", "--reason", "r"], &["is not a mutant's name"]);
+    s.error(&["keep", "--mutant", "src/lib.rs:1:1: x", "--kind", "slow-test", "--reason", "r"], &["--kind"]);
     s.error(&["keep", "--mutant", "nope.rs:1:1: x", "--reason", "r"], &["no suite counts nope.rs"]);
     assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);

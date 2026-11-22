@@ -271,10 +271,9 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                      it is kept in the baseline",
                 ));
             };
-            match (test, mutant) {
-                (_, Some(mutant)) => keep_mutant(&mut s, mutant, kind, reason)?,
-                (Some(test), None) => keep(&mut s, test, kind, reason)?,
-                (None, None) => unreachable!("clap requires one"),
+            match mutant {
+                Some(mutant) => keep_mutant(&mut s, mutant, reason)?,
+                None => keep(&mut s, test.unwrap_or_default(), kind, reason)?,
             }
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
             Ok((
@@ -382,11 +381,7 @@ fn gitignore(text: &str) -> String {
 /// Records in `s`'s baseline that mutant `name` is equivalent, for
 /// `reason`, against its function's text now, in place of an earlier
 /// verdict on it. Reads its file, and measures nothing.
-fn keep_mutant(s: &mut Session, name: String, kind: ratchet::KeepKind, reason: String) -> Result<()> {
-    if kind != ratchet::KeepKind::RedundantTest {
-        let fix = "drop `--kind`: it is a test's, and `--mutant` keeps a mutant";
-        return Err(fault::fault("--kind with --mutant", fix));
-    }
+fn keep_mutant(s: &mut Session, name: String, reason: String) -> Result<()> {
     let Some((file, line)) = model::placed(&name) else {
         return Err(fault::fault(
             format!("`{name}` is not a mutant's name: `<file>:<line>:<column>: <change>`"),

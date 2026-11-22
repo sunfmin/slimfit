@@ -356,7 +356,7 @@ pub(crate) enum Cmd {
         #[arg(long, value_name = "NAME", conflicts_with = "test", verbatim_doc_comment)]
         mutant: Option<String>,
         /// The kind of task a test's keep answers.
-        #[arg(long, value_enum, default_value = "redundant-test", verbatim_doc_comment)]
+        #[arg(long, value_enum, default_value = "redundant-test", conflicts_with = "mutant", verbatim_doc_comment)]
         kind: ratchet::KeepKind,
         /// Why it stays: what the test checks that the other does not, what its time checks, why the module is deep enough, what the span runs against that no fast test can, or why no input tells the mutant from the original; kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
