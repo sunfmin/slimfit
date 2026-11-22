@@ -146,7 +146,7 @@ pub(crate) enum Cmd {
     /// - `justify-growth`: `lines`, the source lines the change adds net; `allowance`, `growth_allowance`; `from`, where the change starts (`git diff <from>` is the diff the reviewer is given); and `grown`, each file whose source lines changed, with its `lines` (net, negative for a file that shrank), most first.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, `function`, when known, and `hash`, of its lines' text. A span kept (`slimfit keep <file>:<start>-<end>`: it runs only against the real host or the real program, so a fast test could only run it) is not proposed while it is the same lines of the same function, their text unchanged.
     /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs, and some of them past both binaries' shared setup: a test of setup alone is no candidate; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds`, `lines` (how many source lines it runs) and `class`, read from both tests' text with tree-sitter ({const:SHAPED}): `asserts-contained` (a `subset` that asserts, and whose every statement, its assertions and the setup they check, `other_test` makes too, as written: delete it), `same-shape` (its body is another test's of the file but for literals: one table-driven test, with `group`, its index in `groups`) or `read` (the rest: the assertions decide); and `groups`, each a table-driven test's rows: a `test` and its `literals` that differ between the rows, in order. A test kept leaves its file's task.
-    /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
+    /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`. A test kept as slow (`slimfit keep <test> --kind slow-test`) is not proposed while its text is unchanged and its `seconds` within {const:KEPT_SLOWDOWN_TIMES} × those kept.
     /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
     /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
@@ -300,21 +300,21 @@ pub(crate) enum Cmd {
         #[command(flatten)]
         growth: Box<GrowthArgs>,
     },
-    /// Records that a candidate is kept as it is: a redundant test, a file a deepen task proposed, or an uncovered span. It is not proposed again until it changes as below.
+    /// Records that a candidate is kept as it is: a redundant test, a slow test, a file a deepen task proposed, or an uncovered span. It is not proposed again until it changes as below.
     ///
     /// ## When to run it
     ///
-    /// When a `redundant-test`, `deepen` or `uncovered` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over; the module is already deep enough and nothing is worth changing; or the span runs only against the real host or the real program (a binary's `main` under the tests that spawn it, which coverage does not record), so a fast test could only run it without asserting what it decides. Then commit `.slimfit/baseline.json`.
+    /// When a `redundant-test`, `slow-test`, `deepen` or `uncovered` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over; the test's time is what it checks (a real process, a real timeout, a real host program), so making it cheaper would test less (`--kind slow-test`); the module is already deep enough and nothing is worth changing; or the span runs only against the real host or the real program (a binary's `main` under the tests that spawn it, which coverage does not record), so a fast test could only run it without asserting what it decides. Then commit `.slimfit/baseline.json`.
     ///
-    /// A keep answers one kind of task, and the verdicts of different kinds never stand in for each other: a test kept as not redundant is still a slow-test candidate.
+    /// A keep answers one kind of task, and the verdicts of different kinds never stand in for each other: a test kept as not redundant is still a slow-test candidate, and one kept as slow is still a redundant-test candidate.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. `<file>:<start>-<end>` (an uncovered task's summary names it so) is a span kept: it reads the measurement (as for a test, below) for an uncovered span with those lines, its function and a hash of its lines' text. A path to one of a suite's source files is a file kept: it reads the file's prod lines and its git history, and measures nothing. Anything else is a test: it reads the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept` (the test, that hash and the reason), `kept_files` (the file, its size and churn now, and the reason) or `kept_spans` (the span, its function, that hash and the reason), replacing an earlier verdict on the same test, file or span.
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. `<file>:<start>-<end>` (an uncovered task's summary names it so) is a span kept: it reads the measurement (as for a test, below) for an uncovered span with those lines, its function and a hash of its lines' text. A path to one of a suite's source files is a file kept: it reads the file's prod lines and its git history, and measures nothing. Anything else is a test: it reads the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept` (the test, its `--kind`, that hash, for `slow-test` its CPU seconds now, and the reason), `kept_files` (the file, its size and churn now, and the reason) or `kept_spans` (the span, its function, that hash and the reason), replacing an earlier verdict on the same test (of the same kind), file or span.
     ///
     /// When it is proposed again:
     ///
-    /// - A test: when its text changes. `slimfit ratchet` drops a verdict whose test changed or is gone.
+    /// - A test: when its text changes; kept as slow, also once its CPU seconds pass {const:KEPT_SLOWDOWN_TIMES} × those kept. `slimfit ratchet` drops a verdict whose test changed or is gone.
     /// - A span: when a line of it changes, or the uncovered span grows past (or shrinks within) the kept lines, or it moves, or its function's name changes. `slimfit ratchet` drops a verdict no uncovered span of its suite matches any more.
     /// - A file: once its prod lines grow by {const:KEPT_GROWTH} of `prod_lines`, or {const:KEPT_CHURN} × `commits_90d` commits more change it (counted against `commits_total`), and it is still a deepen candidate. Keeping it again records its size and churn then.
     ///
@@ -330,8 +330,9 @@ pub(crate) enum Cmd {
     /// It writes nothing when it refuses.
     ///
     /// - No `--reason`.
+    /// - `--kind slow-test` for a span or a file.
     /// - A span no suite's coverage leaves uncovered, as named (its lines are an uncovered task's, `start` to `end`), with its lines' hash (a measurement from before spans were hashed has none: measure afresh).
-    /// - No suite's test run recorded the test (its `test` id is a redundant-test task's `test`), and no suite counts it as a source file.
+    /// - No suite's test run recorded the test (its `test` id is a redundant-test or slow-test task's `test`; only a run that records which tests run each function does), and no suite counts it as a source file.
     /// - Its own function was not found, so there is no text to hold the verdict to.
     /// - {const:MEASURE_REFUSALS}
     ///
@@ -344,10 +345,13 @@ pub(crate) enum Cmd {
     Keep {
         #[command(flatten)]
         at: At,
-        /// The test kept (a redundant-test task's `test`), the file kept (a deepen task's `file`) or the span kept (an uncovered task's `<file>:<start>-<end>`).
+        /// The test kept (a redundant-test or slow-test task's `test`), the file kept (a deepen task's `file`) or the span kept (an uncovered task's `<file>:<start>-<end>`).
         #[arg(verbatim_doc_comment)]
         test: String,
-        /// Why it stays: what the test checks that the other does not, why the module is deep enough, or what the span runs against that no fast test can; kept in the baseline.
+        /// The kind of task a test's keep answers.
+        #[arg(long, value_enum, default_value = "redundant-test", verbatim_doc_comment)]
+        kind: ratchet::KeepKind,
+        /// Why it stays: what the test checks that the other does not, what its time checks, why the module is deep enough, or what the span runs against that no fast test can; kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
     },
@@ -539,6 +543,7 @@ fn help() -> Help {
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
         .constant("KEPT", ratchet::KEPT_HELP)
+        .constant("KEPT_SLOWDOWN_TIMES", 1.0 + ratchet::KEPT_SLOWDOWN)
         .constant("KEPT_FILE", ratchet::KEPT_FILE_HELP)
         .constant("KEPT_SPAN", ratchet::KEPT_SPAN_HELP)
         .constant("KEPT_GROWTH", format!("{:.0}%", ratchet::KEPT_GROWTH * 100.0))

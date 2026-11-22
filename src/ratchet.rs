@@ -19,8 +19,9 @@ pub struct Baseline {
     /// Every time a bound was raised, and why.
     #[serde(default)]
     pub loosened: Vec<Loosening>,
-    /// Redundant-test candidates the agent decided to keep (`slimfit keep`),
-    /// each against its test's text: not proposed again until it changes.
+    /// Tests the agent decided to keep as redundant-test or slow-test
+    /// candidates (`slimfit keep`), each against its test's text: not
+    /// proposed again as that kind until it changes ([`Kept::keeps`]).
     /// Written even when empty, so `report`'s history tells none kept from
     /// a baseline older than verdicts.
     #[serde(default)]
@@ -114,19 +115,53 @@ impl Measured {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Kept {
     pub suite: String,
     pub test: String,
+    /// The kind of task it answers; a baseline from before kinds holds
+    /// only redundant-test verdicts.
+    #[serde(default, skip_serializing_if = "KeepKind::is_redundant")]
+    pub kind: KeepKind,
     /// The hash of the test's text when it was kept (`TestSource::hash`).
     pub hash: String,
+    /// Its CPU seconds when kept: a slow-test verdict's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<f64>,
     pub reason: String,
 }
 
+/// The kinds of task a test's keep answers.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum KeepKind {
+    #[default]
+    RedundantTest,
+    SlowTest,
+}
+
+impl KeepKind {
+    fn is_redundant(&self) -> bool {
+        *self == KeepKind::RedundantTest
+    }
+}
+
+/// How much a slow test kept may slow down before it is proposed again:
+/// half as much again.
+pub const KEPT_SLOWDOWN: f64 = 0.5;
+
 impl Kept {
-    /// Whether this verdict still holds for test `test` of `suite` as it is now.
+    /// Whether this verdict's test is `test` of `suite`, its text unchanged.
     pub fn holds(&self, suite: &str, test: &ReachTest) -> bool {
         self.suite == suite && self.test == test.id() && test.source.as_ref().is_some_and(|s| s.hash == self.hash)
+    }
+
+    /// Whether it keeps `test` of `suite`, now taking `cpu` seconds, from
+    /// `kind`'s tasks.
+    pub fn keeps(&self, kind: KeepKind, suite: &str, test: &ReachTest, cpu: f64) -> bool {
+        self.kind == kind
+            && self.holds(suite, test)
+            && self.seconds.is_none_or(|kept| cpu <= kept * (1.0 + KEPT_SLOWDOWN))
     }
 }
 
@@ -194,7 +229,7 @@ pub const KEPT_SPAN_HELP: &str = "each with `suite`, `file`, `start`, `end`, `fu
 pub const KEPT_FILE_HELP: &str = "each with `suite`, `file`, its `prod_lines`, `commits_90d` and `commits_total` (every commit that changed it) when kept, and `reason`";
 
 /// What a [`Kept`] prints, as the command pages name it.
-pub const KEPT_HELP: &str = "each with `suite`, `test`, `hash` (of the test's text when kept) and `reason`";
+pub const KEPT_HELP: &str = "each with `suite`, `test`, `kind` (`slow-test`; absent for `redundant-test`), `hash` (of the test's text when kept), `seconds` (its CPU seconds when kept, for `slow-test`) and `reason`";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Loosening {
@@ -781,6 +816,7 @@ mod t {
             test: format!("b::{name}"),
             hash: "h".into(),
             reason: "r".into(),
+            ..Kept::default()
         };
         let span = |start, hash: &str| Span {
             file: "src/a.rs".into(),

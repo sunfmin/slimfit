@@ -6,7 +6,7 @@ use crate::git;
 use crate::landing::{SuiteTree, Tree};
 use crate::loc::Kind;
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement, TestSource};
-use crate::ratchet::{Baseline, Kept, KeptFile, KeptSpan, Measured};
+use crate::ratchet::{Baseline, KeepKind, Kept, KeptFile, KeptSpan, Measured};
 use crate::test_shape::Shape;
 use anyhow::Result;
 use serde::Serialize;
@@ -32,7 +32,7 @@ pub enum TaskKind {
     /// Coverage proposes a test whose every source line another test runs too, some past both binaries' shared setup (a test of setup alone, such as one reading a shipped file, gives coverage no evidence), or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate as its `class` says: delete it (`asserts-contained`), merge its group into one table-driven test (`same-shape`), or by both tests' assertions delete it, merge the two, or keep it (`slimfit keep`) (`read`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
     #[value(verbatim_doc_comment)]
     RedundantTest,
-    /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
+    /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones. A test whose time is what it checks (a real process, a real timeout, a real host program), so that cheaper would test less: keep it (`slimfit keep <test> --kind slow-test`).
     #[value(verbatim_doc_comment)]
     SlowTest,
     /// A trend rose over the suite's last landings (first-parent commits that wrote the baseline, at most {const:TREND_LANDINGS} back, at least {const:TREND_MIN} of them): `uncovered_lines` as measured, from the first to the last, by more than `coverage_slack`, or `test_seconds` by more than {const:TIME_NOISE} (load moves CPU time nearly that far on an unchanged tree). The baseline keeps the lowest, so no `check` sees a run of rises: this task is how it shows, and no bound holds it. `evidence.landings` names them; `evidence.spans` the uncovered spans holding a line added since the first, or `evidence.tests` the tests in files changed since, slowest first. Lower it as an `uncovered` or `slow-test` task says, or judge the rise worth what it bought and leave it: the task goes once the landings no longer rise.
@@ -141,7 +141,7 @@ pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Basel
 /// which reads git history), less the uncovered spans and redundant tests
 /// `base` keeps.
 pub fn of_measurement(s: &SuiteMeasurement, base: &Baseline) -> Vec<Task> {
-    [failing(s), uncovered(s, &base.kept_spans), redundant(s, &base.kept), slow(s), surviving(s)].concat()
+    [failing(s), uncovered(s, &base.kept_spans), redundant(s, &base.kept), slow(s, &base.kept), surviving(s)].concat()
 }
 
 fn failing(s: &SuiteMeasurement) -> Vec<Task> {
@@ -338,7 +338,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     type File = (f64, BTreeSet<String>, Vec<(f64, Value)>);
     let mut by_file: BTreeMap<String, File> = BTreeMap::new();
     for ((t, mine, secs), mine_own) in lines.iter().zip(&own) {
-        if at(t).is_some_and(|rt| kept.iter().any(|k| k.holds(&s.suite, rt))) {
+        if at(t).is_some_and(|rt| kept.iter().any(|k| k.keeps(KeepKind::RedundantTest, &s.suite, rt, *secs))) {
             continue;
         }
         // The other test with the most overlap; its share and whether it runs all of mine.
@@ -485,9 +485,17 @@ pub fn candidates(tasks: &[Task]) -> usize {
     tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).map(of).sum()
 }
 
-fn slow(s: &SuiteMeasurement) -> Vec<Task> {
+/// A task per test that takes a large share of the suite's CPU time, less
+/// those `kept` as slow, unchanged and not much slower since.
+fn slow(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     let total = s.metrics.test_seconds;
-    let mut tests: Vec<_> = s.tests.iter().filter(|t| t.cpu >= 0.5 && t.cpu >= total * 0.05).collect();
+    let reach = s.reach.as_ref().map_or(&[][..], |r| &r.tests);
+    let held = |id: &str, cpu| {
+        let rt = reach.iter().find(|rt| rt.id() == id);
+        rt.is_some_and(|rt| kept.iter().any(|k| k.keeps(KeepKind::SlowTest, &s.suite, rt, cpu)))
+    };
+    let mut tests: Vec<_> =
+        s.tests.iter().filter(|t| t.cpu >= 0.5 && t.cpu >= total * 0.05 && !held(&t.id, t.cpu)).collect();
     tests.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
     tests
         .into_iter()
@@ -499,7 +507,9 @@ fn slow(s: &SuiteMeasurement) -> Vec<Task> {
             evidence: json!({ "test": t.id, "seconds": t.cpu, "suite_seconds": total }),
             steps: "Find where the time goes (sleeps, real network or disk, process spawns, large fixtures, repeated setup). \
                     Make it cheaper without testing less: shrink the input, share setup, replace a slow dependency with an in-memory adapter at an existing seam. \
-                    If it overlaps faster tests, merge or delete it."
+                    If it overlaps faster tests, merge or delete it. \
+                    KEEP it when its time is what it checks (a real process, a real timeout, a real host program), so making it cheaper would test less (`slimfit keep --help` says when): \
+                    `slimfit keep <test> --kind slow-test --reason \"<what its time checks>\"` (this task's `test`), then commit `.slimfit/baseline.json`."
                 .into(),
             accept: TaskKind::SlowTest.accept().into(),
         })
@@ -912,6 +922,40 @@ mod t {
         assert_eq!((tests, files), (json!([{ "test": "t::fast", "seconds": 0.1 }]), vec!["tests/fast.rs".to_string()]));
     }
 
+    /// A slow test kept as slow is not proposed as slow while its text is
+    /// unchanged and its CPU time within 1.5x of what was kept, and is still
+    /// a redundant-test candidate; a test kept as redundant is still slow.
+    #[test]
+    fn a_test_kept_as_slow_returns_once_its_text_changes_or_it_slows_down() {
+        let s = |cpu| SuiteMeasurement {
+            metrics: Metrics { test_seconds: cpu + 0.1, ..Metrics::default() },
+            ..suite([
+                ("slow", cpu, (1..=5).collect()),
+                ("wide", 0.1, (1..=10).collect()),
+                ("apart", 0.1, (40..=45).collect()),
+                ("far", 0.1, (50..=55).collect()),
+            ])
+        };
+        let kept = |kind, hash: &str| Kept {
+            suite: "s".into(),
+            test: "t::slow".into(),
+            kind,
+            hash: hash.into(),
+            seconds: (kind == KeepKind::SlowTest).then_some(2.0),
+            reason: "r".into(),
+        };
+        let kinds = |cpu, k: Kept| {
+            let base = Baseline { kept: vec![k], ..Baseline::default() };
+            of_measurement(&s(cpu), &base).iter().map(|t| t.kind).collect::<Vec<_>>()
+        };
+        let (redundant, slow) = (TaskKind::RedundantTest, TaskKind::SlowTest);
+        assert_eq!(kinds(2.0, kept(KeepKind::SlowTest, "h")), [redundant]);
+        assert_eq!(kinds(3.0, kept(KeepKind::SlowTest, "h")), [redundant]);
+        assert_eq!(kinds(3.01, kept(KeepKind::SlowTest, "h")), [redundant, slow]);
+        assert_eq!(kinds(2.0, kept(KeepKind::SlowTest, "edited")), [redundant, slow]);
+        assert_eq!(kinds(2.0, kept(KeepKind::RedundantTest, "h")), [slow]);
+    }
+
     /// A failing test is a task, with the log to read; a passing one is not.
     #[test]
     fn a_failing_test_is_a_task_with_its_log() {
@@ -962,7 +1006,7 @@ mod t {
         assert_eq!(tasks[0].files, ["tests/a.rs", "tests/b.rs"]);
         assert_eq!(candidates(&tasks), 4);
         // A kept test leaves its file's task; a file with none left has none.
-        let keep = |test: &str| Kept { suite: "s".into(), test: test.into(), hash: "h".into(), reason: "r".into() };
+        let keep = |test: &str| Kept { suite: "s".into(), test: test.into(), hash: "h".into(), ..Kept::default() };
         let left = redundant(&s, &[keep("t::lone")]);
         assert_eq!((left.len(), candidates(&left)), (1, 3));
         assert_eq!(candidates(&redundant(&s, &[keep("t::two_again")])), 3);
@@ -1073,7 +1117,7 @@ mod t {
             suite: suite.into(),
             test: "t::near2".into(),
             hash: hash.into(),
-            reason: "r".into(),
+            ..Kept::default()
         };
         assert_eq!(got(&[keep("s", "h")]).len(), 2);
         assert_eq!(got(&[keep("s", "changed")]).len(), 3);

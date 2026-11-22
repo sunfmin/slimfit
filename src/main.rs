@@ -256,7 +256,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Keep { test, reason, .. } => {
+        Cmd::Keep { test, kind, reason, .. } => {
             let mut s = Session::open(&repo)?;
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
@@ -265,7 +265,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                      it is kept in the baseline",
                 ));
             };
-            keep(&mut s, test, reason)?;
+            keep(&mut s, test, kind, reason)?;
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
             Ok((
                 json!({
@@ -369,9 +369,18 @@ fn gitignore(text: &str) -> String {
 }
 
 /// Records in `s`'s baseline that `at` (a span, a source file or a test)
-/// is kept, for `reason`, in place of an earlier verdict on it.
-fn keep(s: &mut Session, at: String, reason: String) -> Result<()> {
+/// is kept, for `reason`, in place of an earlier verdict on it (a test's
+/// of the same `kind`).
+fn keep(s: &mut Session, at: String, kind: ratchet::KeepKind, reason: String) -> Result<()> {
+    let test_only = || {
+        let fix = "drop `--kind slow-test`: it keeps a test, by a slow-test task's `test`";
+        Err(fault::fault(format!("--kind slow-test keeps a test, and {at} is a span or a source file"), fix))
+    };
+    let slow = kind == ratchet::KeepKind::SlowTest;
     if let Some((file, start, end)) = span_at(&at) {
+        if slow {
+            return test_only();
+        }
         let m = s.measure(Default::default())?;
         let found = m.suites.iter().find_map(|m| {
             let sp = m.uncovered.iter().find(|sp| (sp.file.as_str(), sp.start, sp.end) == (file, start, end))?;
@@ -391,6 +400,9 @@ fn keep(s: &mut Session, at: String, reason: String) -> Result<()> {
         return Ok(());
     }
     if let Some((suite, prod_lines)) = tasks::source_suite(&s.tree, &s.cfg, &at)? {
+        if slow {
+            return test_only();
+        }
         let (commits_90d, commits_total) = tasks::churn(&s.repo, &at);
         s.base.kept_files.retain(|k| !(k.suite == suite && k.file == at));
         s.base.kept_files.push(ratchet::KeptFile { suite, file: at, prod_lines, commits_90d, commits_total, reason });
@@ -399,12 +411,13 @@ fn keep(s: &mut Session, at: String, reason: String) -> Result<()> {
     let m = s.measure(Default::default())?;
     let found = m.suites.iter().find_map(|s| {
         let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == at)?;
-        Some((s.suite.clone(), t.source.clone()))
+        let cpu = s.tests.iter().find(|c| c.id == at).map_or(0.0, |c| c.cpu);
+        Some((s.suite.clone(), t.source.clone(), cpu))
     });
-    let Some((suite, source)) = found else {
+    let Some((suite, source, cpu)) = found else {
         return Err(fault::fault(
             format!("no suite's test run recorded a test {at}, and no suite counts it as a source file"),
-            "name it as the redundant-test task's `test` or the deepen task's `file` does: \
+            "name it as the redundant-test or slow-test task's `test` or the deepen task's `file` does: \
              `slimfit next --all --kind redundant-test` (or `--kind deepen`) lists them",
         ));
     };
@@ -414,8 +427,9 @@ fn keep(s: &mut Session, at: String, reason: String) -> Result<()> {
             "delete or merge it instead, as the task's steps say",
         ));
     };
-    s.base.kept.retain(|k| !(k.suite == suite && k.test == at));
-    s.base.kept.push(ratchet::Kept { suite, test: at, hash: source.hash, reason });
+    s.base.kept.retain(|k| !(k.suite == suite && k.test == at && k.kind == kind));
+    let seconds = slow.then_some(cpu);
+    s.base.kept.push(ratchet::Kept { suite, test: at, kind, hash: source.hash, seconds, reason });
     Ok(())
 }
 
