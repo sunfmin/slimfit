@@ -14,8 +14,9 @@ finishes fast, and finds redundant tests another way, with no mutants.
 
 ### No run mutates the whole codebase
 
-- The only mutants run are a change's: the mutants in the lines it adds,
-  and of those only the ones the agent picks (ADR 0008). Their number
+- The only mutants run are a change's: the mutants in the lines it adds
+  and in the lines the tests it removes ran, and of those only the ones a
+  second agent picks (ADR 0008). Their number
   follows the change, never the codebase.
 - **Lines, not files.** A suite's tool is given the change's diff
   (cargo-mutants `--in-diff`); the mutants of a whole file the change
@@ -122,7 +123,10 @@ Together they fit: coverage proposes, the review decides.
      checks), or merging would hide which behaviour failed.
 3. **Accept**: plain `slimfit check`: failures 0; its answer shows no
    new uncovered span and test time not up (and for a merge, down), as
-   trends the agent reads, not bounds (ADR 0009). No mutant runs.
+   trends the agent reads, not bounds (ADR 0009). A delete or a merge
+   removes a test, so it owes picks over the lines that test ran, run
+   against the tests left (ADR 0008, slimfit#87): the check that the
+   assertion mapping missed nothing a mutant shows.
 
 **Per-test lines, for Rust.** The Rust preset's test run gives every test
 its own coverage profiles (ADR 0007). After the run each test's profiles
@@ -152,10 +156,10 @@ cannot be kept: `keep` refuses, and the steps leave delete or merge.
 
 - No command can run for hours on a codebase's size. A large change still
   costs its own picked mutants.
-- What a deleted test killed in unchanged code is seen by nothing: a
-  deletion adds no line. Redundant-test deletions rest on the assertion
-  mapping, not on mutants. A test changed outside source files is likewise
-  not seen by the mutants of unchanged code.
+- What a deleted test killed in unchanged code is seen through the picks
+  over the lines it ran (ADR 0008), not every mutant of them. A test
+  changed in place, outside source files, is not seen by the mutants of
+  unchanged code.
 - Go, Swift, Kotlin and TypeScript suites run no mutants until their tool
   can be given a diff and a mutant's name. Their readers stay, for that.
 - Old files still load: serde ignores removed fields (`killed_by`,

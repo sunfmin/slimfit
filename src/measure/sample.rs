@@ -174,7 +174,10 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
     let mut listed: BTreeMap<String, Listed> = BTreeMap::new();
     for (name, lines) in landing::required(cfg, tree, &added)? {
         let out = scratch.0.join("sample");
-        listed.insert(name.clone(), list_suite(repo, &tree.suite(cfg, &name)?.suite, (&from, &to), lines, &out)?);
+        listed.insert(
+            name.clone(),
+            list_suite(repo, &tree.suite(cfg, &name)?.suite, (&from, &to), lines, Default::default(), &out)?,
+        );
     }
     // A mutant that cannot run without a field deletion beside it is not drawn.
     let pool: Vec<(String, Candidate)> =
