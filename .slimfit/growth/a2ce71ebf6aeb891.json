@@ -1,0 +1,9 @@
+{
+  "tree": "22156d9bf89f6438b8e10593afd8a02136a41cc5+d1fba762150c532c",
+  "lines": 301,
+  "serves": "slimfit#87",
+  "considered": "reusing sample.rs's list_suite and run_diff for the listing (done: the synthetic diff is run_diff's, factored as adding); keeping the last measurement in .slimfit/out instead of measuring the change's start (dropped: fresh worktrees have none, and it differs between clones); a separate pool of picks for removed tests (dropped: ADR 0008's five are per change)",
+  "reviewer": "grok:01a2009b-75e2-7411-aab9-6ff88e136984:grok-4.7-build",
+  "author": "claude-code:9a4de116-6387-521c-823f-83fc3eee0dca:opus",
+  "as_is": "Each added part is load-bearing: a syntax scan of removed Rust tests, one before-tree measurement of the lines they ran, a diff map of those lines onto the current tree, and the listing, gate, record and task fields that carry them."
+}
