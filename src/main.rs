@@ -597,6 +597,10 @@ mod answer_tests {
         assert!(f[0].fix.starts_with("correct the command line (tip: some similar subcommands exist: 'init', 'next')"));
 
         git(dir.path(), &["init", "-q"]);
+        // `--function` narrows only the no-name listing: with a pick it is refused, the listing named.
+        let f = faults(dir.path(), "check --mutants n --function f");
+        assert_eq!(f[0].fault, "--function with a mutant's name", "{f:?}");
+        assert!(f[0].fix.contains(crate::listing::EXPAND), "{f:?}");
         let f = faults(dir.path(), "init");
         assert!(f[0].fault.starts_with("no Rust, Go, Swift, Kotlin, TypeScript or Python project found"), "{f:?}");
         assert!(f[0].fix.starts_with("write slimfit.toml by hand: a `[[suite]]` with name, preset"), "{f:?}");
