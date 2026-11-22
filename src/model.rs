@@ -80,6 +80,14 @@ pub struct MutantCounts {
     pub killed: u64,
     pub survived: u64,
     pub unviable: u64,
+    /// Survivors kept as equivalent (`slimfit keep --mutant`): counted
+    /// apart, not as survivors. Only a sample's counts hold any.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub equivalent: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl MutantCounts {
@@ -121,6 +129,26 @@ pub struct Candidate {
     /// the lines of those not picked.
     #[serde(skip)]
     pub field: bool,
+    /// The hash of its function's text (`measure::function_hash`): what a
+    /// verdict keeping it as equivalent holds to. Set for a sample's draw.
+    #[serde(skip)]
+    pub hash: String,
+}
+
+/// A mutant's name without its line and column (`file: change`): what it
+/// is still called after an edit above it moved it.
+pub fn unplaced(name: &str) -> String {
+    let Some((place, rest)) = name.split_once(": ") else { return name.to_string() };
+    let file = place.rsplitn(3, ':').last().unwrap_or(place);
+    format!("{file}: {rest}")
+}
+
+/// The file and line a mutant's name (`file:line:column: change`) places it at.
+pub fn placed(name: &str) -> Option<(&str, u32)> {
+    let (place, _) = name.split_once(": ")?;
+    let mut parts = place.rsplitn(3, ':');
+    let (_column, line, file) = (parts.next()?, parts.next()?, parts.next()?);
+    Some((file, line.parse().ok()?))
 }
 
 /// What a [`Candidate`] prints, as the command pages name it.
@@ -285,6 +313,6 @@ mod tests {
         let m = |status| Mutant { file: "a".into(), line: 1, description: String::new(), status };
         use MutantStatus::*;
         let all = [m(Killed), m(Unviable), m(Unviable), m(Survived), m(Killed), m(Killed)];
-        assert_eq!(MutantCounts::of(&all), MutantCounts { killed: 3, survived: 1, unviable: 2 });
+        assert_eq!(MutantCounts::of(&all), MutantCounts { killed: 3, survived: 1, unviable: 2, equivalent: 0 });
     }
 }

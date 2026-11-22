@@ -665,6 +665,30 @@ fn test_source(file: &str, line: u32, resolver: &Resolver, preset: Preset) -> Op
     Some(TestSource { file: file.into(), line, hash: crate::test_shape::fnv(&text), shape })
 }
 
+/// A hash of the text of the function line `line` (1-based) of `text` is
+/// in, as the language's reader cuts it (the innermost `fn`, top-level
+/// `func` or `def` whose text holds the line): what a kept mutant's verdict
+/// holds to. The whole file's text where the preset has no reader, or the
+/// line is in no function.
+pub fn function_hash(preset: Preset, text: &str, line: u32) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    type Cut = fn(&str, u32) -> Option<String>;
+    let (starts, cut): (fn(&str) -> bool, Cut) = match preset {
+        Preset::Rust => (|l| rust_source::fn_name(l).is_some(), rust_source::item_text),
+        Preset::Go => (|l| l.starts_with("func "), go_source::func_text),
+        Preset::Python => {
+            (|l| l.trim_start().trim_start_matches("async ").starts_with("def "), python_source::def_text)
+        }
+        _ => return crate::test_shape::fnv(text),
+    };
+    let upto = (line as usize).min(lines.len());
+    let found = (0..upto).rev().filter(|&i| starts(lines[i])).find_map(|i| {
+        let t = cut(text, i as u32 + 1)?;
+        (i + t.lines().count() >= line as usize).then_some(t)
+    });
+    crate::test_shape::fnv(found.as_deref().unwrap_or(text))
+}
+
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
 /// does not mention, like blanks, don't break a run). Each span is named
 /// after the function it starts in, when the report names functions, and
@@ -859,7 +883,7 @@ pub(crate) mod t {
                 (MISSED.to_string(), format!("why {MISSED}"), Some(MutantStatus::Survived))
             ]
         );
-        assert_eq!(mutated(&m).change, MutantCounts { killed: 1, survived: 1, unviable: 0 });
+        assert_eq!(mutated(&m).change, MutantCounts { killed: 1, survived: 1, unviable: 0, equivalent: 0 });
         assert_eq!(m.suites[0].mutants.len(), 2);
         let v = crate::ratchet::check(&Baseline::default(), &m, &Default::default(), None);
         assert_eq!(v.violations.iter().map(|v| v.metric).collect::<Vec<_>>(), [Bound::SurvivedMutants]);
@@ -1063,6 +1087,27 @@ pub(crate) mod t {
         assert_eq!(hash(&text.replace('8', "x")), hash(text));
         assert_ne!(hash(&text.replace('5', "x")), hash(text));
         assert_eq!((hash("1\n2\n3\n"), spans("a", &hits, &f, None)[0].hash.clone()), (None, None), "no such lines");
+    }
+    /// A mutant's function is the innermost one whose text holds its line,
+    /// as each language's reader cuts it: an edit in it changes the hash,
+    /// one outside it does not; past any function, or in a language with
+    /// no reader, it is the whole file.
+    #[test]
+    fn a_mutant_is_hashed_by_its_function() {
+        let fh = |preset, text: &str, line| function_hash(preset, text, line);
+        let rust = "fn f() {\n    fn g() { 1 }\n    x < y\n}\nfn h() {}\n";
+        assert_eq!(fh(Preset::Rust, rust, 3), crate::test_shape::fnv("fn f() {\n    fn g() { 1 }\n    x < y\n}"));
+        assert_eq!(fh(Preset::Rust, rust, 2), crate::test_shape::fnv("    fn g() { 1 }"));
+        assert_eq!(fh(Preset::Rust, &rust.replace("h() {}", "h() { 2 }"), 3), fh(Preset::Rust, rust, 3));
+        assert_eq!(
+            fh(Preset::Rust, "use x;\nconst A: u8 = 1;\n", 2),
+            crate::test_shape::fnv("use x;\nconst A: u8 = 1;\n")
+        );
+        let go = "package p\n\nfunc F() {\n\tif x < y {\n\t}\n}\n";
+        assert_eq!(fh(Preset::Go, go, 4), crate::test_shape::fnv("func F() {\n\tif x < y {\n\t}\n}"));
+        let py = "class A:\n    async def f(self):\n        return x < y\n\ndef g():\n    pass\n";
+        assert_eq!(fh(Preset::Python, py, 3), crate::test_shape::fnv("    async def f(self):\n        return x < y"));
+        assert_eq!(fh(Preset::Typescript, go, 4), crate::test_shape::fnv(go));
     }
 }
 

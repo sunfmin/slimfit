@@ -63,12 +63,14 @@ impl Sample {
         Ok((format!("{DIR}/{}.json", self.tip), serde_json::to_string_pretty(self)? + "\n"))
     }
 
-    /// The drawn mutants by outcome.
-    pub fn counts(&self) -> MutantCounts {
+    /// The drawn mutants by outcome, a survivor of a suite that is
+    /// `equivalent` apart from the rest.
+    pub fn counts(&self, equivalent: impl Fn(&str, &Drawn) -> bool) -> MutantCounts {
         let mut c = MutantCounts::default();
-        for d in self.drawn.values().flatten() {
+        for (suite, d) in self.drawn.iter().flat_map(|(s, ds)| ds.iter().map(move |d| (s.as_str(), d))) {
             match d.outcome {
                 Some(MutantStatus::Killed) => c.killed += 1,
+                Some(MutantStatus::Survived) if equivalent(suite, d) => c.equivalent += 1,
                 Some(MutantStatus::Survived) => c.survived += 1,
                 Some(MutantStatus::Unviable) | None => c.unviable += 1,
             }
@@ -77,18 +79,25 @@ impl Sample {
     }
 }
 
-/// A sample, and the candidates of the mutants drawn: what the tasks need.
+/// A sample, and the candidates of the mutants drawn, each with its
+/// function's hash: what the tasks need.
 pub struct Sampled {
     pub sample: Sample,
     pub candidates: Vec<(String, Candidate)>,
 }
 
-/// A mutant's name without its line and column: what a pick is still
-/// called after an edit above it moved it.
-fn unplaced(name: &str) -> String {
-    let Some((place, rest)) = name.split_once(": ") else { return name.to_string() };
-    let file = place.rsplitn(3, ':').last().unwrap_or(place);
-    format!("{file}: {rest}")
+impl Sampled {
+    /// Whether drawn mutant `d` of `suite` is one `kept` keeps as
+    /// equivalent: the same change, its function's text unchanged since.
+    pub fn kept(&self, kept: &[crate::ratchet::KeptMutant], suite: &str, d: &Drawn) -> bool {
+        let found = self.candidates.iter().find(|(s, c)| s == suite && c.name == d.name);
+        found.is_some_and(|(_, c)| kept.iter().any(|k| k.holds(suite, &c.name, &c.hash)))
+    }
+
+    /// The drawn mutants by outcome, those `kept` keeps as equivalent apart.
+    pub fn counts(&self, kept: &[crate::ratchet::KeptMutant]) -> MutantCounts {
+        self.sample.counts(|s, d| self.kept(kept, s, d))
+    }
 }
 
 /// SplitMix64: a small generator whose sequence the seed alone fixes.
@@ -204,7 +213,13 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
     };
     let drawn: BTreeSet<(&str, &str)> =
         sample.drawn.iter().flat_map(|(s, d)| d.iter().map(move |d| (s.as_str(), d.name.as_str()))).collect();
-    let candidates = order.iter().filter(|(s, c)| drawn.contains(&(s.as_str(), c.name.as_str()))).cloned().collect();
+    let mut candidates: Vec<(String, Candidate)> =
+        order.iter().filter(|(s, c)| drawn.contains(&(s.as_str(), c.name.as_str()))).cloned().collect();
+    for (s, c) in &mut candidates {
+        let st = tree.suite(cfg, s)?;
+        let text = st.resolver.read(&c.file).unwrap_or_default();
+        c.hash = super::function_hash(st.suite.preset, &text, c.line);
+    }
     Ok(Sampled { sample, candidates })
 }
 
@@ -317,13 +332,18 @@ mod t {
         use MutantStatus::*;
         let drawn = vec![d(Some(Killed)), d(Some(Survived)), d(Some(Unviable)), d(None), d(Some(Killed))];
         let s = Sample { drawn: [("rust".to_string(), drawn)].into(), ..Default::default() };
-        assert_eq!(s.counts(), MutantCounts { killed: 2, survived: 1, unviable: 2 });
+        assert_eq!(s.counts(|_, _| false), MutantCounts { killed: 2, survived: 1, unviable: 2, equivalent: 0 });
+        let kept = MutantCounts { killed: 2, survived: 0, unviable: 2, equivalent: 1 };
+        assert_eq!(s.counts(|s, d| s == "rust" && d.outcome == Some(Survived)), kept);
     }
 
-    /// A name without its place keeps its file and the change it makes.
+    /// A name without its place keeps its file and the change it makes;
+    /// its place is its file and line.
     #[test]
     fn a_name_unplaced_keeps_its_file_and_change() {
         assert_eq!(unplaced("src/x:y.rs:12:9: replace >= with < in f"), "src/x:y.rs: replace >= with < in f");
         assert_eq!(unplaced("odd"), "odd");
+        assert_eq!(placed("src/x:y.rs:12:9: replace >= with < in f"), Some(("src/x:y.rs", 12)));
+        assert_eq!((placed("odd"), placed("a.rs:x:9: f")), (None, None));
     }
 }

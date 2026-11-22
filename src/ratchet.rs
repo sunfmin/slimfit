@@ -36,6 +36,12 @@ pub struct Baseline {
     /// again until it changes ([`KeptSpan::holds`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_spans: Vec<KeptSpan>,
+    /// Sampled survivors the agent judged equivalent (`slimfit keep
+    /// --mutant`): no input tells the mutated code from the original. Each
+    /// against its function's text: not proposed, nor counted a survivor,
+    /// until it changes ([`KeptMutant::holds`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_mutants: Vec<KeptMutant>,
     /// The commit whose code no landing is charged to a mutants run for:
     /// what was there before the rule came in (ADR 0008). It counts only
     /// while the target has not reached it; set by hand, once.
@@ -79,6 +85,7 @@ impl Baseline {
             kept,
             kept_files: old.kept_files.clone(),
             kept_spans,
+            kept_mutants: old.kept_mutants.clone(),
             mutants_from: old.mutants_from.clone(),
             measured: Measured::of(m),
         }
@@ -221,6 +228,34 @@ impl KeptSpan {
             && sp.hash.as_ref() == Some(&self.hash)
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KeptMutant {
+    pub suite: String,
+    /// Its name without its line and column (`model::unplaced`): an edit
+    /// above it moves it, and the verdict stands.
+    pub mutant: String,
+    /// The hash of its function's text when it was kept
+    /// (`measure::function_hash`).
+    pub hash: String,
+    pub reason: String,
+}
+
+impl KeptMutant {
+    /// Whether it names mutant `name` of `suite`, wherever it is now.
+    pub fn names(&self, suite: &str, name: &str) -> bool {
+        self.suite == suite && self.mutant == crate::model::unplaced(name)
+    }
+
+    /// Whether it still keeps mutant `name` of `suite`, whose function's
+    /// text now hashes to `hash`.
+    pub fn holds(&self, suite: &str, name: &str, hash: &str) -> bool {
+        self.names(suite, name) && self.hash == hash
+    }
+}
+
+/// What a [`KeptMutant`] prints, as the command pages name it.
+pub const KEPT_MUTANT_HELP: &str = "each with `suite`, `mutant` (its name without its line and column), `hash` (of its function's text when kept) and `reason`";
 
 /// What a [`KeptSpan`] prints, as the command pages name it.
 pub const KEPT_SPAN_HELP: &str = "each with `suite`, `file`, `start`, `end`, `function` (when known), `hash` (of its lines' text when kept) and `reason`";
@@ -712,7 +747,7 @@ mod t {
     use crate::model::{MutantCounts, Mutated};
 
     fn suite(name: &str, metrics: Metrics, survived: Option<u64>) -> SuiteMeasurement {
-        let change = |n| MutantCounts { killed: 3, survived: n, unviable: 0 };
+        let change = |n| MutantCounts { killed: 3, survived: n, unviable: 0, equivalent: 0 };
         SuiteMeasurement {
             suite: name.into(),
             metrics,
@@ -854,6 +889,12 @@ mod t {
                 reason: "deep".into(),
             }],
             kept_spans: vec![kept_span("s", 1), kept_span("s", 5), kept_span("s", 9), kept_span("unseen", 1)],
+            kept_mutants: vec![KeptMutant {
+                suite: "s".into(),
+                mutant: "a: m".into(),
+                hash: "h".into(),
+                reason: "r".into(),
+            }],
             mutants_from: Some("abc".into()),
             measured: [("gone".to_string(), Measured::default())].into(),
         };
@@ -868,8 +909,8 @@ mod t {
         assert_eq!(names, ["b::same", "b::x"]);
         assert_eq!(next.kept_spans, [kept_span("s", 1), kept_span("unseen", 1)]);
         assert_eq!(
-            (&next.loosened, &next.kept_files, &next.mutants_from),
-            (&old.loosened, &old.kept_files, &old.mutants_from)
+            (&next.loosened, &next.kept_files, &next.kept_mutants, &next.mutants_from),
+            (&old.loosened, &old.kept_files, &old.kept_mutants, &old.mutants_from)
         );
         assert_eq!(next.suites, suites);
         assert_eq!(next.measured, Measured::of(&cur));
