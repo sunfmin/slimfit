@@ -1,0 +1,27 @@
+{
+  "tree": "83448888e43b63060e966847f510e26c88c96115+d1fba762150c532c",
+  "picker": "codex:01a20518-abac-7db3-99be-d54ba1aa98bb:default",
+  "author": "claude-code:836c5691-756e-5929-8671-1c5e050d132a:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:163:67: replace match guard names.is_empty() with true in run",
+        "why": "A test that only lists candidates would miss named picks being routed to the listing handler.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:163:67: replace match guard names.is_empty() with false in run",
+        "why": "A bare --mutants could fall through to the ordinary check if tests exercise only named picks.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/git.rs:220:5: replace cat_file -> Result<Vec<Option<String>>> with Ok(vec![])",
+        "why": "A test that requests zero objects would still pass even though nonempty batches silently lose every result.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

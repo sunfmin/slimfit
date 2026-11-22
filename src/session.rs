@@ -7,7 +7,7 @@ use crate::model::Measurement;
 use crate::ratchet::Baseline;
 use crate::{config, fault, git, landing, measure, ratchet};
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct Session {
     pub repo: PathBuf,
@@ -17,11 +17,10 @@ pub struct Session {
 }
 
 impl Session {
-    /// The repository at `dir`, with its `slimfit.toml` and baseline, or the
+    /// `head`'s repository, with its `slimfit.toml` and baseline, or the
     /// faults of both.
-    pub fn open(dir: &Path) -> Result<Session> {
-        let head = git::open(dir)?;
-        Session::of(&head, config::load(&head.top))
+    pub fn open(head: &git::Head) -> Result<Session> {
+        Session::of(head, config::load(&head.top))
     }
 
     /// `head`'s repository with `cfg`, which `init` gives before it is

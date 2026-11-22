@@ -71,6 +71,14 @@
       "test": "slimfit::bin/slimfit::answer_tests::a_kept_span_returns_once_a_line_of_it_changes",
       "hash": "08d73d60894ebbff",
       "reason": "No assertion maps: it checks kept_spans verdicts and their return on edit; the other checks a fresh repo's first and empty ratchet and next counts. Setups conflict: the other needs a repo with nothing to ratchet and only a slow-test task, this one a covered sample with uncovered tasks and edited kept_spans."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::standins::every_preset_through_its_standins",
+      "kind": "slow-test",
+      "hash": "4943b269c3b43557",
+      "seconds": 10.489999999999998,
+      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
     }
   ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",

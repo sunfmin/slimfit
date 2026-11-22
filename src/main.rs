@@ -98,7 +98,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Next { all, kind, fresh, sample, .. } => {
-            let s = Session::open(&repo)?;
+            let s = Session::open(&head)?;
             let (cfg, tree) = (&s.cfg, &s.tree);
             let m = s.measure(measure::Options { fresh, ..Default::default() })?;
             let mut list = tasks::all(&repo, tree, cfg, &m, &s.base)?;
@@ -162,7 +162,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Check { mutants: Some(names), why, function, .. } if names.is_empty() => {
-            let s = Session::open(&repo)?;
+            let s = Session::open(&head)?;
             if !why.is_empty() {
                 return Err(fault::fault(
                     "--why without a mutant's name",
@@ -202,7 +202,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     ),
                 ));
             }
-            let s = Session::open(&repo)?;
+            let s = Session::open(&head)?;
             let scope = measure::Mutants::of(mutants.unwrap_or_default(), why)?;
             let with_mutants = scope != measure::Mutants::None;
             let m =
@@ -226,7 +226,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, growth, .. } => {
-            let s = Session::open(&repo)?;
+            let s = Session::open(&head)?;
             let old = &s.base;
             // Timed as a gate times it: a test run inside `--mutants` takes the
             // time of one of the same files, or runs again (slimfit#74).
@@ -282,7 +282,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             ))
         }
         Cmd::Keep { test, mutant, kind, reason, .. } => {
-            let mut s = Session::open(&repo)?;
+            let mut s = Session::open(&head)?;
             let measurement = keep::record(&mut s, test, mutant, kind, reason)?;
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
             Ok((
@@ -305,7 +305,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Help { .. } => unreachable!("`cli::read` answers it"),
         Cmd::Report { commits, points, fresh, by, lines_only, .. } => {
-            let s = Session::open(&repo)?;
+            let s = Session::open(&head)?;
             let globs = report::By::new(&by)?;
             let (lines, by_dir) = report::lines(&repo, &s.cfg, &globs)?;
             let current = match lines_only {
@@ -916,7 +916,7 @@ mod answer_tests {
         assert_eq!((from.as_str(), n), (before.as_str(), 0));
         // A ratchet keeps the cut.
         slimfit(repo, "ratchet").unwrap();
-        assert_eq!(crate::session::Session::open(repo).unwrap().base.mutants_from.as_deref(), Some(before.as_str()));
+        assert_eq!(crate::ratchet::load(repo).unwrap().mutants_from.as_deref(), Some(before.as_str()));
         // A line added after the cut is the change's, with no record: check fails.
         add("src/lib.rs", "\npub fn after_the_rule() -> u8 {\n    2\n}\n");
         assert_eq!(held(crate::EXIT_VIOLATION), (before.clone(), 3));
@@ -966,7 +966,7 @@ mod answer_tests {
         assert_eq!(t["new_spans"], span, "{t:#}");
         // Kept low, and not loosened: there is no bound to raise.
         slimfit(repo, "ratchet").unwrap();
-        assert_eq!(crate::session::Session::open(repo).unwrap().base.suites["rust"].uncovered_lines, 0);
+        assert_eq!(crate::ratchet::load(repo).unwrap().suites["rust"].uncovered_lines, 0);
         let f = faults(repo, "ratchet --loosen uncovered_lines --reason r");
         assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("asserts what the lines decide"), "{f:?}");
     }
@@ -1016,7 +1016,7 @@ mod answer_tests {
         assert!(proposed(repo));
         slimfit_args(repo, &["ratchet", "--no-mutants", "a constant", "--picker", "p", "--author", "a"]).unwrap();
         // The other suite's verdict is not this measurement's to judge: it stays.
-        let left = crate::session::Session::open(repo).unwrap().base.kept_spans;
+        let left = crate::ratchet::load(repo).unwrap().kept_spans;
         assert_eq!(left.iter().map(|k| k.suite.as_str()).collect::<Vec<_>>(), ["go"]);
     }
 
@@ -1122,10 +1122,10 @@ mod answer_tests {
         let body = "    let doubled = x * 2;\n    let shifted = doubled + 7;\n    shifted / 3\n";
         std::fs::write(&lib, text.replace(body, "")).unwrap();
         slimfit(repo, "ratchet").unwrap();
-        let measured = crate::session::Session::open(repo).unwrap().base.measured["rust"].uncovered_lines;
+        let measured = crate::ratchet::load(repo).unwrap().measured["rust"].uncovered_lines;
         // Each landing as its ratchet would have written it, two lines more uncovered each time.
         let land = |uncovered: u64, message: &str| {
-            let mut b = crate::session::Session::open(repo).unwrap().base;
+            let mut b = crate::ratchet::load(repo).unwrap();
             b.measured.get_mut("rust").unwrap().uncovered_lines = uncovered;
             std::fs::write(repo.join(crate::ratchet::FILE), crate::ratchet::render(&b).unwrap()).unwrap();
             git(repo, &["add", "-A"]);
@@ -1137,7 +1137,7 @@ mod answer_tests {
         let (out, _) = slimfit(repo, "ratchet").unwrap();
         assert!(out["changed"].as_bool().unwrap(), "{out:#}");
         git(repo, &["commit", "-qam", "landing 3"]);
-        let b = crate::session::Session::open(repo).unwrap().base;
+        let b = crate::ratchet::load(repo).unwrap();
         // The bound keeps the first count; what was measured rose past it with `unused` back.
         let last = b.measured["rust"].uncovered_lines;
         assert_eq!(b.suites["rust"].uncovered_lines, measured);
@@ -1242,7 +1242,7 @@ mod answer_tests {
             slimfit(repo, "ratchet --picker p --author a").unwrap();
             git(repo, &["add", "-A"]);
             git(repo, &["commit", "-qm", &format!("landing {n}")]);
-            crate::session::Session::open(repo).unwrap().base.measured["rust"].test_seconds
+            crate::ratchet::load(repo).unwrap().measured["rust"].test_seconds
         };
         assert_eq!(land(1, "1.500", true), Some(1.525));
         // No gate's run of these files: the ratchet's own.
