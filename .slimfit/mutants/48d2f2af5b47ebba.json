@@ -1,0 +1,6 @@
+{
+  "tree": "822c2d4e96819df013244d3f269587b5b0858a2f+d1fba762150c532c",
+  "picker": "codex:01a20366-a5d3-7ac0-8793-c97bc82bd1e9:default",
+  "author": "claude-code:5d827dc3-9b80-519d-9dbe-794c5468cd37:opus",
+  "none": "All three mutants replace the entire CLI dispatcher with a null response, which the new test detects by requiring an empty candidate array and landing metadata."
+}
