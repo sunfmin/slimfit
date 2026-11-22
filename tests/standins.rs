@@ -603,6 +603,12 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let file = run("keep", &["src/lib.rs", "--reason", "deep enough"], 0);
     assert_eq!(file["kept_files"][0]["file"], "src/lib.rs", "{file:#}");
     assert_eq!(file["kept"][0]["test"], twin, "{file:#}");
+    // Kept as slow too, its own verdict beside the redundant one, with its CPU seconds; a file is no slow test.
+    let slow = run("keep", &[twin, "--kind", "slow-test", "--reason", "its time is a real process"], 0);
+    let k = &slow["kept"][1];
+    assert_eq!((&k["test"], &k["kind"], k["seconds"].is_f64()), (&twin.into(), &"slow-test".into(), true), "{slow:#}");
+    assert_eq!(slow["kept"][0].get("kind"), None, "{slow:#}");
+    s.error(&["keep", "src/lib.rs", "--kind", "slow-test", "--reason", "r"], &["--kind slow-test keeps a test"]);
     assert_eq!(s.steps(), Vec::<String>::new(), "keep and next reuse the measurement");
     let gone = s.error(&["next", "--all-mutants"], &["`--all-mutants` is gone"]);
     assert!(gone.contains("fix: measure the change's mutants instead: `slimfit check --mutants`"), "{gone}");
