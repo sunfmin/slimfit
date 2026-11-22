@@ -169,17 +169,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 ));
             }
             measure::refuse_unpickable(&s.cfg)?;
-            let mut candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
-            if !function.is_empty() {
-                for listed in candidates.values_mut() {
-                    listed.retain(|c| function.iter().any(|f| listing::within(c, f)));
-                }
-            }
-            let listing = listing::of(&candidates, &Default::default(), !function.is_empty());
+            let candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
+            let listing = listing::of(&candidates, &Default::default(), &function);
             let grouped = listing.functions.is_some();
-            let next = if candidates.values().all(Vec::is_empty) && !function.is_empty() {
+            let none = listing.candidates.values().all(Vec::is_empty);
+            let next = if none && !function.is_empty() {
                 "no candidate in those functions: name each as a grouped listing's `functions` does, `<file>: <function>`"
-            } else if candidates.values().all(Vec::is_empty) {
+            } else if none {
                 "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
                  worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
                  commit .slimfit/"
@@ -887,6 +883,9 @@ mod answer_tests {
         let (one, _) = slimfit_args(repo, &["check", "--mutants", "--function", "src/lib.rs: add"]).unwrap();
         let one = one["candidates"]["rust"].as_array().unwrap();
         assert!(one.iter().all(|c| c["function"] == "add") && one.iter().any(|c| c["name"] == killed), "{one:#?}");
+        let (none, _) = slimfit_args(repo, &["check", "--mutants", "--function", "src/lib.rs: nope"]).unwrap();
+        assert!(none["next"].as_str().unwrap().starts_with("no candidate in those functions"), "{none:#}");
+        assert!(listed["next"].as_str().unwrap().starts_with("ask a second agent"), "{listed:#}");
         let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the sum"]).unwrap();
         assert_eq!(code, crate::EXIT_OK, "{out:#}");
         let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();

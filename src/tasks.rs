@@ -177,7 +177,7 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
             let listed = BTreeMap::from([(suite.clone(), candidates.remove(&suite).unwrap_or_default())]);
             let files: BTreeSet<String> = listed[&suite].iter().map(|c| c.file.clone()).collect();
             let count = listed[&suite].len();
-            let mut listing = crate::listing::of(&listed, &removed, false);
+            let mut listing = crate::listing::of(&listed, &removed, &[]);
             let mut evidence = json!({
                 "lines": lines,
                 "removed_tests": listing.removed_tests.remove(&suite).unwrap_or_default(),

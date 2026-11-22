@@ -66,21 +66,24 @@ pub const FUNCTION_HELP: &str = "each with `file`, `function`, `mutants` (how ma
      removed tests that ran any of them, as indexes)";
 
 /// The listing of `candidates` per suite; `removed`, the tests the change
-/// removes per suite, lead the table, in their order. Grouped when the full
-/// listing passes [`BUDGET`], unless `whole`.
+/// removes per suite, lead the table, in their order. With `functions`
+/// (each `<file>: <function>`), only theirs, in full; else grouped when the
+/// full listing passes [`BUDGET`].
 pub fn of<'a>(
     candidates: &'a BTreeMap<String, Vec<Candidate>>,
     removed: &BTreeMap<String, Vec<String>>,
-    whole: bool,
+    functions: &[String],
 ) -> Listing<'a> {
     let mut listing = Listing::default();
+    let wanted = |c: &&Candidate| functions.is_empty() || functions.iter().any(|f| within(c, f));
     for (suite, listed) in candidates {
         let table = listing.removed_tests.entry(suite.clone()).or_default();
         table.extend(removed.get(suite).into_iter().flatten().cloned());
-        let entries = listed.iter().map(|c| Entry { candidate: c, removed: indexes(table, &c.removed_tests) });
+        let entries =
+            listed.iter().filter(wanted).map(|c| Entry { candidate: c, removed: indexes(table, &c.removed_tests) });
         listing.candidates.insert(suite.clone(), entries.collect());
     }
-    if whole || size(&listing) <= BUDGET {
+    if !functions.is_empty() || size(&listing) <= BUDGET {
         return listing;
     }
     let mut functions = BTreeMap::new();
@@ -113,7 +116,7 @@ pub fn of<'a>(
 }
 
 /// Whether `c` is in the function `key` names (`<file>: <function>`).
-pub fn within(c: &Candidate, key: &str) -> bool {
+fn within(c: &Candidate, key: &str) -> bool {
     key.split_once(": ").is_some_and(|(file, function)| c.file == file && c.function == function)
 }
 
@@ -163,9 +166,14 @@ mod tests {
         for f in 0..120 {
             listed.extend(many(&format!("src/m{f}.rs"), &format!("Thing::f{f}"), 20, &tests));
         }
+        // Namesakes: one function's name in two files, two functions in one file.
+        listed.extend(many("src/m0.rs", "Thing::other", 2, &[]));
+        listed.extend(many("src/n.rs", "Thing::f0", 4, &[]));
+        // One function past the budget alone.
+        listed.extend(many("src/big.rs", "big", 2_000, &tests));
         let candidates = BTreeMap::from([("rust".to_string(), listed)]);
         let removed = BTreeMap::from([("rust".to_string(), vec![tests[3].clone()])]);
-        let listing = of(&candidates, &removed, false);
+        let listing = of(&candidates, &removed, &[]);
         let text = serde_json::to_string(&listing).unwrap();
         assert!(text.len() <= BUDGET, "{}", text.len());
         for t in &tests {
@@ -173,17 +181,31 @@ mod tests {
         }
         assert_eq!(listing.removed_tests["rust"][0], tests[3], "the change's removed tests lead the table");
         let functions = &listing.functions.as_ref().unwrap()["rust"];
-        assert_eq!((functions.len(), functions[0].mutants, functions[0].removed.len()), (120, 20, 60));
-        assert_eq!(listing.candidates["rust"].len(), 120 * EXAMPLES);
-        // The function's whole listing, as `--function` asks it: every candidate, in full.
-        let key = format!("{}: {}", functions[7].file, functions[7].function);
-        let one = BTreeMap::from([(
-            "rust".to_string(),
-            candidates["rust"].iter().filter(|c| within(c, &key)).cloned().collect::<Vec<_>>(),
-        )]);
-        let full = of(&one, &BTreeMap::new(), true);
-        assert_eq!((full.candidates["rust"].len(), full.functions.is_none()), (20, true));
+        let counts: Vec<(&str, &str, usize)> = functions.iter().map(|f| (f.file, f.function, f.mutants)).collect();
+        assert_eq!(counts.len(), 123);
+        assert_eq!(counts[..1], [("src/m0.rs", "Thing::f0", 20)]);
+        assert_eq!(
+            counts[120..],
+            [("src/m0.rs", "Thing::other", 2), ("src/n.rs", "Thing::f0", 4), ("src/big.rs", "big", 2_000)]
+        );
+        assert_eq!((functions[0].removed.len(), &functions[121].removed[..]), (60, &[][..]));
+        assert_eq!(listing.candidates["rust"].len(), 120 * EXAMPLES + 2 + 2 * EXAMPLES);
+        // One function's whole listing, as `--function` asks it: every candidate, in full, past the budget too.
+        let full = of(&candidates, &BTreeMap::new(), &["src/big.rs: big".to_string()]);
+        assert_eq!((full.candidates["rust"].len(), full.functions.is_none()), (2_000, true));
+        assert!(size(&full) > BUDGET);
         assert_eq!(full.candidates["rust"][19].removed, (0..60).collect::<Vec<_>>());
+        let named = |key: &str| {
+            let one = of(&candidates, &BTreeMap::new(), &[key.to_string()]);
+            one.candidates["rust"]
+                .iter()
+                .map(|e| (e.candidate.file.clone(), e.candidate.function.clone()))
+                .collect::<BTreeSet<_>>()
+        };
+        let at = |f: &str, g: &str| BTreeSet::from([(f.to_string(), g.to_string())]);
+        assert_eq!(named("src/m0.rs: Thing::f0"), at("src/m0.rs", "Thing::f0"));
+        assert_eq!(named("src/n.rs: Thing::f0"), at("src/n.rs", "Thing::f0"));
+        assert_eq!(named("src/m0.rs: nothing"), BTreeSet::new());
     }
 
     /// A listing within the budget is answered whole, each candidate with
@@ -194,7 +216,7 @@ mod tests {
         let mut listed = many("src/a.rs", "f", 2, &tests[1..]);
         listed.extend(many("src/b.rs", "g", 1, &[]));
         let candidates = BTreeMap::from([("rust".to_string(), listed)]);
-        let listing = of(&candidates, &BTreeMap::from([("rust".to_string(), tests.clone())]), false);
+        let listing = of(&candidates, &BTreeMap::from([("rust".to_string(), tests.clone())]), &[]);
         assert_eq!(listing.functions, None);
         let removed: Vec<&[usize]> = listing.candidates["rust"].iter().map(|e| &e.removed[..]).collect();
         assert_eq!(removed, [&[1][..], &[1], &[]]);
