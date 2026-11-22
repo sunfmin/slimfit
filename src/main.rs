@@ -171,7 +171,6 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             measure::refuse_unpickable(&s.cfg)?;
             let candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
             let listing = listing::of(&candidates, &Default::default(), &function);
-            let grouped = !listing.functions.is_empty();
             let none = listing.candidates.values().all(Vec::is_empty);
             let next = if none && !function.is_empty() {
                 "no candidate in those functions: name each as a grouped listing's `functions` does, `<file>: <function>`"
@@ -186,17 +185,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                  slimfit check ...`), then `slimfit ratchet --picker <its id> --author <yours>`; or, when it finds \
                  none worth running, `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`"
             };
-            let next = match grouped {
-                true => format!(
-                    "the listing passes {} bytes, so it is grouped per function (`functions`), up to {} candidates of \
-                     each spelled out as the budget allows: `{}` lists one function's in full, and any of them may be \
-                     picked. Then {next}",
-                    listing::BUDGET,
-                    listing::EXAMPLES,
-                    listing::EXPAND
-                ),
-                false => next.to_string(),
-            };
+            let next = listing.next(next);
             let mut answer = serde_json::to_value(&listing)?;
             answer["landing"] = serde_json::to_value(landing::hold(&repo, &s.cfg, &s.tree, false)?)?;
             answer["next"] = next.into();
@@ -686,6 +675,11 @@ mod answer_tests {
         assert!(faults(repo, &six)[0].fault.contains("6 mutants picked, more than 5"));
         assert!(faults(repo, "check --mutants n m --why w")[0].fault.contains("2 mutant(s) picked, with 1 `--why`"));
         assert_eq!(faults(repo, "check --mutants --why w")[0].fault, "--why without a mutant's name");
+        let f = faults(repo, "check --mutants n --why w --function f");
+        assert!(
+            f[0].fault == "--function with a mutant's name" && f[0].fix.contains("--function '<file>: <function>'"),
+            "{f:?}"
+        );
         // A pick that survives fails as `survived_mutants`, whoever picked.
         let survivor = "src/lib.rs:12:5: replace is_adult -> bool with true";
         let (out, code) =

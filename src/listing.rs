@@ -134,6 +134,34 @@ pub fn of<'a>(
     listing
 }
 
+impl Listing<'_> {
+    /// The answer's `next`: `then` as given, after how to read the listing
+    /// when it is grouped.
+    pub fn next(&self, then: &str) -> String {
+        match self.functions.is_empty() {
+            true => then.to_string(),
+            false => format!(
+                "the listing passes {BUDGET} bytes, so it is grouped per function (`functions`), up to {EXAMPLES} \
+                 candidates of each spelled out as the budget allows: `{EXPAND}` lists one function's in full, and \
+                 any of them may be picked. Then {then}"
+            ),
+        }
+    }
+
+    /// `suite`'s part of the listing, as a pick-mutants task's evidence
+    /// holds it: `removed_tests`, `candidates` and, grouped, `functions`.
+    pub fn of_suite(mut self, suite: &str) -> serde_json::Value {
+        let mut part = serde_json::json!({
+            "removed_tests": self.removed_tests.remove(suite).unwrap_or_default(),
+            "candidates": self.candidates.remove(suite).unwrap_or_default(),
+        });
+        if let Some(functions) = self.functions.remove(suite) {
+            part["functions"] = serde_json::json!(functions);
+        }
+        part
+    }
+}
+
 /// The bytes left of [`BUDGET`] for the rest of the answer (`next`).
 const NEXT: usize = 2_000;
 
@@ -229,6 +257,14 @@ mod tests {
         let deep = BTreeMap::from([("rust".to_string(), deep)]);
         let listing = of(&deep, &BTreeMap::new(), &[]);
         assert_eq!((listing.functions["rust"].len(), listing.candidates["rust"].len()), (3, 3 * EXAMPLES));
+        let then = listing.next("pick");
+        assert!(then.starts_with(&format!("the listing passes {BUDGET} bytes, so it is grouped")), "{then}");
+        assert!(then.contains(EXPAND) && then.ends_with("Then pick"), "{then}");
+        let part = listing.of_suite("rust");
+        assert_eq!(
+            (part["functions"].as_array().map(Vec::len), part["candidates"].as_array().map(Vec::len)),
+            (Some(3), Some(9))
+        );
         // Grouped past the budget with the functions alone: each suite still spells out its first.
         let mut wide: Vec<Candidate> = Vec::new();
         for f in 0..3_000 {
@@ -268,8 +304,11 @@ mod tests {
         let candidates = BTreeMap::from([("rust".to_string(), listed)]);
         let listing = of(&candidates, &BTreeMap::from([("rust".to_string(), tests.clone())]), &[]);
         assert!(listing.functions.is_empty());
+        assert_eq!(listing.next("pick"), "pick");
         let removed: Vec<&[usize]> = listing.candidates["rust"].iter().map(|e| &e.removed[..]).collect();
         assert_eq!(removed, [&[1][..], &[1], &[]]);
         assert_eq!(listing.removed_tests["rust"], tests);
+        let part = listing.of_suite("rust");
+        assert_eq!((&part["removed_tests"], part.get("functions")), (&serde_json::json!(tests), None));
     }
 }
