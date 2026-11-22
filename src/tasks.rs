@@ -412,10 +412,14 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                         KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed: \
                         record it with `slimfit keep <test> --reason \"<why>\"` and commit `.slimfit/baseline.json`, so `test` is not proposed again \
                         until its text changes. \
-                        The accept command holds that no test fails, and answers, as trends, whether a line became \
-                        uncovered (`new_spans`) and how test time moved: neither may rise, and after a merge `test_seconds` must fall. \
-                        A delete or a merge removes a test, so the change owes picks over the lines it ran, run against the tests left \
-                        (a `pick-mutants` task): a survivor is a test removed too many: put it back, or assert what it changes in the merged test."
+                        Then, in this order, measuring the whole suite only where it says: change the tests; run the changed file's \
+                        tests with the project's own test command (plain and fast, not slimfit); a delete or a merge removes a test, \
+                        so the change owes picks over the lines it ran, run against the tests left (a `pick-mutants` task): a survivor \
+                        is a test removed too many: put it back, or assert what it changes in the merged test; `slimfit ratchet`; \
+                        commit; the gate. The gate's `slimfit check` verdict is the accept: no test fails, no `new_spans` (a line the \
+                        change left uncovered), and after a merge `test_seconds` falls. Do not run a separate `slimfit check` before \
+                        the gate: the gate repeats it. The ratchet comes before the gate, so the gate's tree is the one that lands. \
+                        Where no gate runs `slimfit check`, run it once yourself, after the commit."
                     .into(),
                 accept: TaskKind::RedundantTest.accept().into(),
             }
@@ -1031,6 +1035,34 @@ mod t {
     /// A task is a test file with every candidate in it, slowest first, and
     /// the files whose candidates would save most come first: three in one
     /// file and one in another make two tasks, the first holding three.
+    /// The steps and `slimfit help factorium` give one order (slimfit#97):
+    /// the tests, the file's own run, `slimfit ratchet`, the commit, then the
+    /// gate, whose `slimfit check` verdict is the accept, with no
+    /// separate `slimfit check` before it.
+    #[test]
+    fn a_redundant_test_task_ratchets_then_takes_the_gate_as_its_accept() {
+        let s = suite(
+            [("one", 0.1, 1..=10), ("one_again", 0.3, 1..=10), ("two", 0.1, 20..=29), ("three", 0.1, 40..=49)]
+                .map(|(n, secs, ls)| (n, secs, ls.collect())),
+        );
+        let steps = redundant(&s, &[])[0].steps.clone();
+        let help = include_str!("help/factorium.md");
+        let help = &help[help.find("`redundant-test` task").unwrap()..];
+        for text in [steps.as_str(), help] {
+            let at = |p: &str| text.find(p).unwrap_or_else(|| panic!("no {p:?} in {text}"));
+            let order = ["change the tests", "changed file's tests", "`slimfit ratchet`", "commit", "gate"];
+            // Each after the one before it.
+            order.iter().fold(0, |from, p| {
+                from + text[from..].find(p).unwrap_or_else(|| panic!("no {p:?} after {:?} in {text}", &text[..from]))
+            });
+            for accept in ["`slimfit check` verdict is the", "no `new_spans`", "`test_seconds` falls", "no test fails"]
+            {
+                at(accept);
+            }
+            assert!(text.contains("separate `slimfit check` before"), "{text}");
+        }
+    }
+
     #[test]
     fn a_redundant_test_task_is_a_file_of_candidates() {
         let tests = [
