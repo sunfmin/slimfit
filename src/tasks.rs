@@ -271,10 +271,8 @@ fn uncovered(s: &SuiteMeasurement, kept: &[KeptSpan]) -> Vec<Task> {
                     and no bound holds you to coverage, so nothing is gained by it. \
                     The new test must be fast (milliseconds, no sleeps, network or process spawns): if only a slow test can reach the line, delete the code or escalate, never add the slow test. \
                     It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence. \
-                    KEEP it when it runs only against the real host or the real program (a binary's `main` under the tests that spawn it, \
-                    which coverage does not record), so a fast test could only run it without asserting what it decides: record why with \
-                    `slimfit keep <file>:<start>-<end> --reason \"<why>\"` (this task's span) and commit `.slimfit/baseline.json`; \
-                    it is proposed again once a line of it changes or the span grows past it."
+                    KEEP it when a fast test could only run it, not assert what it decides (`slimfit keep --help` says when): \
+                    `slimfit keep <file>:<start>-<end> --reason \"<why>\"` (this task's span), then commit `.slimfit/baseline.json`."
                 .into(),
             accept: TaskKind::Uncovered.accept().into(),
         })

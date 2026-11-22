@@ -330,8 +330,7 @@ pub(crate) enum Cmd {
     /// It writes nothing when it refuses.
     ///
     /// - No `--reason`.
-    /// - A span no suite's coverage leaves uncovered, as named: its lines are an uncovered task's, `start` to `end`.
-    /// - A span whose lines were not read (a measurement from before spans were hashed): measure afresh.
+    /// - A span no suite's coverage leaves uncovered, as named (its lines are an uncovered task's, `start` to `end`), with its lines' hash (a measurement from before spans were hashed has none: measure afresh).
     /// - No suite's test run recorded the test (its `test` id is a redundant-test task's `test`), and no suite counts it as a source file.
     /// - Its own function was not found, so there is no text to hold the verdict to.
     /// - {const:MEASURE_REFUSALS}

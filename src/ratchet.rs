@@ -65,15 +65,13 @@ impl Baseline {
             .cloned()
             .collect();
         // A kept span no uncovered span of its suite is now, as kept, holds no more.
-        let kept_spans = old
-            .kept_spans
-            .iter()
-            .filter(|k| {
-                let Some(s) = m.suites.iter().find(|s| s.suite == k.suite) else { return true };
-                s.uncovered.iter().any(|sp| k.holds(&s.suite, sp))
-            })
-            .cloned()
-            .collect();
+        let mut kept_spans = old.kept_spans.clone();
+        kept_spans.retain(|k| {
+            m.suites
+                .iter()
+                .find(|s| s.suite == k.suite)
+                .is_none_or(|s| s.uncovered.iter().any(|sp| k.holds(&s.suite, sp)))
+        });
         Baseline {
             suites,
             loosened: old.loosened.clone(),
