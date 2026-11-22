@@ -205,8 +205,10 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             if !function.is_empty() {
                 return Err(fault::fault(
                     "--function with a mutant's name",
-                    "list a function's candidates with `slimfit check --mutants --function '<file>: <function>'`, \
-                     no name; then pick by `--mutants <name>`",
+                    format!(
+                        "list a function's candidates with `{}`, no name; then pick by `--mutants <name>`",
+                        listing::EXPAND
+                    ),
                 ));
             }
             let s = Session::open(&repo)?;

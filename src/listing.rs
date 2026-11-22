@@ -111,12 +111,10 @@ pub fn of<'a>(
     // at a time, until one does not fit; each suite spells out one at least,
     // so a grouped listing always names a candidate to pick.
     let mut full = false;
-    let mut places: BTreeMap<&String, Vec<(usize, usize)>> = BTreeMap::new();
     for round in 0..EXAMPLES {
         for (suite, of_each) in &groups {
-            for (at, entries) in of_each.iter().enumerate() {
-                let Some(e) = entries.get(round) else { continue };
-                let first = round == 0 && !places.contains_key(suite);
+            for e in of_each.iter().filter_map(|entries| entries.get(round)) {
+                let first = listing.candidates[suite].is_empty();
                 if full && !first {
                     continue;
                 }
@@ -124,17 +122,14 @@ pub fn of<'a>(
                 if !first && size(&listing) > BUDGET - NEXT {
                     listing.candidates.get_mut(suite).unwrap().pop();
                     full = true;
-                    continue;
                 }
-                places.entry(suite).or_default().push((at, round));
             }
         }
     }
-    for (suite, places) in places {
-        let spelled = listing.candidates.get_mut(suite).unwrap();
-        let mut placed: Vec<_> = places.into_iter().zip(std::mem::take(spelled)).collect();
-        placed.sort_by_key(|(place, _)| *place);
-        *spelled = placed.into_iter().map(|(_, e)| e).collect();
+    for (suite, spelled) in listing.candidates.iter_mut() {
+        let fs = &listing.functions[suite];
+        spelled
+            .sort_by_key(|e| fs.iter().position(|f| f.file == e.candidate.file && f.function == e.candidate.function));
     }
     listing
 }
