@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7399,
+      "prod_lines": 7401,
       "test_lines": 5462,
       "tests": 133,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5101,
+      "covered_lines": 5107,
       "uncovered_lines": 39
     }
   },
@@ -53,13 +53,21 @@
       "test": "slimfit::bin/slimfit::answer_tests::a_landing_passes_only_with_a_record_of_its_mutants",
       "hash": "dd9eb7e94fccd020",
       "reason": "No assertion maps: it checks the mutants record (ADR 0008: unrecorded_mutants, picks, --why, picker/author, --no-mutants, merge of two records, report's mutants_records, a target gone), the other checks the growth record (ADR 0012: growth_allowance, deletions paying, justify-growth, reviewer/author, report's growth_records). The setups conflict: the other's growth_allowance = 4 makes this test's merged landing (6 lines net) fail as unrecorded_growth where it must pass, and this one's mutants_tests = All changes what the other measures; only sample_repo and the adopt commit are shared."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::standins::every_preset_through_its_standins",
+      "kind": "slow-test",
+      "hash": "4943b269c3b43557",
+      "seconds": 10.049,
+      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
     }
   ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 61,
-      "test_seconds": 31.217
+      "uncovered_lines": 57,
+      "test_seconds": 26.978
     }
   }
 }
