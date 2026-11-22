@@ -11,6 +11,7 @@ use crate::measure::{Timing, reduce};
 use crate::model::{Measurement, MutantStatus, SuiteMeasurement};
 use crate::ratchet::{Baseline, check, ratchet};
 use crate::tasks::{TaskKind, of_measurement};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 fn sample(lang: &str) -> PathBuf {
@@ -75,6 +76,16 @@ fn measure_with_coverage(
     reduce(st, t, c, reach, Some(m.into()), Timing { command_seconds: 0.0, tree_cpu, test_cpu: Default::default() })
 }
 
+/// Each redundant-test candidate with its class (slimfit#88), task by task.
+fn classes(s: &SuiteMeasurement) -> Vec<(String, Value)> {
+    let tasks = of_measurement(s, &[]);
+    let candidates = tasks
+        .iter()
+        .filter(|t| t.kind == TaskKind::RedundantTest)
+        .flat_map(|t| t.evidence["candidates"].as_array().unwrap().clone());
+    candidates.map(|c| (c["test"].as_str().unwrap().into(), c["class"].clone())).collect()
+}
+
 /// What every sample must show, whatever the language.
 fn assert_the_five_situations(s: &SuiteMeasurement, source: &str, adult_line: u32) {
     assert_eq!(s.metrics.failures, 0, "{}: no failures", s.suite);
@@ -132,6 +143,9 @@ fn rust_sample() {
     assert_eq!(lines[of("calc::tests::adult")], [("src/lib.rs".to_string(), vec![11, 12, 13])].into());
     let source = reach.tests[of("calc::tests::adds")].source.as_ref().unwrap();
     assert_eq!((source.file.as_str(), source.line), ("src/lib.rs", 20));
+    // The copy of `adds` asserts what `adds` does: delete it; `slow` asserts another sum: read.
+    let want = [("calc::tests::slow", "read"), ("calc::tests::adds_again", "asserts-contained")];
+    assert_eq!(classes(&s), want.map(|(t, c)| (t.to_string(), json!(c))));
 }
 
 /// Coverage that depends on timing reaches a line in one run and misses it
@@ -185,6 +199,8 @@ fn go_sample() {
     let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
     assert!(!redundant.is_empty(), "{tasks:#?}");
     assert!(redundant.iter().all(|t| t.files == ["calc_test.go"]), "{redundant:#?}");
+    let classes_ = [("example.com/calc::TestSlow", "read"), ("example.com/calc::TestAddsAgain", "asserts-contained")];
+    assert_eq!(classes(&s), classes_.map(|(t, c)| (t.to_string(), json!(c))));
 }
 
 #[test]
