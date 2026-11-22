@@ -18,7 +18,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/python_source.rs`: the one reader of Python syntax: where a pytest test `def` is and its text. `measure` asks it.
 - `src/presets/`: preset commands too long for a Rust string (the Rust test command and its per-test runner; the Go test command and its run of each test; the Python test command, and the mutmut driver that takes cargo-mutants' flags and writes its shapes).
 - `src/test_shape.rs`: a test's shape, read with tree-sitter (Rust and Go grammars): its body with literals as placeholders, the literals, its assertions. `measure` stores it with each test's source; `tasks` classes redundant-test candidates by it.
-- `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release (`packaging/release.sh cut`) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited.
+- `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release build (`packaging/release.sh build`, universal) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited. The tap's workflow signs, notarizes and publishes it; `cut` runs that workflow and waits (ADR 0013).
 - `testdata/<language>/`: one sample project per language, with real reports in `reports/`. Every sample holds the same five situations (see `src/fixtures.rs`).
 - `src/tools.rs`: where the tools write reports on their own, shared with the stand-ins.
 - `examples/treecount/`: slimfit#66's measurement, not part of slimfit: instructions retired over each test's whole process tree (a hook injected into every process, system binaries that run others run as re-signed copies), as nextest's runner. `tests/treecount.rs` holds that a child's work is counted.
