@@ -1005,12 +1005,22 @@ mod answer_tests {
         assert!(proposed(repo));
         let f = faults(repo, "keep src/lib.rs:5-8 --reason r");
         assert!(f[0].fault.contains("no suite's coverage has an uncovered span src/lib.rs:5-8"), "{f:?}");
-        let (out, _) =
-            slimfit_args(repo, &["keep", "src/lib.rs:5-9", "--reason", "runs only under the real host"]).unwrap();
-        let k = &out["kept_spans"][0];
+        // Verdicts on the same lines in another suite, and on other lines in this one.
+        let p = repo.join(crate::ratchet::FILE);
+        let mut b: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let verdict = |suite: &str, start: u32, end: u32| json!({ "suite": suite, "file": "src/lib.rs", "start": start, "end": end, "hash": "h", "reason": "r" });
+        b["kept_spans"] = json!([verdict("go", 5, 9), verdict("rust", 1, 2)]);
+        std::fs::write(&p, b.to_string()).unwrap();
+        let keep = |why: &str| slimfit_args(repo, &["keep", "src/lib.rs:5-9", "--reason", why]).unwrap().0;
+        keep("first");
+        let out = keep("runs only under the real host");
+        // Kept again, it replaces its own verdict only.
+        let spans = out["kept_spans"].as_array().unwrap();
+        assert_eq!(spans[..2], [verdict("go", 5, 9), verdict("rust", 1, 2)], "{out:#}");
+        let k = &spans[2];
         assert_eq!(
-            (&k["file"], &k["start"], &k["end"], &k["function"]),
-            (&json!("src/lib.rs"), &json!(5), &json!(9), &json!("unused"))
+            (spans.len(), &k["file"], &k["start"], &k["end"], &k["function"], &k["reason"]),
+            (3, &json!("src/lib.rs"), &json!(5), &json!(9), &json!("unused"), &json!("runs only under the real host"))
         );
         assert!(!proposed(repo));
         // A line of it edited: proposed again, and the ratchet drops the verdict.
@@ -1018,7 +1028,9 @@ mod answer_tests {
         std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap().replace("doubled + 7", "doubled + 8")).unwrap();
         assert!(proposed(repo));
         slimfit_args(repo, &["ratchet", "--no-mutants", "a constant", "--picker", "p", "--author", "a"]).unwrap();
-        assert!(crate::session::Session::open(repo).unwrap().base.kept_spans.is_empty());
+        // The other suite's verdict is not this measurement's to judge: it stays.
+        let left = crate::session::Session::open(repo).unwrap().base.kept_spans;
+        assert_eq!(left.iter().map(|k| k.suite.as_str()).collect::<Vec<_>>(), ["go"]);
     }
 
     /// A sample of a landed change's mutants, out of the loop: no name the
