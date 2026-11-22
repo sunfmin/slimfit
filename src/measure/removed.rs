@@ -188,6 +188,46 @@ impl Moves {
 mod t {
     use super::*;
 
+    /// The worktree of where the change starts follows it: made when there
+    /// is none (or a directory that is no worktree), checked out again when
+    /// the change starts elsewhere, kept as it is when it starts there still.
+    #[test]
+    fn the_tree_before_follows_where_the_change_starts() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path();
+        let g = crate::measure::t::git;
+        g(repo, &["init", "-q"]);
+        std::fs::write(repo.join("a"), "1").unwrap();
+        g(repo, &["add", "-A"]);
+        g(repo, &["commit", "-qm", "one"]);
+        let one = git::run(repo, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        std::fs::write(repo.join("a"), "2").unwrap();
+        g(repo, &["commit", "-qam", "two"]);
+        let two = git::run(repo, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        std::fs::create_dir_all(repo.join(OUT).join("before")).unwrap();
+        let read = |dir: &Path| std::fs::read_to_string(dir.join("a")).unwrap();
+        assert_eq!(read(&checkout(repo, &one).unwrap()), "1");
+        let dir = checkout(repo, &two).unwrap();
+        assert_eq!(read(&dir), "2");
+        std::fs::write(dir.join("kept"), "").unwrap();
+        assert!(checkout(repo, &two).unwrap().join("kept").exists());
+    }
+
+    /// A measured test is the removed one by its function's place; when the
+    /// measurement found no function for it, by its name's last segment.
+    #[test]
+    fn a_measured_test_is_the_removed_one_by_place_or_name() {
+        let g = Removed { file: "src/a.rs".into(), line: 7, name: "x".into() };
+        let t = |name: &str, at: Option<(&str, u32)>| crate::model::ReachTest {
+            binary: "b".into(),
+            name: name.into(),
+            source: at.map(|(f, l)| crate::model::TestSource { file: f.into(), line: l, hash: String::new() }),
+        };
+        assert!(is(&t("m::x", Some(("src/a.rs", 7))), &g) && is(&t("m::x", None), &g));
+        assert!(!is(&t("m::x", Some(("src/a.rs", 8))), &g) && !is(&t("m::x", Some(("src/b.rs", 7))), &g));
+        assert!(!is(&t("x::y", None), &g));
+    }
+
     /// A line outside every hunk moves by what the hunks above it add less
     /// what they delete; one a hunk keeps moves with it; one it deletes or
     /// rewrites is gone, and so is every line of a deleted file.
