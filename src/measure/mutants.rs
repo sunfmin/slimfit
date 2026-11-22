@@ -3,6 +3,7 @@
 //! alone, each with the tests that ran its function. Measuring a suite
 //! asks this module for one thing: run the suite's picks on its test run.
 
+use super::removed::Reached;
 use super::{Resolver, Run, Scratch, quoted, tail, unreadable};
 use crate::config::{Config, MutantTests, Suite};
 use crate::fault::{self, Faults, fault};
@@ -91,8 +92,8 @@ pub fn refuse_unpickable(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-/// The change's mutants in one suite: the source lines it adds, and what
-/// its tool lists of them.
+/// The change's mutants in one suite: the source lines it adds and those
+/// the tests it removes ran, and what its tool lists of them.
 #[derive(Debug, Default)]
 pub(super) struct Listed {
     pub(super) lines: landing::Lines,
@@ -109,8 +110,9 @@ pub fn candidates(repo: &Path, cfg: &Config, tree: &landing::Tree) -> Result<BTr
 }
 
 /// What each suite whose tool can pick lists of the change (ADR 0008): its
-/// files that add a source line, as a diff the tool lists the mutants of.
-/// Refuses with no branch to land on, rather than list more than the change.
+/// files that add a source line, as a diff the tool lists the mutants of,
+/// and the lines the tests it removes ran (slimfit#87). Refuses with no
+/// branch to land on, rather than list more than the change.
 fn listed(repo: &Path, cfg: &Config, tree: &landing::Tree, scratch: &Path) -> Result<BTreeMap<String, Listed>> {
     let Some(l) = tree.landing(repo, &cfg.check)? else {
         return Err(fault(
@@ -124,30 +126,44 @@ fn listed(repo: &Path, cfg: &Config, tree: &landing::Tree, scratch: &Path) -> Re
         ));
     };
     eprintln!("slimfit: the change is what HEAD adds since its merge base with {}, {}", l.target, l.from);
+    let mut reached = super::removed::reached(repo, cfg, tree, l)?;
     let mut out = BTreeMap::new();
     for (name, lines) in landing::required(cfg, tree, &l.added)? {
-        let listed = list_suite(repo, &tree.suite(cfg, &name)?.suite, (&l.from, &l.to), lines, scratch);
+        let reached = reached.remove(&name).unwrap_or_default();
+        let listed = list_suite(repo, &tree.suite(cfg, &name)?.suite, (&l.from, &l.to), lines, reached, scratch);
         out.insert(name.clone(), listed.map_err(|e| fault::within(&format!("suite {name}"), e))?);
     }
     Ok(out)
 }
 
 /// What one suite's tool lists of `lines`, those a diff `from` → `to` adds
-/// in it: nothing, and the tool not run, when the suite adds no source line.
+/// in it, and of those `reached`, that tests the diff removes ran: nothing,
+/// and the tool not run, when there are none. The tool is given the diff,
+/// or, with lines it does not add, a diff that adds each line listed.
 pub(super) fn list_suite(
     repo: &Path,
     suite: &Suite,
     (from, to): (&str, &str),
-    lines: landing::Lines,
+    mut lines: landing::Lines,
+    reached: Reached,
     scratch: &Path,
 ) -> Result<Listed> {
     let name = &suite.name;
-    let files: Vec<String> = lines.keys().cloned().collect();
-    if files.is_empty() {
-        return Ok(Listed::default());
-    }
-    let patch = git::diff(repo, from, to, &suite.root, &files)?;
     let run = Run::new(repo, suite, scratch.join(name));
+    let patch = if reached.lines.is_empty() {
+        let files: Vec<String> = lines.keys().cloned().collect();
+        if files.is_empty() {
+            return Ok(Listed::default());
+        }
+        git::diff(repo, from, to, &suite.root, &files)?
+    } else {
+        for (f, ls) in &reached.lines {
+            lines.entry(f.clone()).or_default().extend(ls.clone());
+        }
+        let prefix = run.prefix();
+        let at = lines.iter().map(|(f, ls)| (f.strip_prefix(&prefix).unwrap_or(f), ls.keys().copied().collect()));
+        adding(&run.root, at)?
+    };
     std::fs::create_dir_all(&run.out)?;
     let (diff, list) = (run.out.join("change.diff"), run.out.join("mutants.list.json"));
     std::fs::write(&diff, &patch)?;
@@ -174,7 +190,10 @@ pub(super) fn list_suite(
         ));
     };
     let prefix = run.prefix();
-    candidates.iter_mut().for_each(|c| c.file = format!("{prefix}{}", c.file));
+    for c in &mut candidates {
+        c.file = format!("{prefix}{}", c.file);
+        c.removed_tests = reached.tests(&c.file, c.line..=c.end.max(c.line));
+    }
     Ok(Listed { lines, candidates })
 }
 
@@ -315,9 +334,16 @@ pub(super) fn mutate_picks(
 /// them), so the change's whole diff would run them all. Refuses a pick
 /// every line of which a field deletion not picked touches.
 pub(super) fn run_diff(root: &Path, prefix: &str, listed: &Listed, picks: &[Pick]) -> Result<String> {
+    let lines = run_lines(listed, picks).map_err(Faults)?;
+    adding(root, lines.into_iter().map(|(file, at)| (file.strip_prefix(prefix).unwrap_or(file), at)))
+}
+
+/// A diff that adds, in each file (relative to `root`), the lines `at`, as
+/// they read now: what the tool is limited to when the lines are not the
+/// ones a real diff adds.
+fn adding<'a>(root: &Path, files: impl IntoIterator<Item = (&'a str, BTreeSet<u32>)>) -> Result<String> {
     let mut diff = String::new();
-    for (file, at) in run_lines(listed, picks).map_err(Faults)? {
-        let file = file.strip_prefix(prefix).unwrap_or(file);
+    for (file, at) in files {
         let text = std::fs::read_to_string(root.join(file))?;
         let text: Vec<&str> = text.lines().collect();
         diff.push_str(&format!("--- a/{file}\n+++ b/{file}\n"));

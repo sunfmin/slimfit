@@ -341,7 +341,9 @@ impl Bound {
         match self {
             Bound::TestSeconds if s.untimed => None,
             Bound::SurvivedMutants => survivors(s),
-            Bound::UnrecordedMutants => held.map(|h| h.unrecorded.get(&s.suite).map_or(0.0, |u| u.lines as f64)),
+            Bound::UnrecordedMutants => {
+                held.map(|h| h.unrecorded.get(&s.suite).map_or(0.0, |u| (u.lines + u.tests) as f64))
+            }
             // Of the change as a whole, not of a suite: `check` holds it once.
             Bound::UnrecordedGrowth => None,
             _ => self.kept(Some(&s.metrics)),
@@ -420,9 +422,14 @@ fn fix(b: Bound, s: &SuiteMeasurement, held: Option<&Held>) -> String {
             } else {
                 "no record of its mutants that names a picker other than its author"
             };
+            let what = match (u.lines, u.tests) {
+                (n, 0) => format!("adds {n} source line(s)"),
+                (0, t) => format!("removes {t} test(s)"),
+                (n, t) => format!("adds {n} source line(s) and removes {t} test(s)"),
+            };
             format!(
-                "the change adds {} source line(s) since {} ({}), the first at {}, and {missing}: {PICK_THE_MUTANTS}",
-                u.lines, h.from, h.target, u.first
+                "the change {what} since {} ({}), the first at {}, and {missing}: {PICK_THE_MUTANTS}",
+                h.from, h.target, u.first
             )
         }
         Bound::UnrecordedGrowth => unreachable!("held of the change as a whole: `growth_violation`"),
@@ -826,15 +833,16 @@ mod t {
         assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("--kind slow-test"), "{f:?}");
     }
 
-    /// A landing that adds source lines with no record fails the check as
-    /// `unrecorded_mutants`, its fix naming the first line and what is
+    /// A landing that adds source lines or removes tests with no record
+    /// fails the check as `unrecorded_mutants`, its fix naming the first
+    /// line (or test) and what is
     /// missing; once held (no suite unrecorded), or with no landing, it
     /// passes, and it never counts as improved.
     #[test]
     fn a_landing_without_a_record_fails_as_unrecorded_mutants() {
         let cfg = CheckConfig::default();
         let ten = measurement(m(10, 10.0), None);
-        let unrecorded = [("s".to_string(), crate::landing::Unrecorded { lines: 3, first: "a.rs:7".into() })];
+        let unrecorded = [("s".to_string(), crate::landing::Unrecorded { lines: 3, tests: 0, first: "a.rs:7".into() })];
         let held = |records: Vec<String>| Held {
             target: "origin/HEAD".into(),
             from: "abc".into(),
@@ -860,6 +868,15 @@ mod t {
         let v = check(&base(m(10, 10.0)), &ten, &cfg, Some(&held(vec!["r.json".into()])));
         assert!(
             v.violations[0].fix.contains("and no record of its mutants that names a picker other than its author: ")
+        );
+        // A removed test counts as a line does; with no line, the first test is named.
+        let removed = crate::landing::Unrecorded { lines: 0, tests: 2, first: "t.rs:4: gone".into() };
+        let only_tests = Held { unrecorded: [("s".to_string(), removed)].into(), ..held(vec![]) };
+        let u = check(&base(m(10, 10.0)), &ten, &cfg, Some(&only_tests)).violations.remove(0);
+        assert_eq!(u.current, 2.0);
+        assert!(
+            u.fix.starts_with("the change removes 2 test(s) since abc (origin/HEAD), the first at t.rs:4: gone,"),
+            "{u:?}"
         );
         let recorded = Held { unrecorded: Default::default(), ..held(vec![]) };
         for h in [Some(&recorded), None] {

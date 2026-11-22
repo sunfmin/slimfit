@@ -206,15 +206,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             // time of one of the same files, or runs again (slimfit#74).
             let m = s.measure(measure::Options { fresh, dry_run, timed: true, ..Default::default() })?;
             let new = ratchet::ratchet(old, &m, &s.cfg.check, &loosen, reason.as_deref())?;
-            let grown = if growth.serves.is_some() {
-                landing::hold(&repo, &s.cfg, &s.tree, false)?.map_or(0, |h| h.growth)
-            } else {
-                0
-            };
+            // The landing is read only for what is recorded of it: its growth, or the tests it removes.
+            let records = growth.serves.is_some() || picker.is_some() || no_mutants.is_some();
+            let held = if records { landing::hold(&repo, &s.cfg, &s.tree, false)? } else { None };
+            let grown = held.as_ref().map_or(0, |h| h.growth);
             let growth_record = growth.record(&m.tree, grown, author.as_deref())?;
             let growth_record = growth_record.map(|r| landing::file_in(growth::DIR, &r)).transpose()?;
             let author = author.filter(|_| growth_record.is_none() || picker.is_some() || no_mutants.is_some());
-            let record = landing::Record::of(&m, no_mutants, picker, author)?;
+            let removed = held.map(|h| h.removed_tests).unwrap_or_default();
+            let record = landing::Record::of(&m, no_mutants, picker, author, removed)?;
             let record = record.map(|r| landing::file_in(landing::DIR, &r.with_firsts(&repo))).transpose()?;
             let mut writes = Writes { repo: &repo, dry_run, would: Default::default() };
             let mut changed = false;
@@ -619,6 +619,128 @@ mod answer_tests {
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let f = faults(repo, "check");
         assert!(f[0].fault.starts_with("slimfit.toml's [check] target gone shares no commit with HEAD"), "{f:?}");
+    }
+
+    /// A change that removes tests owes a record of picks over the lines
+    /// they ran, from the measurement of the tree it starts from (slimfit#87).
+    /// Deleting `adult`, the one test of `is_adult`: the gate fails as
+    /// `unrecorded_mutants`, `next` asks for picks among the mutants of the
+    /// lines it ran (each naming it), the tool is given those lines, and a
+    /// pick the tests left miss fails, so `ratchet` refuses it. Deleting
+    /// `adds_again`, whose lines `adds` runs too: its pick is killed, and the
+    /// record, naming the removed test, passes the gate.
+    #[test]
+    fn a_change_that_removes_tests_owes_picks_over_their_lines() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        let r = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/rust/reports");
+        // The tool's verdicts on a tree without `adult`: no test left runs `is_adult`.
+        let mut outcomes: Value =
+            serde_json::from_str(&std::fs::read_to_string(r.join("outcomes.json")).unwrap()).unwrap();
+        for o in outcomes["outcomes"].as_array_mut().unwrap() {
+            if o["scenario"]["Mutant"]["function"]["function_name"] == "is_adult" {
+                o["summary"] = "MissedMutant".into();
+            }
+        }
+        let tools = tempfile::tempdir().unwrap();
+        let without_adult = tools.path().join("outcomes.json");
+        std::fs::write(&without_adult, outcomes.to_string()).unwrap();
+        let (r, gone) = (r.display(), without_adult.display());
+        // Each test run's reach is the sample's (its paths in the tree run), less the tests whose `fn` is gone.
+        let reach = format!(
+            "gone=$(for t in adds adds_again adult slow; do grep -q \"fn $t()\" src/lib.rs || printf '%s ' $t; done); \
+             awk -v gone=\" $gone\" '/^test /{{n=split($0, a, \"::\"); skip=index(gone, \" \" a[n] \" \")}} !skip' \
+             {r}/reach.txt | sed \"s|/REPO/|$PWD/|\" > \"$SLIMFIT_OUT/reach.txt\""
+        );
+        let test = cfg.suites[0].resolve().test_command;
+        cfg.suites[0].overrides.test_command = Some(format!("{test} && {reach}"));
+        cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
+        cfg.suites[0].overrides.mutants_command = Some(format!(
+            "f() {{ case \" $* \" in *\" --list \"*) cp \"$2\" \"$SLIMFIT_OUT/listed.diff\"; cat {r}/mutants.list.json;; \
+             *) mkdir -p \"$SLIMFIT_OUT/mutants.out\"; if grep -q 'fn adult()' src/lib.rs; then o={r}/outcomes.json; \
+             else o={gone}; fi; cp \"$o\" \"$SLIMFIT_OUT/mutants.out/outcomes.json\";; esac; }}; f"
+        ));
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        let lib = repo.join("src/lib.rs");
+        let original = std::fs::read_to_string(&lib).unwrap();
+        let delete = |test: &str| {
+            let body =
+                original.split(&format!("    #[test]\n    fn {test}()")).nth(1).unwrap().split_once("}\n").unwrap().0;
+            std::fs::write(&lib, original.replace(&format!("    #[test]\n    fn {test}(){body}}}\n\n"), "")).unwrap();
+        };
+        let violations = |out: &Value| -> Vec<String> {
+            let v = out["verdict"]["violations"].as_array().unwrap();
+            v.iter().map(|v| v["metric"].as_str().unwrap().to_string()).collect()
+        };
+
+        git(repo, &["checkout", "-qb", "a"]);
+        delete("adult");
+        let (out, code) = slimfit(repo, "check").unwrap();
+        assert_eq!(
+            (code, violations(&out)),
+            (crate::EXIT_VIOLATION, vec!["unrecorded_mutants".to_string()]),
+            "{out:#}"
+        );
+        let v = &out["verdict"]["violations"][0];
+        assert_eq!(v["current"].as_f64(), Some(1.0), "{v:#}");
+        assert!(v["fix"].as_str().unwrap().starts_with("the change removes 1 test(s) since "), "{v:#}");
+        assert_eq!(out["landing"]["removed_tests"], json!({ "rust": ["src/lib.rs:30: adult"] }), "{out:#}");
+        // `next` asks for picks over what `adult` ran, `is_adult`'s lines; the tool is given those lines.
+        let (next, _) = slimfit(repo, "next").unwrap();
+        let task = &next["task"];
+        assert_eq!(
+            (task["kind"].as_str(), &task["evidence"]["removed_tests"]),
+            (Some("pick-mutants"), &json!(["src/lib.rs:30: adult"]))
+        );
+        let candidates = task["evidence"]["candidates"].as_array().unwrap();
+        let named: Vec<u64> = candidates
+            .iter()
+            .filter(|c| c["removed_tests"] == json!(["src/lib.rs:30: adult"]))
+            .map(|c| c["line"].as_u64().unwrap())
+            .collect();
+        assert_eq!(named, [12, 12, 12], "{task:#}");
+        let listed = std::fs::read_to_string(repo.join(".slimfit/out/rust/listed.diff")).unwrap();
+        let hunks: Vec<&str> = listed.lines().filter(|l| l.starts_with("@@")).collect();
+        assert_eq!(hunks, ["@@ -10,0 +11,1 @@", "@@ -10,0 +12,1 @@", "@@ -10,0 +13,1 @@"], "{listed}");
+        // The pick runs against the tests left, which miss it: a test removed too many.
+        let missed = "src/lib.rs:12:9: replace >= with < in is_adult";
+        let (out, code) = slimfit_args(repo, &["check", "--mutants", missed, "--why", "the age bound"]).unwrap();
+        assert_eq!((code, violations(&out)), (crate::EXIT_VIOLATION, vec!["survived_mutants".to_string()]), "{out:#}");
+        let f = faults(repo, "ratchet --picker p --author a");
+        assert!(f.iter().any(|f| f.fault.contains("survived_mutants")), "{f:?}");
+        assert!(!repo.join(crate::landing::DIR).exists(), "a refused ratchet writes no record");
+
+        git(repo, &["checkout", "-q", "--", "src/lib.rs"]);
+        git(repo, &["checkout", "-qb", "b", "target"]);
+        delete("adds_again");
+        let (out, code) = slimfit(repo, "check").unwrap();
+        assert_eq!(
+            (code, violations(&out)),
+            (crate::EXIT_VIOLATION, vec!["unrecorded_mutants".to_string()]),
+            "{out:#}"
+        );
+        let killed = "src/lib.rs:2:7: replace + with - in add";
+        let (listed, _) = slimfit(repo, "check --mutants").unwrap();
+        let pick =
+            listed["candidates"]["rust"].as_array().unwrap().iter().find(|c| c["name"] == killed).unwrap().clone();
+        assert_eq!(pick["removed_tests"], json!(["src/lib.rs:25: adds_again"]), "{listed:#}");
+        let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the sum"]).unwrap();
+        assert_eq!(code, crate::EXIT_OK, "{out:#}");
+        let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();
+        let record = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
+        let record: Value = serde_json::from_str(&record).unwrap();
+        assert_eq!(record["removed_tests"], json!({ "rust": ["src/lib.rs:25: adds_again"] }), "{record:#}");
+        assert_eq!(record["picks"]["rust"][0]["outcome"], "killed", "{record:#}");
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "b"]);
+        let (out, code) = slimfit(repo, "check").unwrap();
+        assert_eq!(code, crate::EXIT_OK, "{out:#}");
     }
 
     /// A change past `growth_allowance` net fails every `check` as

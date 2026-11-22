@@ -16,6 +16,7 @@ use std::process::Command;
 use std::time::Instant;
 
 mod mutants;
+mod removed;
 pub mod sample;
 
 use mutants::{Change, Mutation, Picked};

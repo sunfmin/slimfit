@@ -22,8 +22,9 @@ is on slimfit#58 in factorium's tracker.
 
 ## Decision
 
-Invariant: **no change that adds source lines reaches the target without a
-record of its mutants that names a picker other than its author**: the
+Invariant: **no change that adds source lines or removes tests reaches the
+target without a record of its mutants that names a picker other than its
+author**: the
 picks a second agent made, why, and their outcomes; or that agent's reason
 none is worth one. Mutants never run in a gate (ADR 0006).
 
@@ -34,9 +35,25 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   inline tests, in suites whose tool can list a change's mutants and run
   one by name (`mutants_diff_flag` and `mutants_pick_flag`; cargo-mutants'
   `--in-diff` and `-F`).
+- **The removed tests** (slimfit#87) are the Rust test functions (a `fn`
+  under `#[test]`, an attribute path ending in `test`, or `rstest`) of the
+  files the change touches where it starts that are gone from all of them
+  by name, unless the same body is there under a name new to them (a
+  rename or a move; a twin left under its own name renames nothing). Read
+  from syntax, so the gate stays one read of those files. A test deleted
+  or merged may have been the only one to notice a fault on lines others
+  run too, which `uncovered_lines` cannot see: so the lines it ran, from
+  the measurement of the tree the change starts from (a worktree of
+  `from` in `.slimfit/out/before/`, measured once and kept, the same in
+  every clone), moved to where they are now, are the change's lines too.
+  Their mutants run against the tests left: a survivor is a test removed
+  too many, put back or asserted in the test it was merged into.
 - **The candidates.** `check --mutants` with no name lists them
   (cargo-mutants `--list --json --in-diff`: name, file, line, function,
-  replacement) without building.
+  replacement) without building; with removed tests, from a diff that
+  adds each of the change's lines, and each candidate on a removed test's
+  line names it (`removed_tests`). One pool: the change's at most five
+  picks are over both, by the one picker who sees the whole change.
 - **A second agent picks**, at the same point in the loop as ever: after
   the change, before `ratchet`, before landing; not as idle work. It is
   given the goal (`slimfit help picker`, its one home), the change's diff
@@ -55,7 +72,8 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   survived_mutants --reason` when it changes nothing observable.
 - **The record.** `ratchet --picker <id> --author <id>` after that run
   writes `.slimfit/mutants/<hash>.json`: the tree it was made of, the two
-  ids, and per suite the picks with why and outcome. `ratchet --no-mutants
+  ids, per suite the picks with why and outcome, and the tests the change
+  removes (`removed_tests`, each `file:line: name` where it starts). `ratchet --no-mutants
   "<why>" --picker <id> --author <id>` writes one with the reason and no
   picks. An id is opaque, the caller's word (a session id with harness and
   model). `ratchet` refuses a record without both ids, or with the two
@@ -65,7 +83,7 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   write the same path and merge without a conflict.
 - **The gate.** Every `check`, plain ones included, fails with
   `unrecorded_mutants` (never loosened) when the change adds source lines
-  and adds no file in `.slimfit/mutants/` whose `picker` and `author` are
+  or removes tests and adds no file in `.slimfit/mutants/` whose `picker` and `author` are
   both given and differ, unless the measurement itself ran picks (its
   `ratchet` writes the record). That comparison is all it reads of a
   record: it does not judge a pick, ask who the ids are, or ask which lines
@@ -73,8 +91,9 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   the target in moves the merge base, so other landings' lines and records
   both drop out.
 - **The loop asks first.** `slimfit next` gives a `pick-mutants` task,
-  right after `failing-test`, while the change adds source lines and no
-  such record, with the candidates as evidence; its steps say to ask a
+  right after `failing-test`, while the change adds source lines or
+  removes tests and no such record, with the candidates (and the removed
+  tests) as evidence; its steps say to ask a
   second agent with the goal topic, not to pick yourself.
 - **Drift shows as a trend.** `slimfit report` counts records with picks
   against those without (`mutants_records`) and tallies the picks'
@@ -100,10 +119,15 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   passes. slimfit checks that the step was taken, not who took it (ADR
   0009, point 3); a `picker` rate far below the `sampled` one in `report`
   is where a hollow step shows.
-- The gate's check is a `git merge-base`, a `write-tree`, one `git diff`
-  and a read of the records the change adds.
-- A change that only deletes code, or only touches tests, adds no source
-  line and needs no record.
+- The gate's check is a `git merge-base`, a `write-tree`, one `git diff`,
+  a read of the Rust files it touches where it starts, and a read of the
+  records the change adds.
+- A change that removes tests costs, on its first listing, a test run of
+  the tree it starts from (a cold build in its worktree the first time).
+- A change that only deletes code, or only adds or edits tests, adds no
+  source line and removes no test, and needs no record. A test removed
+  from one module of a file while another module there keeps its name is
+  taken as kept.
 - In a proving branch that collects several landings, one record naming a
   second picker anywhere in the change against `origin/HEAD` passes all of
   them; each landing was held on its own branch before it got there.

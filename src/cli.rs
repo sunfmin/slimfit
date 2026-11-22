@@ -142,7 +142,7 @@ pub(crate) enum Cmd {
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
     ///
     /// - `failing-test`: `test` and `log`, the test run's log.
-    /// - `pick-mutants`: `lines`, the source lines the change adds, and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
+    /// - `pick-mutants`: `lines`, the source lines the change adds, `removed_tests`, the tests it removes (each as file:line: name where it starts), and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
     /// - `justify-growth`: `lines`, the source lines the change adds net; `allowance`, `growth_allowance`; `from`, where the change starts (`git diff <from>` is the diff the reviewer is given); and `grown`, each file whose source lines changed, with its `lines` (net, negative for a file that shrank), most first.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
     /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds` and `lines` (how many source lines it runs). A test kept leaves its file's task.
@@ -158,7 +158,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - It runs no mutant. Surviving-mutant tasks come from the cached `slimfit check --mutants <name>...` of this same tree, the one way mutants run (your picks of your own change, at background priority: [costs](help:costs)); without one there are none, and `notes` says so. `next` has no `--mutants` of its own: it reads that run's survivors, so a second path would only run the same mutants again, at the agent's own priority.
-    /// - A pick-mutants task lists the change's mutants as the mutation tool does (`slimfit check --mutants`): that runs the tool's listing, a few seconds, and builds nothing.
+    /// - A pick-mutants task lists the change's mutants as the mutation tool does (`slimfit check --mutants`): that runs the tool's listing, a few seconds, and builds nothing; when the change removes tests, the first listing also measures the tree it starts from (see [costs](help:costs)).
     /// - Surviving-mutant tasks name only picks that survived, and with `--sample` the sample's survivors: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
     /// - `--sample` runs mutants, unlike the rest of `next`: put it on the idle tasks line only, never in the loop or a gate. No `check` reads what it finds (see [the sample](help:sample)).
     /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
@@ -217,7 +217,7 @@ pub(crate) enum Cmd {
     /// ## What trips you up
     ///
     /// - It is itself a test run. Put it in the gate in place of the project's own test run, never beside it: running both runs the tests twice.
-    /// - A change that only deletes code or tests adds no line: it lists no mutant and needs no record; what a deleted test killed elsewhere is not seen (see [mutants scope](help:mutants-scope)).
+    /// - A change that only deletes code adds no line: it lists no mutant and needs no record. One that deletes or merges a test does: its picks are over the lines the removed test ran, run against the tests left (see [mutants scope](help:mutants-scope)).
     /// - A pick's name holds its line and column: an edit above it renames it, and the old name is refused. List again after editing.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
@@ -672,7 +672,8 @@ mod tests {
         assert_eq!(named(model::METRICS_HELP), keys(&model::Metrics::default()));
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
-        let held = crate::landing::Held::default();
+        let removed = [("rust".to_string(), vec!["t.rs:1: t".to_string()])];
+        let held = crate::landing::Held { removed_tests: removed.clone().into(), ..Default::default() };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
         assert_eq!(named(crate::report::RATE_HELP), keys(&crate::report::Rate::default()));
@@ -680,7 +681,7 @@ mod tests {
             named(crate::measure::sample::SAMPLE_HELP)[..4],
             keys(&crate::measure::sample::Sample::default())[..]
         );
-        let candidate = model::Candidate::default();
+        let candidate = model::Candidate { removed_tests: removed[0].1.clone(), ..Default::default() };
         assert_eq!(named(model::CANDIDATE_HELP), keys(&candidate));
         let pick = model::Pick { name: String::new(), why: String::new(), outcome: None, first_outcome: None };
         assert_eq!(named(model::PICK_HELP)[..3], keys(&pick)[..]);
