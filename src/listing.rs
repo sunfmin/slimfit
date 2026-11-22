@@ -108,41 +108,39 @@ pub fn of<'a>(
         }
     }
     // What is left of the budget goes to examples, a round of one per function
-    // at a time; each suite spells out one at least, so a grouped listing
-    // always names a candidate to pick.
-    let (mut spent, mut full) = (size(&listing), false);
-    let mut spelled: BTreeMap<&String, Vec<(usize, usize)>> = BTreeMap::new();
+    // at a time, until one does not fit; each suite spells out one at least,
+    // so a grouped listing always names a candidate to pick.
+    let mut full = false;
+    let mut places: BTreeMap<&String, Vec<(usize, usize)>> = BTreeMap::new();
     for round in 0..EXAMPLES {
         for (suite, of_each) in &groups {
             for (at, entries) in of_each.iter().enumerate() {
                 let Some(e) = entries.get(round) else { continue };
-                let cost = cost(e);
-                let first = round == 0 && !spelled.contains_key(suite);
-                full = full || spent + cost > BUDGET - NEXT;
-                if first || !full {
-                    spelled.entry(suite).or_default().push((at, round));
-                    spent += cost;
+                let first = round == 0 && !places.contains_key(suite);
+                if full && !first {
+                    continue;
                 }
+                listing.candidates.get_mut(suite).unwrap().push(e.clone());
+                if !first && size(&listing) > BUDGET - NEXT {
+                    listing.candidates.get_mut(suite).unwrap().pop();
+                    full = true;
+                    continue;
+                }
+                places.entry(suite).or_default().push((at, round));
             }
         }
     }
-    for (suite, mut places) in spelled {
-        places.sort_unstable();
-        let of_each = &groups[suite];
-        let examples = places.into_iter().map(|(at, round)| of_each[at][round].clone());
-        listing.candidates.insert(suite.clone(), examples.collect());
+    for (suite, places) in places {
+        let spelled = listing.candidates.get_mut(suite).unwrap();
+        let mut placed: Vec<_> = places.into_iter().zip(std::mem::take(spelled)).collect();
+        placed.sort_by_key(|(place, _)| *place);
+        *spelled = placed.into_iter().map(|(_, e)| e).collect();
     }
     listing
 }
 
 /// The bytes left of [`BUDGET`] for the rest of the answer (`next`).
 const NEXT: usize = 2_000;
-
-/// The bytes `e` adds to a listing as it is printed, nested as a candidate.
-fn cost(e: &Entry) -> usize {
-    let text = serde_json::to_string_pretty(e).unwrap_or_default();
-    text.len() + 6 * text.lines().count() + 2
-}
 
 /// Whether `c` is in the function `key` names (`<file>: <function>`).
 fn within(c: &Candidate, key: &str) -> bool {
@@ -226,6 +224,11 @@ mod tests {
         let per: Vec<usize> = functions.iter().map(spelled).collect();
         let firsts = per.iter().take_while(|&&n| n == 1).count();
         assert!(firsts > 1 && per[firsts..].iter().all(|&n| n == 0), "{per:?}");
+        // As full as the budget holds: the next example would not fit.
+        let next = candidates["rust"].iter().find(|c| c.file == functions[firsts].file).unwrap();
+        let mut more = listing;
+        more.candidates.get_mut("rust").unwrap().push(Entry { candidate: next, removed: (0..60).collect() });
+        assert!(size(&more) > BUDGET - NEXT, "{}", size(&more));
         // Few functions, many mutants each: room for every round.
         let deep: Vec<Candidate> = (0..3).flat_map(|f| many(&format!("src/d{f}.rs"), "f", 2_000, &[])).collect();
         let deep = BTreeMap::from([("rust".to_string(), deep)]);
