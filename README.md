@@ -9,6 +9,12 @@ The manual is `slimfit --help`, and it is the only copy: read it before adopting
 ## Install
 
 ```sh
+brew install sunfmin/tap/slimfit
+```
+
+The formula's binary is universal (Apple silicon and Intel), Developer ID signed and notarized (ADR 0013). Or build it:
+
+```sh
 cargo install --locked --git https://github.com/sunfmin/slimfit
 ```
 
