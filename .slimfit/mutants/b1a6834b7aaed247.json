@@ -1,0 +1,39 @@
+{
+  "tree": "0968e872385086682b801aa57de1ac7975020332+d1fba762150c532c",
+  "picker": "codex:01a20510-b230-7db0-a6bf-9d413c169712:default",
+  "author": "claude-code:30484ca3-450a-585d-a7e6-6644017f1dc1:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/keep.rs:22:27: replace || with && in record",
+        "why": "A check for missing reasons may miss a supplied reason containing only whitespace.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:69:36: delete ! in keep_mutant",
+        "why": "Keeping one survivor for the first time in an empty baseline cannot reveal that the filter retains duplicates and drops unrelated verdicts.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:122:57: replace && with || in keep",
+        "why": "Keeping or replacing a single span may miss that the filter also removes verdicts for other spans in the same suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:132:57: replace && with || in keep",
+        "why": "Keeping or replacing a single file may miss that the filter also removes verdicts for other files in the same suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:155:63: replace && with || in keep",
+        "why": "An isolated test verdict may miss that keeping the same test under a different kind removes its earlier verdict.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
