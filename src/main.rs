@@ -9,6 +9,7 @@ mod git;
 mod go_source;
 mod growth;
 mod landing;
+mod listing;
 mod loc;
 mod measure;
 mod model;
@@ -159,7 +160,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Check { mutants: Some(names), why, .. } if names.is_empty() => {
+        Cmd::Check { mutants: Some(names), why, function, .. } if names.is_empty() => {
             let s = Session::open(&repo)?;
             if !why.is_empty() {
                 return Err(fault::fault(
@@ -168,21 +169,49 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 ));
             }
             measure::refuse_unpickable(&s.cfg)?;
-            let candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
-            let next = if candidates.values().all(Vec::is_empty) {
+            let mut candidates = measure::candidates(&repo, &s.cfg, &s.tree)?;
+            if !function.is_empty() {
+                for listed in candidates.values_mut() {
+                    listed.retain(|c| function.iter().any(|f| listing::within(c, f)));
+                }
+            }
+            let listing = listing::of(&candidates, &Default::default(), !function.is_empty());
+            let grouped = listing.functions.is_some();
+            let next = if candidates.values().all(Vec::is_empty) && !function.is_empty() {
+                "no candidate in those functions: name each as a grouped listing's `functions` does, `<file>: <function>`"
+            } else if candidates.values().all(Vec::is_empty) {
                 "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
                  worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
                  commit .slimfit/"
             } else {
                 "ask a second agent to pick, never yourself: give it the goal (`slimfit help picker`), the change's diff and \
-                 `candidates`, nothing else; run its picks at background priority: `factorium worker exclusive \
+                 this listing (`removed_tests`, `candidates`), nothing else; run its picks at background priority: `factorium worker exclusive \
                  --background -- slimfit check --mutants <name>... --why <why>...` (outside factorium, `nice -n 19 \
                  slimfit check ...`), then `slimfit ratchet --picker <its id> --author <yours>`; or, when it finds \
                  none worth running, `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`"
             };
-            Ok((json!({ "candidates": candidates, "next": next }), EXIT_OK))
+            let next = match grouped {
+                true => format!(
+                    "the listing passes {} bytes, so it is grouped per function (`functions`), {} candidates of each \
+                     spelled out: `{}` lists one function's in full, and any of them may be picked. Then {next}",
+                    listing::BUDGET,
+                    listing::EXAMPLES,
+                    listing::EXPAND
+                ),
+                false => next.to_string(),
+            };
+            let mut answer = serde_json::to_value(&listing)?;
+            answer["next"] = next.into();
+            Ok((answer, EXIT_OK))
         }
-        Cmd::Check { mutants, why, fresh, .. } => {
+        Cmd::Check { mutants, why, fresh, function, .. } => {
+            if !function.is_empty() {
+                return Err(fault::fault(
+                    "--function with a mutant's name",
+                    "list a function's candidates with `slimfit check --mutants --function '<file>: <function>'`, \
+                     no name; then pick by `--mutants <name>`",
+                ));
+            }
             let s = Session::open(&repo)?;
             let scope = measure::Mutants::of(mutants.unwrap_or_default(), why)?;
             let with_mutants = scope != measure::Mutants::None;
@@ -825,11 +854,8 @@ mod answer_tests {
             (Some("pick-mutants"), &json!(["src/lib.rs:38: adult"]))
         );
         let candidates = task["evidence"]["candidates"].as_array().unwrap();
-        let named: Vec<u64> = candidates
-            .iter()
-            .filter(|c| c["removed_tests"] == json!(["src/lib.rs:38: adult"]))
-            .map(|c| c["line"].as_u64().unwrap())
-            .collect();
+        let named: Vec<u64> =
+            candidates.iter().filter(|c| c["removed"] == json!([0])).map(|c| c["line"].as_u64().unwrap()).collect();
         assert_eq!(named, [12, 12, 12], "{task:#}");
         let listed = std::fs::read_to_string(repo.join(".slimfit/out/rust/listed.diff")).unwrap();
         let hunks: Vec<&str> = listed.lines().filter(|l| l.starts_with("@@")).collect();
@@ -855,7 +881,12 @@ mod answer_tests {
         let (listed, _) = slimfit(repo, "check --mutants").unwrap();
         let pick =
             listed["candidates"]["rust"].as_array().unwrap().iter().find(|c| c["name"] == killed).unwrap().clone();
-        assert_eq!(pick["removed_tests"], json!(["src/lib.rs:33: adds_again"]), "{listed:#}");
+        assert_eq!(listed["removed_tests"]["rust"], json!(["src/lib.rs:33: adds_again"]), "{listed:#}");
+        assert_eq!((&pick["removed"], &listed["functions"]), (&json!([0]), &Value::Null), "{listed:#}");
+        // One function's listing in full, as a grouped listing says to ask it: its picks run.
+        let (one, _) = slimfit_args(repo, &["check", "--mutants", "--function", "src/lib.rs: add"]).unwrap();
+        let one = one["candidates"]["rust"].as_array().unwrap();
+        assert!(one.iter().all(|c| c["function"] == "add") && one.iter().any(|c| c["name"] == killed), "{one:#?}");
         let (out, code) = slimfit_args(repo, &["check", "--mutants", killed, "--why", "the sum"]).unwrap();
         assert_eq!(code, crate::EXIT_OK, "{out:#}");
         let (out, _) = slimfit(repo, "ratchet --picker p --author a").unwrap();

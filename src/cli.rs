@@ -142,7 +142,7 @@ pub(crate) enum Cmd {
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:
     ///
     /// - `failing-test`: `test` and `log`, the test run's log.
-    /// - `pick-mutants`: `lines`, the source lines the change adds, `removed_tests`, the tests it removes (each as file:line: name where it starts), and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
+    /// - `pick-mutants`: `lines`, the source lines the change adds, `removed_tests`, the tests it removes (each as file:line: name where it starts, each once), and `candidates`, the change's mutants to pick from, as `slimfit check --mutants` lists them: {const:CANDIDATE}; past {const:BUDGET} bytes, grouped as it groups them, with `functions`.
     /// - `justify-growth`: `lines`, the source lines the change adds net; `allowance`, `growth_allowance`; `from`, where the change starts (`git diff <from>` is the diff the reviewer is given); and `grown`, each file whose source lines changed, with its `lines` (net, negative for a file that shrank), most first.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, `function`, when known, and `hash`, of its lines' text. A span kept (`slimfit keep <file>:<start>-<end>`: it runs only against the real host or the real program, so a fast test could only run it) is not proposed while it is the same lines of the same function, their text unchanged.
     /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs, and some of them past both binaries' shared setup: a test of setup alone is no candidate; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds`, `lines` (how many source lines it runs) and `class`, read from both tests' text with tree-sitter ({const:SHAPED}): `asserts-contained` (a `subset` that asserts, and whose every statement, its assertions and the setup they check, `other_test` makes too, as written: delete it), `same-shape` (its body is another test's of the file but for literals: one table-driven test, with `group`, its index in `groups`) or `read` (the rest: the assertions decide); and `groups`, each a table-driven test's rows: a `test` and its `literals` that differ between the rows, in order. A test kept leaves its file's task.
@@ -208,7 +208,9 @@ pub(crate) enum Cmd {
     ///
     /// It exits {const:EXIT_OK} when `ok`, {const:EXIT_VIOLATION} when a bound is violated.
     ///
-    /// With `--mutants` and no name it measures nothing and answers `candidates`: per suite, the mutants of the change's lines, as its mutation tool lists them without building, {const:CANDIDATE}; and `next`. It exits {const:EXIT_OK}.
+    /// With `--mutants` and no name it measures nothing and answers, per suite, `removed_tests`, each test the change removes that ran a candidate's line, once (file:line: name where it starts), and `candidates`, the mutants of the change's lines, as its mutation tool lists them without building, {const:CANDIDATE}; and `next`. It exits {const:EXIT_OK}.
+    ///
+    /// A listing past {const:BUDGET} bytes is more than a picker reads with the diff: it is grouped per function instead. `candidates` then holds the first {const:EXAMPLES} of each function, and `functions`, per suite, every function holding candidates, {const:FUNCTION}. `{const:EXPAND}` lists one function's candidates in full, never grouped. Any candidate listed so may be picked, spelled out in the grouped listing or not: `--mutants <name>` refuses only a name the tool does not list.
     ///
     /// ## What it may refuse
     ///
@@ -227,6 +229,9 @@ pub(crate) enum Cmd {
         /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (at most {const:PICKS_MAX}, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
         #[arg(long, num_args = 0.., value_name = "NAME", verbatim_doc_comment)]
         mutants: Option<Vec<String>>,
+        /// With `--mutants` and no name: list only the candidates of this function (`<file>: <function>`, as a grouped listing's `functions` names it), in full (repeatable).
+        #[arg(long, value_name = "FILE: FUNCTION", requires = "mutants", verbatim_doc_comment)]
+        function: Vec<String>,
         /// Why each pick is worth running, one line per `--mutants` name, in their order; kept in the record `slimfit ratchet` writes.
         #[arg(long, num_args = 1.., value_name = "WHY", verbatim_doc_comment)]
         why: Vec<String>,
@@ -549,7 +554,11 @@ fn help() -> Help {
         .constant("SAMPLE_DAYS", measure::sample::SAMPLE_DAYS)
         .constant("SAMPLE_DRAWN", measure::sample::DRAWN)
         .constant("SAMPLE_COST", measure::sample::COST)
-        .constant("CANDIDATE", model::CANDIDATE_HELP)
+        .constant("CANDIDATE", crate::listing::ENTRY_HELP)
+        .constant("FUNCTION", crate::listing::FUNCTION_HELP)
+        .constant("BUDGET", crate::listing::BUDGET)
+        .constant("EXAMPLES", crate::listing::EXAMPLES)
+        .constant("EXPAND", crate::listing::EXPAND)
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
         .constant("KEPT", ratchet::KEPT_HELP)
@@ -714,12 +723,15 @@ mod tests {
             named(crate::measure::sample::SAMPLE_HELP)[..4],
             keys(&crate::measure::sample::Sample::default())[..]
         );
-        let candidate = model::Candidate { removed_tests: removed[0].1.clone(), ..Default::default() };
-        assert_eq!(named(model::CANDIDATE_HELP), keys(&candidate));
+        let candidate = model::Candidate::default();
+        let entry = crate::listing::Entry { candidate: &candidate, removed: vec![0] };
+        assert_eq!(named(crate::listing::ENTRY_HELP), keys(&entry));
+        let function = crate::listing::Function { file: "", function: "", mutants: 1, removed: vec![0] };
+        assert_eq!(named(crate::listing::FUNCTION_HELP), keys(&function));
         let pick = model::Pick { name: String::new(), why: String::new(), outcome: None, first_outcome: None };
         assert_eq!(named(model::PICK_HELP)[..3], keys(&pick)[..]);
         let check = super::help().command_help(&["check"]).unwrap();
-        assert!(check.contains(model::CANDIDATE_HELP) && check.contains(model::PICK_HELP), "{check}");
+        assert!(check.contains(crate::listing::ENTRY_HELP) && check.contains(model::PICK_HELP), "{check}");
         let loosening = ratchet::Loosening {
             suite: String::new(),
             metric: ratchet::Bound::Failures,
