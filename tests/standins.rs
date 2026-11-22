@@ -600,6 +600,7 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let (a, b) = (before[0].as_str(), before[1].as_str());
     let fix = s.error(&["keep", a, b, "--reason", "r"], &["keep names 2 to keep and gives 1 `--reason`"]);
     assert!(fix.contains("one `--reason \"<why>\"` per test"), "{fix}");
+    s.error(&["keep", a, b, "--reason", "r", "--reason", " "], &["keep without --reason"]);
     s.take();
     let both = run("keep", &[a, b, "--reason", "its own case", "--reason", "its other case"], 0);
     let verdicts: Vec<(&Value, &Value)> =
