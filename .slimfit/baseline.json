@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7403,
-      "test_lines": 5478,
+      "prod_lines": 7413,
+      "test_lines": 5462,
       "tests": 133,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5122,
+      "covered_lines": 5114,
       "uncovered_lines": 39
     }
   },
@@ -47,12 +47,37 @@
       "reason": "slimfit#43: test_seconds is now the tests' CPU time (ADR 0010), no longer wall time corrected for load; re-set once from a CPU-timed slimfit check of this tree under worker exclusive (measurements in slimfit#43's comments)."
     }
   ],
-  "kept": [],
+  "kept": [
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_landing_passes_only_with_a_record_of_its_mutants",
+      "hash": "dd9eb7e94fccd020",
+      "reason": "No assertion maps: it checks the mutants record (ADR 0008: unrecorded_mutants, picks, --why, picker/author, --no-mutants, merge of two records, report's mutants_records, a target gone), the other checks the growth record (ADR 0012: growth_allowance, deletions paying, justify-growth, reviewer/author, report's growth_records). The setups conflict: the other's growth_allowance = 4 makes this test's merged landing (6 lines net) fail as unrecorded_growth where it must pass, and this one's mutants_tests = All changes what the other measures; only sample_repo and the adopt commit are shared."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_sampled_survivor_is_a_task_and_never_a_bound",
+      "hash": "d3eefaa2375efc62",
+      "reason": "No assertion maps: it checks the sample (drawn names, sampled tasks, check green, report's sampled tally); the other checks a pick's first outcome. Setups conflict: the other swaps the mutation tool's outcomes file, which the sample's survivors are read from."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::code_from_before_the_rule_is_not_charged",
+      "hash": "d74cc9716bc35685",
+      "reason": "No assertion maps: it checks the baseline's mutants_from cut moving landing.from; the other checks uncovered new_spans. Setups conflict: different samples (sample_repo vs covered_sample) and different target branches."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_kept_span_returns_once_a_line_of_it_changes",
+      "hash": "08d73d60894ebbff",
+      "reason": "No assertion maps: it checks kept_spans verdicts and their return on edit; the other checks a fresh repo's first and empty ratchet and next counts. Setups conflict: the other needs a repo with nothing to ratchet and only a slow-test task, this one a covered sample with uncovered tasks and edited kept_spans."
+    }
+  ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 44,
-      "test_seconds": 32.364
+      "uncovered_lines": 57,
+      "test_seconds": 29.542
     }
   }
 }
