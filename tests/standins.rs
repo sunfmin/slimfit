@@ -596,19 +596,30 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
         &["keep", "calc::tests::gone", "--reason", "r"],
         &["no suite's test run recorded a test calc::tests::gone"],
     );
+    // Every test of the task in one call, one reason each; a count that does not match is refused, writing nothing.
+    let (a, b) = (before[0].as_str(), before[1].as_str());
+    let fix = s.error(&["keep", a, b, "--reason", "r"], &["keep names 2 to keep and gives 1 `--reason`"]);
+    assert!(fix.contains("one `--reason \"<why>\"` per test"), "{fix}");
+    s.error(&["keep", a, b, "--reason", "r", "--reason", " "], &["keep without --reason"]);
+    s.take();
+    let both = run("keep", &[a, b, "--reason", "its own case", "--reason", "its other case"], 0);
+    let verdicts: Vec<(&Value, &Value)> =
+        both["kept"].as_array().unwrap().iter().map(|k| (&k["test"], &k["reason"])).collect();
+    assert_eq!(verdicts, [(&a.into(), &"its own case".into()), (&b.into(), &"its other case".into())], "{both:#}");
+    // The tree is the one `next` measured: keep reads the cache, and no runner stand-in is called.
+    assert_eq!((&both["measurement"], s.steps()), (&"cached".into(), Vec::<String>::new()), "{both:#}");
+    assert_eq!(proposed(&run("next", &["--all", "--kind", "redundant-test"], 0)), Vec::<String>::new());
     let kept = run("keep", &[twin, "--reason", "it checks its own case"], 0);
-    assert_eq!(kept["kept"][0]["test"], twin, "{kept:#}");
-    let after = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
-    assert_eq!(after, before.iter().filter(|t| *t != twin).cloned().collect::<Vec<_>>());
+    assert_eq!(kept["kept"][1]["test"], twin, "{kept:#}");
     // A source file is kept as a deepen verdict, with its size and churn, measuring nothing.
     let file = run("keep", &["src/lib.rs", "--reason", "deep enough"], 0);
     assert_eq!(file["kept_files"][0]["file"], "src/lib.rs", "{file:#}");
-    assert_eq!(file["kept"][0]["test"], twin, "{file:#}");
+    assert_eq!((&file["kept"][1]["test"], &file["measurement"]), (&twin.into(), &"none".into()), "{file:#}");
     // Kept as slow too, its own verdict beside the redundant one, with its CPU seconds; a file is no slow test.
     let slow = run("keep", &[twin, "--kind", "slow-test", "--reason", "its time is a real process"], 0);
-    let k = &slow["kept"][1];
+    let k = &slow["kept"][2];
     assert_eq!((&k["test"], &k["kind"], k["seconds"].is_f64()), (&twin.into(), &"slow-test".into(), true), "{slow:#}");
-    assert_eq!(slow["kept"][0].get("kind"), None, "{slow:#}");
+    assert_eq!(slow["kept"][1].get("kind"), None, "{slow:#}");
     s.error(&["keep", "src/lib.rs", "--kind", "slow-test", "--reason", "r"], &["--kind slow-test keeps a test"]);
     // A mutant kept as equivalent, named without its place, against its function's text, measuring nothing.
     let mutant = run("keep", &["--mutant", "src/lib.rs:12:9: replace >= with < in is_adult", "--reason", "r"], 0);
@@ -988,9 +999,18 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
             ],
             "ratchet" => &["from", "reason", "record"],
             "doctor" => &["findings", "kind", "suite", "what", "fix", "host", "load", "cores", "next"],
-            "keep" => {
-                &["kept", "test", "hash", "reason", "kept_files", "file", "prod_lines", "commits_90d", "commits_total"]
-            }
+            "keep" => &[
+                "kept",
+                "test",
+                "hash",
+                "reason",
+                "measurement",
+                "kept_files",
+                "file",
+                "prod_lines",
+                "commits_90d",
+                "commits_total",
+            ],
             _ => &["history", "commit", "from", "mutants_records", "with_picks"],
         };
         for k in reached {
