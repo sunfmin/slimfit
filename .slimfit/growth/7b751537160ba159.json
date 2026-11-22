@@ -1,0 +1,9 @@
+{
+  "tree": "abddecfe27dcb28165e5abeb09991f3edc3c83c2+d1fba762150c532c",
+  "lines": 200,
+  "serves": "slimfit#88",
+  "considered": "rust_source::item_text and go_source::func_text (reused to cut each test's text); the line-based readers, which cannot see literals or statements, so tree-sitter replaces none of them yet; the old assertion-only containment, replaced by statement containment",
+  "reviewer": "grok:01a200c5-a927-7f01-b295-4488f2b15686:grok-4.7-build",
+  "author": "claude-code:0b3d2e48-6575-538d-8962-82ef36ac810b:opus",
+  "as_is": "rust_source and go_source already supply the function text that fnv hashes; the lines above that are the two grammars' literal, comment and assertion rules and classify's grouping into asserts-contained, same-shape rows (only the literals that differ, including a non-candidate other test) and read, which no existing helper performs."
+}
