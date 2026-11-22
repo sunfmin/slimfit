@@ -1,0 +1,33 @@
+{
+  "tree": "d3a0cf576ad72cf36d1afb102cf9722df6831114+d1fba762150c532c",
+  "picker": "codex:01a20176-dd50-79d1-9241-b3a14a67c0c5:default",
+  "author": "claude-code:8ccda2aa-4b04-5284-91d6-899502d20bee:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:414:48: replace == with != in keep",
+        "why": "The CLI test checks that seconds is a float, so it could miss recording another test’s CPU time or falling back to zero.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:430:38: replace == with != in keep",
+        "why": "The CLI test adds two kinds of keep in one suite, leaving replacement within a suite and preservation across suites untested.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:430:57: replace == with != in keep",
+        "why": "The CLI test uses one test ID, so it could miss a keep deleting a different test’s verdict of the same kind.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/cli.rs:546:46: replace + with - in help",
+        "why": "The task test exercises the 1.5× cutoff, but the help text could independently display 0.5×.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
