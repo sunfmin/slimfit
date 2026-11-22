@@ -393,7 +393,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                     "groups": groups,
                 }),
                 steps: "Coverage only proposes; each candidate's `class` says how it is decided. Read the file once and decide every candidate in it. \
-                        `asserts-contained`: DELETE `test`: every assertion it makes is in its `other_test` as it is written, which runs every line it runs. \
+                        `asserts-contained`: DELETE `test`: every statement it makes, its assertions and their setup, is in its `other_test` as it is written, which runs every line it runs. \
                         `same-shape`: MERGE its group (`evidence.groups[group]`) into one table-driven test: the tests differ only in the literals each row names, \
                         so the table's rows are those literals and its body the tests' body with each row's literal in their place; each row fails with its own name. \
                         `read`: the assertions decide. For \
@@ -418,8 +418,9 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
 }
 
 /// Sets the `class` of each of `file`'s `candidates` (slimfit#88), from the
-/// tests' sources (`source`): `asserts-contained`, a subset whose every
-/// assertion its `other_test` makes too, and no variant of it on other literals; else `same-shape`, its body that of
+/// tests' sources (`source`): `asserts-contained`, a subset that asserts and
+/// whose every statement (its assertions, and the setup they check) its
+/// `other_test` makes too, as written; else `same-shape`, its body that of
 /// another test of the file but for literals (another candidate, or one's
 /// `other_test`), with `group`, its group's index in the answer: each group
 /// the rows of one table-driven test, a test and the literals that differ
@@ -428,12 +429,9 @@ fn classify<'a>(file: &str, candidates: &mut [Value], source: impl Fn(&str) -> O
     let shape = |id: &Value| source(id.as_str().unwrap_or_default())?.shape.as_ref();
     let contained = |c: &Value| {
         let (Some(mine), Some(theirs)) = (shape(&c["test"]), shape(&c["other_test"])) else { return false };
-        // A variant of its other test on other literals checks another case: a row of their table.
-        let variant = mine.body == theirs.body && mine.literals != theirs.literals;
-        c["kind"] == "subset"
-            && !variant
-            && !mine.asserts.is_empty()
-            && mine.asserts.iter().all(|a| theirs.asserts.contains(a))
+        // An assertion alone may hold on another setup: guild's doctor asserts no `behind_hub` of a hub, and of a machine.
+        let within = mine.statements.iter().all(|s| theirs.statements.contains(s));
+        c["kind"] == "subset" && !mine.asserts.is_empty() && within
     };
     for c in candidates.iter_mut() {
         c["class"] = json!(if contained(c) { "asserts-contained" } else { "read" });
@@ -967,7 +965,8 @@ mod t {
     /// In each language with redundant-test tasks: three tests of one shape,
     /// differing in literals, make one group, the fastest (no candidate, the
     /// others' other test) a row too; a subset whose assertion its other test
-    /// makes is deleted; one whose assertion differs is read.
+    /// makes, on the same setup, is deleted; one whose assertion differs, or
+    /// whose assertion is the other's on another setup, is read.
     #[test]
     fn candidates_are_classed_by_their_tests_shapes() {
         let rust = [
@@ -978,6 +977,8 @@ mod t {
             "fn orig() {\n    let x = add(2, 3);\n    assert!(x > 0);\n    assert_eq!(x, 5);\n}",
             "fn differ() {\n    let _y = 0;\n    assert_eq!(add(1, 1), 3);\n}",
             "fn base() {\n    assert_eq!(add(1, 1), 2);\n}",
+            "fn on_itself() {\n    let h = hub(\"itself\");\n    assert!(!h.behind());\n}",
+            "fn on_unheard() {\n    let h = hub(\"unheard\");\n    assert!(!h.behind());\n    assert!(h.silent());\n}",
         ];
         let go = [
             "func TestStartGmail(t *testing.T) {\n\tif Start(\"gmail\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gmail\")\n\t}\n}",
@@ -987,6 +988,8 @@ mod t {
             "func TestOrig(t *testing.T) {\n\tx := Add(2, 3)\n\tif x <= 0 {\n\t\tt.Fatal(\"positive\")\n\t}\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
             "func TestDiffer(t *testing.T) {\n\t_ = 0\n\tif Add(1, 1) != 3 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
             "func TestBase(t *testing.T) {\n\tif Add(1, 1) != 2 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
+            "func TestOnItself(t *testing.T) {\n\th := Hub(\"itself\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n}",
+            "func TestOnUnheard(t *testing.T) {\n\th := Hub(\"unheard\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n\tif !h.Silent() {\n\t\tt.Fatal(\"silent\")\n\t}\n}",
         ];
         let tests = [
             ("gmail", 0.3, 1..=10),
@@ -996,6 +999,8 @@ mod t {
             ("orig", 0.1, 20..=29),
             ("differ", 0.2, 40..=42),
             ("base", 0.1, 40..=49),
+            ("on_itself", 0.2, 60..=62),
+            ("on_unheard", 0.1, 60..=69),
         ];
         for (preset, texts) in [(crate::config::Preset::Rust, rust), (crate::config::Preset::Go, go)] {
             let mut s = suite(tests.clone().map(|(n, secs, ls)| (n, secs, ls.collect())));
@@ -1015,6 +1020,7 @@ mod t {
                 ("gh", json!("same-shape"), json!(0)),
                 ("copy", json!("asserts-contained"), Value::Null),
                 ("differ", json!("read"), Value::Null),
+                ("on_itself", json!("read"), Value::Null),
             ];
             assert_eq!(got, want.map(|(t, c, g)| (format!("t::{t}"), c, g)), "{preset:?}");
             let rows = &task.evidence["groups"][0];

@@ -21,6 +21,9 @@ pub struct Shape {
     pub literals: Vec<String>,
     /// The hash of each assertion's tokens, literals kept.
     pub asserts: Vec<String>,
+    /// The hash of each statement of its body's, literals kept: its
+    /// assertions and the setup they check.
+    pub statements: Vec<String>,
 }
 
 struct Grammar {
@@ -127,7 +130,9 @@ pub fn shape(preset: Preset, text: &str) -> Option<Shape> {
     });
     let mut asserts = Vec::new();
     find_asserts(&g, body, &src, &mut asserts);
-    Some(Shape { body: fnv(&shaped.join(" ")), literals, asserts })
+    let mut statements = Vec::new();
+    top_statements(&g, body, &src, &mut statements);
+    Some(Shape { body: fnv(&shaped.join(" ")), literals, asserts, statements })
 }
 
 /// Each token of `n`, comments left out, a literal whole (and flagged).
@@ -140,6 +145,20 @@ fn tokens<'a>(g: &Grammar, n: Node, src: &'a str, out: &mut impl FnMut(&'a str, 
         return out(text(n, src), literal);
     }
     children(n).for_each(|c| tokens(g, c, src, out));
+}
+
+/// The hash of each statement of block `n`, comments left out (a Go
+/// block holds its statements in a list).
+fn top_statements(g: &Grammar, n: Node, src: &str, out: &mut Vec<String>) {
+    for c in children(n).filter(|c| c.is_named() && !g.comments.contains(&c.kind())) {
+        if c.kind() == "statement_list" {
+            top_statements(g, c, src, out);
+        } else {
+            let mut ts = Vec::new();
+            tokens(g, c, src, &mut |t, _| ts.push(t));
+            out.push(fnv(&ts.join(" ")));
+        }
+    }
 }
 
 /// The hash of each outermost assertion's tokens under `n`.
