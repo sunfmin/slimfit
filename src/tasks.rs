@@ -177,15 +177,8 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
             let listed = BTreeMap::from([(suite.clone(), candidates.remove(&suite).unwrap_or_default())]);
             let files: BTreeSet<String> = listed[&suite].iter().map(|c| c.file.clone()).collect();
             let count = listed[&suite].len();
-            let mut listing = crate::listing::of(&listed, &removed, &[]);
-            let mut evidence = json!({
-                "lines": lines,
-                "removed_tests": listing.removed_tests.remove(&suite).unwrap_or_default(),
-                "candidates": listing.candidates.remove(&suite).unwrap_or_default(),
-            });
-            if let Some(functions) = listing.functions.remove(&suite) {
-                evidence["functions"] = json!(functions);
-            }
+            let mut evidence = crate::listing::of(&listed, &removed, &[]).of_suite(&suite);
+            evidence["lines"] = json!(lines);
             let what = match u.tests {
                 0 => format!("adds {lines} source line(s)"),
                 t => format!("adds {lines} source line(s) and removes {t} test(s)"),

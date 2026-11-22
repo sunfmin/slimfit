@@ -1,0 +1,15 @@
+{
+  "tree": "d10845237d49d4cf47da9e769b3ab33a1eceb311+d1fba762150c532c",
+  "picker": "codex:01a20513-d0d2-7861-ad7f-e8c98ee32ef5:default",
+  "author": "claude-code:77c1de84-b801-517a-aa26-b2fe5c624902:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:167:5: replace pick_mutants -> Result<Vec<Task>> with Ok(vec![])",
+        "why": "The new assertions cover listing contents and CLI argument validation, so they could pass even if task generation silently emits no picker tasks.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
