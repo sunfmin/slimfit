@@ -216,6 +216,10 @@ pub fn files_at(repo: &Path, rev: &str, paths: &[String]) -> Result<Vec<Option<S
 /// Each object `specs` names, read through one `cat-file --batch`; `None`
 /// for one that is missing.
 fn cat_file(repo: &Path, specs: Vec<String>) -> Result<Vec<Option<String>>> {
+    // No objects, no spawn: each costs CPU time (ADR 0010).
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
