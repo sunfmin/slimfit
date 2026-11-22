@@ -176,8 +176,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let next = if none && !function.is_empty() {
                 "no candidate in those functions: name each as a grouped listing's `functions` does, `<file>: <function>`"
             } else if none {
-                "no mutant of the change to pick: when it adds source lines, a second agent still says why none is \
-                 worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
+                "no mutant of the change to pick: when `landing` names source lines or removed tests, a second agent \
+                 still says why none is worth one: `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`, then \
                  commit .slimfit/"
             } else {
                 "ask a second agent to pick, never yourself: give it the goal (`slimfit help picker`), the change's diff and \
@@ -198,6 +198,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 false => next.to_string(),
             };
             let mut answer = serde_json::to_value(&listing)?;
+            answer["landing"] = serde_json::to_value(landing::hold(&repo, &s.cfg, &s.tree, false)?)?;
             answer["next"] = next.into();
             Ok((answer, EXIT_OK))
         }
@@ -900,6 +901,37 @@ mod answer_tests {
         git(repo, &["commit", "-qm", "b"]);
         let (out, code) = slimfit(repo, "check").unwrap();
         assert_eq!(code, crate::EXIT_OK, "{out:#}");
+    }
+
+    /// The no-name listing answers the landing as `check` does, from git
+    /// alone: a change of tests owes no record, one adding a source line the
+    /// tool lists no mutant of still does. Nothing is measured.
+    #[test]
+    fn an_empty_listing_says_whether_a_record_is_due() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.suites[0].overrides.mutants_command = Some("true".into());
+        cfg.check.target = Some("target".into());
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "target"]);
+        std::fs::remove_dir_all(repo.join(crate::measure::OUT)).unwrap();
+        let lib = repo.join("src/lib.rs");
+        let original = std::fs::read_to_string(&lib).unwrap();
+        let listed = |text: String| {
+            std::fs::write(&lib, text).unwrap();
+            let (out, code) = slimfit(repo, "check --mutants").unwrap();
+            assert_eq!((code, &out["candidates"]["rust"]), (crate::EXIT_OK, &json!([])), "{out:#}");
+            out["landing"].clone()
+        };
+        let tests_only = listed(original.replacen("mod tests {\n", "mod tests {\n    #[test]\n    fn more() {}\n", 1));
+        assert_eq!((tests_only["lines"].as_u64(), tests_only.get("removed_tests")), (Some(0), None), "{tests_only:#}");
+        let source = listed(original.clone() + "\npub const ONE: u8 = 1;\n");
+        assert!(source["lines"].as_u64() >= Some(1), "{source:#}");
+        assert!(!repo.join(crate::measure::OUT).join("measurement.json").exists(), "a listing measures nothing");
     }
 
     /// A change past `growth_allowance` net fails every `check` as
