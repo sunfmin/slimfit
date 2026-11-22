@@ -613,6 +613,11 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let mutant = run("keep", &["--mutant", "src/lib.rs:12:9: replace >= with < in is_adult", "--reason", "r"], 0);
     let k = &mutant["kept_mutants"][0];
     assert_eq!((&k["mutant"], k["hash"].is_string()), (&"src/lib.rs: replace >= with < in is_adult".into(), true));
+    // Another mutant beside it; keeping the first again, wherever it moved, replaces its verdict alone.
+    run("keep", &["--mutant", "src/lib.rs:16:5: replace negate -> i64 with 0", "--reason", "r"], 0);
+    let again = run("keep", &["--mutant", "src/lib.rs:13:9: replace >= with < in is_adult", "--reason", "again"], 0);
+    let reasons: Vec<&Value> = again["kept_mutants"].as_array().unwrap().iter().map(|k| &k["reason"]).collect();
+    assert_eq!(reasons, [&Value::from("r"), &Value::from("again")], "{again:#}");
     s.error(&["keep", "--mutant", "no place", "--reason", "r"], &["is not a mutant's name"]);
     s.error(&["keep", "--mutant", "src/lib.rs:1:1: x", "--kind", "slow-test", "--reason", "r"], &["--kind"]);
     s.error(&["keep", "--mutant", "nope.rs:1:1: x", "--reason", "r"], &["no suite counts nope.rs"]);

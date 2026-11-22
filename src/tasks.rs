@@ -996,6 +996,8 @@ mod t {
                 .filter(|t| t.kind == TaskKind::SurvivingMutant)
                 .flat_map(|t| t.evidence["survivors"].as_array().unwrap().iter().map(|s| s["name"].clone()))
                 .collect();
+            let record = tasks.iter().find(|t| t.kind == TaskKind::RecordSample).unwrap();
+            assert_eq!(record.evidence["counts"]["equivalent"].as_u64().unwrap_or(0), s.counts().equivalent);
             (survivors, s.counts())
         };
         let other = json!("src/a.rs:5:1: replace g with ()");
