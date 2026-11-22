@@ -2,7 +2,8 @@
 //! binary, linked under each tool's name (`cargo`, `cargo-nextest`,
 //! `llvm-profdata`, `llvm-cov`, `go`, `gremlins`, `swift`, `xcrun`, `muter`, `npx`,
 //! `gradlew`) into a directory placed
-//! first on PATH. It reads the arguments as the real tool does, refuses
+//! first on PATH, and under a Go test binary's (`<package>.test`) where `go
+//! test -c` builds one. It reads the arguments as the real tool does, refuses
 //! (exit 64, no report) what the real tool would not take, and writes the
 //! real reports of `testdata/<language>/reports` where the real tool
 //! writes its own. Its state is one JSON file (see `state.rs`): every call
@@ -106,6 +107,9 @@ fn main() {
     let step = match tool.as_str() {
         "gradlew" if args.iter().any(|a| a == "pitest") => "gradlew pitest".to_string(),
         "gradlew" => "gradlew test".to_string(),
+        "go" if args.iter().any(|a| a == "-c") => "go test -c".to_string(),
+        // A Go test binary: its step is the flag it was run with.
+        t if t.ends_with(".test") => format!("{t} {}", args.first().map_or("", |a| a.split('=').next().unwrap_or(""))),
         _ => format!("{tool} {sub}"),
     };
     let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
@@ -119,7 +123,8 @@ fn main() {
         "llvm-profdata" => llvm_profdata(&sub, args),
         "llvm-cov" => llvm_cov(&sub, args, &state.reports),
         "cargo-nextest" => nextest(args, &dir, &state.reports, fault.first_test_fails),
-        "go" => go(&sub, args),
+        "go" => go(&sub, args, &dir, &state.reports),
+        t if t.ends_with(".test") => go_test_binary(args, &state.reports),
         "gremlins" => gremlins(&sub, args),
         "swift" => swift(&sub, args, &dir),
         "xcrun" => xcrun(args, &dir),
@@ -696,15 +701,64 @@ fn llvm_cov(sub: &str, args: &[String], reports: &Path) -> Result<Work, Refusal>
 }
 
 /// `go test -json -coverprofile=<file>`: the JSON on stdout. With
-/// `-run '^$'` (the build): no test runs, and nothing is written.
-fn go(sub: &str, args: &[String]) -> Result<Work, Refusal> {
+/// `-run '^$'` (the build): no test runs, and nothing is written. With `-c
+/// -cover -o <binary>`: the package's test binary, this stand-in under it.
+/// `go list -f <template> ./...`: the sample's one package, by the import
+/// path the real per-test report gives it, and its directory.
+fn go(sub: &str, args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
+    let package = || go_tests(reports)[0].0.clone();
+    if sub == "list" {
+        need(args, "-f")?;
+        println!("{}\t{}", package(), dir.display());
+        return Ok(Work::default());
+    }
     sub_is(sub, "test")?;
+    if args.iter().any(|a| a == "-c") {
+        has(args, "-cover")?;
+        let binary = PathBuf::from(need(args, "-o")?);
+        if args.last() != Some(&package()) {
+            return Err(format!("no package {} last", package()));
+        }
+        let me = std::env::current_exe().unwrap();
+        let prepare: Box<dyn FnOnce()> = Box::new(move || std::os::unix::fs::symlink(me, binary).unwrap());
+        return Ok(Work { prepare: vec![prepare], ..Work::default() });
+    }
     if value(args, "-run").as_deref() == Some("^$") {
         return Ok(Work::default());
     }
     has(args, "-json")?;
     let cover = need(args, "-coverprofile")?;
     Ok(Work { copies: vec![("cover.out".into(), cover.into())], stdout: Some("test.json".into()), ..Work::default() })
+}
+
+/// The (package, name) of each test of the sample's real per-test report.
+fn go_tests(reports: &Path) -> Vec<(String, String)> {
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    let tests = reach.lines().filter_map(|l| l.strip_prefix("test ")?.split_once('\t'));
+    tests.map(|(p, n)| (p.to_string(), n.to_string())).collect()
+}
+
+/// A Go test binary: `-test.list <regexp>` lists the sample's tests;
+/// `-test.run ^<name>$ -test.coverprofile=<file>` writes, as that test's
+/// profile, the real per-test report's blocks for it.
+fn go_test_binary(args: &[String], reports: &Path) -> Result<Work, Refusal> {
+    if value(args, "-test.list").is_some() {
+        go_tests(reports).iter().for_each(|(_, t)| println!("{t}"));
+        return Ok(Work::default());
+    }
+    let reach = std::fs::read_to_string(reports.join(REACH)).unwrap();
+    let run = need(args, "-test.run")?;
+    let name =
+        run.strip_prefix('^').and_then(|r| r.strip_suffix('$')).ok_or(format!("-test.run {run}: not one test"))?;
+    let profile = need(args, "-test.coverprofile")?;
+    let section: String = reach
+        .lines()
+        .skip_while(|l| l.strip_prefix("test ").and_then(|t| t.split_once('\t')).map(|(_, n)| n) != Some(name))
+        .skip(1)
+        .take_while(|l| !l.starts_with("test "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    Ok(Work { files: vec![(profile.into(), format!("mode: set\n{section}"))], ..Work::default() })
 }
 
 fn gremlins(sub: &str, args: &[String]) -> Result<Work, Refusal> {

@@ -14,7 +14,8 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/tasks.rs`: turns a measurement into tasks for `slimfit next`.
 - `src/select.rs`: which tests each mutant runs (ADR 0007): the plan, and the shim slimfit becomes when run as `cargo-nextest`.
 - `src/rust_source.rs`: the one reader of Rust syntax: where an item ends, `fn`s and their names, `#[cfg(test)]` items and modules, const-ness. `loc`, `measure` and `select` ask it.
-- `src/presets/`: preset commands too long for a Rust string (the Rust test command and its per-test runner).
+- `src/go_source.rs`: the one reader of Go syntax: where a top-level test `func` is and its text. `measure` asks it.
+- `src/presets/`: preset commands too long for a Rust string (the Rust test command and its per-test runner; the Go test command and its run of each test).
 - `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release (`packaging/release.sh cut`) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited.
 - `testdata/<language>/`: one sample project per language, with real reports in `reports/`. Every sample holds the same five situations (see `src/fixtures.rs`).
 - `src/tools.rs`: where the tools write reports on their own, shared with the stand-ins.

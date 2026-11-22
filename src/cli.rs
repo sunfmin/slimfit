@@ -136,7 +136,7 @@ pub(crate) enum Cmd {
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
     /// - `candidates`: how many redundant-test candidates those tasks hold (a task is a file of them).
-    /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it; {const:PER_TEST}'s test run records it).
+    /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it; the test runs of {const:PER_TEST} record it).
     /// - `next`: what to do now.
     ///
     /// A task has `kind`, `suite`, `summary`, `files` (the files to work on), `evidence` (the numbers that make it a task), `steps` (what to do) and `accept` (the command that must pass after). Its `evidence`, by kind:

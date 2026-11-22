@@ -23,7 +23,7 @@ Growth is held the same way, never by a line budget: a change that adds more tha
 | Language | Tests and coverage | Mutants | Needs |
 |---|---|---|---|
 | Rust | cargo-nextest under cargo-llvm-cov (JUnit, LCOV), a coverage profile per test (which functions and lines each test ran) | cargo-mutants running nextest, given the change's diff (`--in-diff`), with no baseline run; each mutant runs only the tests that ran its function, each under its own timeout (ADR 0007) | `cargo install cargo-nextest cargo-llvm-cov cargo-mutants`, `rustup component add llvm-tools-preview` |
-| Go | `go test -json -coverprofile` | gremlins (no diff or file flag set) | `go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1` |
+| Go | `go test -json -coverprofile`, then each top-level test on its own from its package's test binary (a coverprofile per test: which lines each test ran, and its CPU time), packages in parallel at background priority; on excelize (424 tests) 84-95s against a plain run's 23-32s (`slimfit help costs`) | gremlins (no diff or file flag set) | `go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.5.1` |
 | TypeScript | vitest with v8 coverage (JUnit, LCOV) | Stryker (no diff or file flag set) | `vitest`, `@vitest/coverage-v8`, `@stryker-mutator/core`, `@stryker-mutator/vitest-runner` in devDependencies |
 | Kotlin | Gradle `test` + Kover (JUnit, JaCoCo XML) | PIT (no diff or file flag set) | the Kover and `info.solidsoft.pitest` plugins (see `testdata/kotlin/build.gradle.kts`) and a JDK Gradle can use |
 | Swift | `swift test` + `llvm-cov export` (xUnit, LCOV) | muter (no diff or file flag set) | `brew install muter-mutation-testing/formulae/muter` |

@@ -2,9 +2,13 @@
 # End to end: the real slimfit binary on a fresh git copy of each sample in
 # testdata/, with the language's real tools. For each language:
 #   init                      → baseline written
-#   next --all                → an `uncovered` task names the `unused` function's file
+#   next --all                → an `uncovered` task names the `unused` function's file;
+#                               for rust and go, whose test runs record each test's
+#                               lines, a `redundant-test` task names a copy of the
+#                               add test
 #   check                     → passes
-#   add an untested function  → check exits 1 on uncovered_lines
+#   add an untested function  → check's uncovered_lines trend names its lines as
+#                               a new span (a trend: it fails no check)
 # With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool lists
 # a change's mutants and runs them by name; nothing mutates a whole sample),
 # after the injection:
@@ -53,11 +57,17 @@ missing() {
 # An untested function appended to the sample's source, per language.
 inject() {
   case "$1" in
-    rust) printf '\npub fn untested(x: i64) -> i64 {\n    let y = x * 3;\n    y - 1\n}\n' >> src/lib.rs ;;
-    go) printf '\nfunc Untested(x int) int {\n\ty := x * 3\n\treturn y - 1\n}\n' >> calc.go ;;
-    typescript) printf '\nexport function untested(x: number): number {\n  const y = x * 3;\n  return y - 1;\n}\n' >> src/calc.ts ;;
-    kotlin) printf '\nfun untested(x: Int): Int {\n    val y = x * 3\n    return y - 1\n}\n' >> src/main/kotlin/com/example/Calc.kt ;;
-    swift) printf '\npublic func untested(_ x: Int) -> Int {\n    let y = x * 3\n    return y - 1\n}\n' >> Sources/Calc/Calc.swift ;;
+    rust) printf '\npub fn untested(x: i64) -> i64 {\n    let y = x * 3;\n    y - 1\n}\n' ;;
+    go) printf '\nfunc Untested(x int) int {\n\ty := x * 3\n\treturn y - 1\n}\n' ;;
+    typescript) printf '\nexport function untested(x: number): number {\n  const y = x * 3;\n  return y - 1;\n}\n' ;;
+    kotlin) printf '\nfun untested(x: Int): Int {\n    val y = x * 3\n    return y - 1\n}\n' ;;
+    swift) printf '\npublic func untested(_ x: Int) -> Int {\n    let y = x * 3\n    return y - 1\n}\n' ;;
+  esac >> "$(source_of "$1")"
+}
+source_of() {
+  case "$1" in
+    rust) echo src/lib.rs ;; go) echo calc.go ;; typescript) echo src/calc.ts ;;
+    kotlin) echo src/main/kotlin/com/example/Calc.kt ;; swift) echo Sources/Calc/Calc.swift ;;
   esac
 }
 json() { uv run --no-project python -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
@@ -87,14 +97,19 @@ for lang in $langs; do
     perl -0pi -e 's/^\[check\]\n/[check]\ntarget = "base"\n/m' slimfit.toml
     grep -qx 'target = "base"' slimfit.toml || { echo "e2e: no [check] in slimfit.toml to set the target in" >&2; exit 1; }
     git add -A && git -c user.email=e2e@slimfit -c user.name=e2e commit -qm slimfit && git branch base
-    "$bin" next --all 2>/dev/null | json '[t["kind"] for t in d["tasks"]]' | grep -q uncovered
+    "$bin" next --all >"$out/next.json" 2>/dev/null
+    json '[t["kind"] for t in d["tasks"]]' <"$out/next.json" | grep -q uncovered
+    case $lang in
+      rust | go)
+        json '[c["test"] for t in d["tasks"] if t["kind"] == "redundant-test" for c in t["evidence"]["candidates"]]' <"$out/next.json" \
+          | grep -qiE 'adds|slow' || { echo "e2e $lang: no redundant-test task" >&2; cat "$out/next.json" >&2; exit 1; }
+        ;;
+    esac
     "$bin" check >/dev/null 2>&1
     inject "$lang"
-    if "$bin" check >"$out/check.json" 2>/dev/null; then
-      echo "e2e $lang: check passed with an untested function added" >&2
-      exit 1
-    fi
-    json '[v["metric"] for v in d["verdict"]["violations"]]' <"$out/check.json" | grep -q uncovered_lines
+    "$bin" check >"$out/check.json" 2>/dev/null || :
+    json '[s["file"] for t in d["verdict"]["uncovered_lines"] for s in t["new_spans"]]' <"$out/check.json" \
+      | grep -qF "$(source_of "$lang")" || { echo "e2e $lang: no new uncovered span" >&2; cat "$out/check.json" >&2; exit 1; }
     if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
       "$bin" check --mutants >"$out/list.json" 2>"$out/list.log" || { tail -20 "$out/list.log"; exit 1; }
       pick() { json "[c['name'] for c in d['candidates']['rust'] if c['function'] == 'untested'][$1]" <"$out/list.json"; }

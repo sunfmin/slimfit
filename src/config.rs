@@ -252,6 +252,7 @@ pub(crate) const RUST_TESTS: &[&str] =
 /// The Rust preset's test command: a profile per test beside the merged
 /// coverage, and which functions each test ran (ADR 0007).
 const RUST_TEST: &str = include_str!("presets/rust-test.sh");
+const GO_TEST: &str = include_str!("presets/go-test.sh");
 /// The Rust preset's mutants command. cargo-mutants builds each mutant in a
 /// copy of the tree with no `target`, so its first build compiled every
 /// dependency (94-115s on factorium). `cargo llvm-cov show-env` gives the
@@ -336,11 +337,12 @@ pub fn preset(p: Preset) -> Suite {
         },
         Preset::Go => Suite {
             // Builds the test binaries as the test run does (coverage on), and
-            // runs none of their tests. `-count=1`: a cached result spent no CPU.
+            // runs none of their tests.
             build_command: "go test -cover -run '^$' ./... > /dev/null".into(),
-            test_command: "go test -count=1 -json -coverprofile=\"$SLIMFIT_OUT/cover.out\" ./... > \"$SLIMFIT_OUT/test.json\"".into(),
+            test_command: GO_TEST.replace("{REACH}", REACH).replace("{TEST_CPU}", TEST_CPU),
             tests_report: report(TestsFormat::GoTestJson, "$SLIMFIT_OUT/test.json"),
             coverage_report: report(CoverageFormat::GoCover, "$SLIMFIT_OUT/cover.out"),
+            reach_report: report(ReachFormat::GoCover, &format!("$SLIMFIT_OUT/{REACH}")),
             mutants_command: "gremlins unleash --timeout-coefficient 10 --output \"$SLIMFIT_OUT/gremlins.json\"".into(),
             mutants_report: report(MutantsFormat::Gremlins, "$SLIMFIT_OUT/gremlins.json"),
             ..base(&["**/*.go"], &["**/*_test.go", "**/testdata/**"])

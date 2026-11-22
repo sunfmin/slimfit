@@ -2,7 +2,7 @@ What each command costs, and how to measure that before placing slimfit in a rep
 
 | Command | Cost |
 |---|---|
-| `slimfit check`, `slimfit next`, `slimfit ratchet`, `slimfit report` | one instrumented test run, about 1.5× a plain one; none while the working tree is unchanged since the last measurement (`--fresh` measures again) |
+| `slimfit check`, `slimfit next`, `slimfit ratchet`, `slimfit report` | one instrumented test run, about 1.5× a plain one (Go's, which also runs each top-level test on its own, more: see below); none while the working tree is unchanged since the last measurement (`--fresh` measures again) |
 | `slimfit keep` | the measurement of this tree, cached or one instrumented test run, as above; no mutant |
 | `slimfit report --lines-only` | no test run and no build: it reads HEAD's files, and those of the history's points, from git |
 | `slimfit doctor` | no test run and no build: it reads `slimfit.toml`, the baseline and factorium's gates, and finds the tools by name |
@@ -14,6 +14,18 @@ What each command costs, and how to measure that before placing slimfit in a rep
 `next` (without `--sample`), `ratchet`, `report` and `keep` run no mutant: they read the cached `check --mutants <name>...` of the same tree, which is the one way mutants run. `next` lists the change's mutants for a pick-mutants task, as `check --mutants` with no name does.
 
 No command mutates the whole codebase or every mutant of a change: what a mutants run costs grows with the picks, never with the size of the codebase or of the change. A test run stops at a mutant's first failing test, so a caught mutant costs less than a missed one.
+
+## Each test's own run
+
+Redundant-test tasks need the lines each test ran. Rust's test run records them as it runs (nextest runs each test in a process of its own). Go's runs every package once, as `go test` does, then each top-level test again on its own, from its package's test binary built with coverage, packages in parallel at background priority: its coverprofile is the test's lines, and its CPU time the test's own (so a package's setup, `TestMain` and `init`, counts in each of its tests). Measured at host load 20-25 on 18 cores, wall seconds of the plain run (`go test -count=1 -json -coverprofile ./...`) against the preset's whole test command:
+
+| Repo | Tests | Plain | Plain and each test | CPU: the plain run's `go test` → the tests' own runs, summed |
+|---|---|---|---|---|
+| slimfit's Go sample | 4 | 0.80-1.27s | 1.72-1.92s | 0.33 → 0.01s |
+| cobra 1.8.0 | 259 | 0.33-0.36s | 4.17-4.60s | 0.58 → 1.52s |
+| excelize 2.10.1 | 424 | 23.3-32.3s | 84.2-94.6s | 25.5 → 46.8s |
+
+Excelize's tests are all in one package, so its runs of each test are one after another. Time `slimfit init` on the repo before placing `slimfit check` in a gate.
 
 ## The first build
 

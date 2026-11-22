@@ -140,22 +140,28 @@ fn strip_generics(s: &str) -> String {
 
 fn go_cover(text: &str, c: &mut Coverage) -> Result<()> {
     for line in text.lines().filter(|l| !l.starts_with("mode:") && !l.trim().is_empty()) {
-        let parse = || -> Option<(&str, u32, u32, u64)> {
-            let (file, rest) = line.rsplit_once(':')?;
-            let mut parts = rest.split(' ');
-            let range = parts.next()?;
-            let count = parts.nth(1)?.parse().ok()?;
-            let (start, end) = range.split_once(',')?;
-            let start = start.split('.').next()?.parse().ok()?;
-            let end = end.split('.').next()?.parse().ok()?;
-            Some((file, start, end, count))
-        };
-        let (file, start, end, count) = parse().with_context(|| format!("coverprofile line: {line}"))?;
+        let (file, start, end, count) = go_block(line)?;
         for n in start..=end {
             hit(c, file, n, count);
         }
     }
     Ok(())
+}
+
+/// One block of a Go coverprofile, `<file>:<line>.<col>,<line>.<col>
+/// <statements> <count>`: its file, first and last line, and count.
+pub(super) fn go_block(line: &str) -> Result<(&str, u32, u32, u64)> {
+    let parse = || -> Option<(&str, u32, u32, u64)> {
+        let (file, rest) = line.rsplit_once(':')?;
+        let mut parts = rest.split(' ');
+        let range = parts.next()?;
+        let count = parts.nth(1)?.parse().ok()?;
+        let (start, end) = range.split_once(',')?;
+        let start = start.split('.').next()?.parse().ok()?;
+        let end = end.split('.').next()?.parse().ok()?;
+        Some((file, start, end, count))
+    };
+    parse().with_context(|| format!("coverprofile line: {line}"))
 }
 
 /// Lines from `<sourcefile><line nr ci/>`; functions from `<method>` with its
