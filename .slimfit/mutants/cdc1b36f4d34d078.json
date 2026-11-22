@@ -1,0 +1,39 @@
+{
+  "tree": "22156d9bf89f6438b8e10593afd8a02136a41cc5+d1fba762150c532c",
+  "picker": "claude-code:e738be15-44eb-491a-b74c-090e0ff1e7cb:claude-opus-5-5",
+  "author": "claude-code:9a4de116-6387-521c-823f-83fc3eee0dca:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/removed.rs:95:20: replace match guard c.trim() == from with true in checkout",
+        "why": "Both test branches start from the same `from`, so a stale before-worktree that is never re-checked-out to a new merge base would go unnoticed.",
+        "outcome": "killed",
+        "first_outcome": "survived"
+      },
+      {
+        "name": "src/measure/removed.rs:84:44: replace == with != in is",
+        "why": "The fallback that matches a test by name when its source is unknown looks unexercised; the integration fixture always has source locations.",
+        "outcome": "killed",
+        "first_outcome": "survived"
+      },
+      {
+        "name": "src/main.rs:208:51: replace || with && in run",
+        "why": "Whether ratchet reads the landing (and so records removed_tests) when only --picker is given depends on growth.serves in the fixture, which may mask it.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure/removed.rs:67:52: replace - with / in reached",
+        "why": "An off-by-one in the stored line text may be invisible: adding() rereads the file by line number, so nothing may check the text values.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure/removed.rs:45:41: delete field suites from struct Config expression in reached",
+        "why": "Measuring only the suites that remove tests is a decision no single-suite test can tell apart from measuring them all.",
+        "outcome": "unviable",
+        "first_outcome": "unviable"
+      }
+    ]
+  }
+}

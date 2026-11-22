@@ -108,6 +108,11 @@ pub struct Candidate {
     pub function: String,
     /// The code it puts in place of the original.
     pub replacement: String,
+    /// The tests the change removes that ran its lines (`file:line: name`,
+    /// where the change starts): what it checks is whether the tests left
+    /// notice it (slimfit#87). Empty for a mutant of added lines alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_tests: Vec<String>,
     /// The last line it changes (from `line`).
     #[serde(skip)]
     pub end: u32,
@@ -119,8 +124,9 @@ pub struct Candidate {
 }
 
 /// What a [`Candidate`] prints, as the command pages name it.
-pub const CANDIDATE_HELP: &str = "each with `name` (what a pick names), `file`, `line`, `function` and \
-     `replacement` (the code it puts in)";
+pub const CANDIDATE_HELP: &str = "each with `name` (what a pick names), `file`, `line`, `function`, \
+     `replacement` (the code it puts in) and, on lines a test the change removes ran, `removed_tests` (those tests, \
+     each as file:line: name where the change starts)";
 
 /// A mutant the agent picked, why, and what its run found.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -15,6 +15,8 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+pub mod removed;
+
 /// Where the records of picked mutants are kept, one file each.
 pub const DIR: &str = ".slimfit/mutants";
 
@@ -55,6 +57,10 @@ pub struct Record {
     pub picks: BTreeMap<String, Vec<Pick>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub none: Option<String>,
+    /// Per suite, the tests the change removes (`file:line: name`, where it
+    /// starts): the picks are over the lines they ran too (slimfit#87).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed_tests: BTreeMap<String, Vec<String>>,
 }
 
 impl Record {
@@ -67,12 +73,13 @@ impl Record {
     /// The record `ratchet` writes of `m`: its picks, or, with
     /// `no_mutants`, why none was picked; `None` when there is neither.
     /// Either names its picker and the change's author, who differ
-    /// (slimfit#58).
+    /// (slimfit#58), and the tests the change removes (`removed_tests`).
     pub fn of(
         m: &Measurement,
         no_mutants: Option<String>,
         picker: Option<String>,
         author: Option<String>,
+        removed_tests: BTreeMap<String, Vec<String>>,
     ) -> Result<Option<Record>> {
         let picks: BTreeMap<String, Vec<Pick>> = m
             .suites
@@ -112,6 +119,7 @@ impl Record {
             author: id(author).unwrap_or_default(),
             picks,
             none,
+            removed_tests,
         };
         if !record.picked_by_another() {
             let what = if record.picker.is_empty() || record.author.is_empty() {
@@ -444,6 +452,10 @@ pub struct Held {
     pub lines: usize,
     /// The records of picked mutants it adds.
     pub records: Vec<String>,
+    /// Per suite whose mutants can be picked, the tests it removes
+    /// (`file:line: name`, where it starts).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed_tests: BTreeMap<String, Vec<String>>,
     /// The source lines it adds net, in all suites (ADR 0012).
     pub growth: i64,
     /// The growth records it adds.
@@ -459,17 +471,18 @@ pub struct Held {
     /// uncovered spans from. Not printed.
     #[serde(skip)]
     pub added: Lines,
-    /// Per suite that adds source lines with no record that holds them:
-    /// what `unrecorded_mutants` measures. Not printed.
+    /// Per suite that adds source lines or removes tests with no record
+    /// that holds them: what `unrecorded_mutants` measures. Not printed.
     #[serde(skip)]
     pub unrecorded: BTreeMap<String, Unrecorded>,
 }
 
-/// The source lines a suite adds that no record holds.
+/// The source lines a suite adds and the tests it removes that no record holds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unrecorded {
     pub lines: usize,
-    /// The first of them, as `file:line`.
+    pub tests: usize,
+    /// The first line, as `file:line`; with none, the first test removed.
     pub first: String,
 }
 
@@ -485,12 +498,14 @@ impl Held {
 /// What a [`Held`] prints, as the command pages name it.
 pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's merge base with it, or the baseline's cut \
      point, mutants_from, when that is later), `lines` (the source lines the change adds whose mutants can be \
-     picked), `records` (the records of picked mutants it adds, in .slimfit/mutants/), `growth` (the source lines it \
+     picked), `records` (the records of picked mutants it adds, in .slimfit/mutants/), `removed_tests` (per suite \
+     whose mutants can be picked, the tests it removes, each as file:line: name where the change starts; absent when \
+     none), `growth` (the source lines it \
      adds net, in all suites: in the files it touches, their lines now less their lines where the change starts) and `growth_records` (the \
      growth records it adds, in .slimfit/growth/)";
 
 /// Holds the landing to its records: its growth (ADR 0012), and its
-/// mutants: per suite that adds source lines, it
+/// mutants: per suite that adds source lines or removes tests, it
 /// is unrecorded when the landing adds no record that names a picker other
 /// than its author, nor did the measurement run picks (`picked`: `ratchet`
 /// records them, and refuses a record without such a picker). `None` when
@@ -514,19 +529,28 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
         |f: &String| serde_json::from_str::<crate::growth::Record>(&text(f)).is_ok_and(|r| r.reviewed_by_another());
     let held = picked || records.iter().any(named);
     let grown = crate::growth::grown(repo, cfg, tree, l)?;
+    let removed_tests: BTreeMap<String, Vec<String>> = removed::of(repo, cfg, tree, l)?
+        .into_iter()
+        .map(|(s, r)| (s, r.iter().map(removed::Removed::id).collect()))
+        .collect();
     let (mut lines, mut unrecorded) = (0, BTreeMap::new());
     for (suite, required) in required(cfg, tree, &l.added)? {
         let n: usize = required.values().map(BTreeMap::len).sum();
         lines += n;
-        let Some((file, first)) = required.iter().next().filter(|_| !held) else { continue };
-        let line = first.keys().next().expect("a file listed has a line");
-        unrecorded.insert(suite, Unrecorded { lines: n, first: format!("{file}:{line}") });
+        let tests = removed_tests.get(&suite).map_or(&[][..], Vec::as_slice);
+        let first = required
+            .iter()
+            .next()
+            .map(|(file, first)| format!("{file}:{}", first.keys().next().expect("a file listed has a line")));
+        let Some(first) = first.or_else(|| tests.first().cloned()).filter(|_| !held) else { continue };
+        unrecorded.insert(suite, Unrecorded { lines: n, tests: tests.len(), first });
     }
     Ok(Some(Held {
         target: l.target.clone(),
         from: l.from.clone(),
         lines,
         records,
+        removed_tests,
         growth: grown.values().flat_map(|f| f.values()).sum(),
         growth_reviewed: growth_records.iter().any(reviewed),
         growth_records,

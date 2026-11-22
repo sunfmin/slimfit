@@ -108,6 +108,27 @@ pub fn functions<'a>(
     out
 }
 
+/// The test functions of `text`: each `fn` under an attribute named `test`
+/// (`#[test]`, `#[tokio::test(...)]`) or `rstest`, other attributes and
+/// comments between them allowed; by its 1-based line and name.
+pub fn test_fns(text: &str) -> Vec<(u32, &str)> {
+    let mut out = Vec::new();
+    let mut test = false;
+    for (i, line) in text.lines().enumerate() {
+        let l = line.trim_start();
+        if let Some(attr) = l.strip_prefix("#[") {
+            let path = &attr[..attr.find(['(', ']']).unwrap_or(attr.len())];
+            test |= matches!(path.trim().rsplit("::").next(), Some("test" | "rstest"));
+        } else if let Some(name) = fn_name(l).filter(|_| test) {
+            out.push((i as u32 + 1, name));
+            test = false;
+        } else if !l.starts_with("//") && !l.is_empty() {
+            test = false;
+        }
+    }
+    out
+}
+
 /// Where test `name` (nextest's: `module::path::function`) is: the one `fn`
 /// of its last segment; of several, the one whose file's path names the
 /// most of its modules (`queue::x` in `tests/scenarios/queue.rs`).
@@ -219,6 +240,17 @@ mod t {
         assert_eq!(test_function(&fns, "line::b"), Some(("tests/s/line.rs", 9)));
         assert_eq!(test_function(&fns, "b"), None);
         assert_eq!(test_function(&fns, "c"), None);
+    }
+
+    /// A test is a `fn` under `#[test]`, a path ending in `test`, or
+    /// `rstest`, through other attributes and comments; not a `fn` after
+    /// other code, nor a `#[cfg(test)]` module.
+    #[test]
+    fn a_test_fn_is_one_under_a_test_attribute() {
+        let src = "#[cfg(test)]\nmod t {\n    #[test]\n    fn a() {}\n    #[tokio::test(flavor = \"x\")]\n    // c\n    \
+                   #[ignore]\n    async fn b() {}\n    #[test]\n    struct S;\n    fn c() {}\n    #[rstest]\n    fn d() {}\n    \
+                   #[testing]\n    fn e() {}\n}\n";
+        assert_eq!(test_fns(src), [(4, "a"), (8, "b"), (13, "d")]);
     }
 
     #[test]

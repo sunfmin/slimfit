@@ -19,7 +19,7 @@ pub enum TaskKind {
     /// A test fails. Fix it first; nothing else is measured honestly.
     #[value(verbatim_doc_comment)]
     FailingTest,
-    /// The change adds source lines and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
+    /// The change adds source lines or removes tests and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
     #[value(verbatim_doc_comment)]
     PickMutants,
     /// The change adds more than `growth_allowance` source lines net and no growth record: the gate's `check` fails until it does. Cut what you can, then ask a second agent, never yourself, whether it could be smaller (see [the reviewer](help:reviewer)), do or answer what it names, and ratchet with its verdict.
@@ -28,7 +28,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate by both tests' assertions: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant.
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate by both tests' assertions: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
@@ -158,31 +158,36 @@ fn failing(s: &SuiteMeasurement) -> Vec<Task> {
         .collect()
 }
 
-/// A task per suite whose change adds source lines and no record of its
-/// mutants (none due once `picked` ran: `ratchet` records them), with what
-/// its tool lists of the change to pick from.
+/// A task per suite whose change adds source lines or removes tests and no
+/// record of its mutants (none due once `picked` ran: `ratchet` records
+/// them), with what its tool lists of the change to pick from.
 fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::landing::Held>) -> Result<Vec<Task>> {
     let unrecorded = held.map(|h| h.unrecorded.clone()).unwrap_or_default();
     if unrecorded.is_empty() {
         return Ok(vec![]);
     }
     let mut candidates = crate::measure::candidates(repo, cfg, tree)?;
+    let removed = held.map(|h| h.removed_tests.clone()).unwrap_or_default();
     Ok(unrecorded
         .into_iter()
         .map(|(suite, u)| {
             let lines = u.lines as f64;
             let listed = candidates.remove(&suite).unwrap_or_default();
             let files: BTreeSet<String> = listed.iter().map(|c| c.file.clone()).collect();
+            let removed = removed.get(&suite).cloned().unwrap_or_default();
+            let what = match u.tests {
+                0 => format!("adds {lines} source line(s)"),
+                t => format!("adds {lines} source line(s) and removes {t} test(s)"),
+            };
             Task {
                 kind: TaskKind::PickMutants,
                 summary: format!(
-                    "the change adds {} source line(s) and no record of its mutants: have a second agent pick the few worth running, of {}",
-                    lines,
+                    "the change {what} and no record of its mutants: have a second agent pick the few worth running, of {}",
                     listed.len()
                 ),
                 suite,
                 files: files.into_iter().collect(),
-                evidence: json!({ "lines": lines, "candidates": listed }),
+                evidence: json!({ "lines": lines, "removed_tests": removed, "candidates": listed }),
                 steps: format!(
                     "Do not pick yourself: you wrote the change, so you would pick what your tests already hold. \
                      Ask a second agent, giving it only the goal (`slimfit help picker`), the change's diff and \
@@ -191,7 +196,9 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
                      background priority: `factorium worker exclusive --background -- slimfit check --mutants \
                      <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit check ...`). A survivor: assert \
                      what it changes with a fast test through the interface, or simplify the code; if it changes \
-                     nothing observable, `slimfit ratchet --loosen survived_mutants --reason \"<why>\"`. Then \
+                     nothing observable, `slimfit ratchet --loosen survived_mutants --reason \"<why>\"`; one on a removed \
+                     test's line (`removed_tests`) is a test removed too many: put it back, or assert what it \
+                     changes in the test it was merged into. Then \
                      `slimfit ratchet --picker <its id> --author <yours>` writes the record; when it picked none, \
                      `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`. Commit \
                      .slimfit/ with the change.",
@@ -391,8 +398,10 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                         KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed: \
                         record it with `slimfit keep <test> --reason \"<why>\"` and commit `.slimfit/baseline.json`, so `test` is not proposed again \
                         until its text changes. \
-                        No mutant is run for this: the accept command holds that no test fails, and answers, as trends, whether a line became \
-                        uncovered (`new_spans`) and how test time moved: neither may rise, and after a merge `test_seconds` must fall."
+                        The accept command holds that no test fails, and answers, as trends, whether a line became \
+                        uncovered (`new_spans`) and how test time moved: neither may rise, and after a merge `test_seconds` must fall. \
+                        A delete or a merge removes a test, so the change owes picks over the lines it ran, run against the tests left \
+                        (a `pick-mutants` task): a survivor is a test removed too many: put it back, or assert what it changes in the merged test."
                     .into(),
                 accept: TaskKind::RedundantTest.accept().into(),
             }
