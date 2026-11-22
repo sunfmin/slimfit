@@ -103,8 +103,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut notes = Vec::new();
             if let Some(n) = sample {
                 measure::refuse_unpickable(cfg)?;
-                let sampled = measure::sample::sample(&repo, tree, cfg, &m, n)?;
-                let c = sampled.counts(&s.base.kept_mutants);
+                let sampled = measure::sample::sample(&repo, tree, cfg, &m, n, &s.base.kept_mutants)?;
+                let c = sampled.counts();
                 notes.push(format!(
                     "sampled at {} from the changes since {}: {} killed, {} survived, {} equivalent (kept), {} \
                      unviable, of {} mutants no record picked; out of the loop: no `check` reads it",
@@ -116,7 +116,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     c.unviable,
                     sampled.sample.pool
                 ));
-                list.extend(tasks::sampled(&sampled, &s.base.kept_mutants)?);
+                list.extend(tasks::sampled(&sampled)?);
                 list.sort_by_key(|t| t.kind);
             }
             if let Some(k) = kind {

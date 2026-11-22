@@ -37,7 +37,6 @@ pub fn list(text: &str) -> Result<Vec<Candidate>> {
             end: line_of(&m["span"]["end"]["line"]),
             field: m["genre"] == "StructField",
             removed_tests: Vec::new(),
-            hash: String::new(),
         })
         .collect())
 }

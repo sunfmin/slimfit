@@ -6,7 +6,7 @@ use crate::git;
 use crate::landing::{SuiteTree, Tree};
 use crate::loc::Kind;
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement, TestSource};
-use crate::ratchet::{Baseline, KeepKind, Kept, KeptFile, KeptMutant, KeptSpan, Measured};
+use crate::ratchet::{Baseline, KeepKind, Kept, KeptFile, KeptSpan, Measured};
 use crate::test_shape::Shape;
 use anyhow::Result;
 use serde::Serialize;
@@ -641,6 +641,10 @@ fn surviving(s: &SuiteMeasurement) -> Vec<Task> {
     survivors(&s.suite, by_file, Source::Picker)
 }
 
+/// How a sampled survivor's steps can end: in KEEP.
+const KEEP_EQUIVALENT: &str = " KEEP it when it is equivalent: no input tells the mutated code from the original (`<` to `<=` on a bound that can never be equal), so no test can kill it and no code is left to delete (`slimfit keep --help` says when): \
+     `slimfit keep --mutant '<name>' --reason \"<why no input tells them apart>\"` (the survivor's `name`), then commit `.slimfit/baseline.json`.";
+
 /// The surviving-mutant tasks of `by_file`'s survivors (each with its
 /// `line` and `mutant`) chosen by `source`: one per file, most first.
 fn survivors(suite: &str, by_file: BTreeMap<&str, Vec<Value>>, source: Source) -> Vec<Task> {
@@ -654,41 +658,33 @@ fn survivors(suite: &str, by_file: BTreeMap<&str, Vec<Value>>, source: Source) -
             summary: format!("{} mutants survive in {file} ({})", ms.len(), json!(source).as_str().unwrap_or_default()),
             files: vec![file.to_string()],
             evidence: json!({ "source": source, "survivors": ms }),
-            steps: steps(source),
+            steps: format!(
+                "For each survivor: the change it makes is behaviour no test checks. If the behaviour matters, add an assertion through the module's interface that the mutant breaks. \
+                 If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
+                 The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead.{}",
+                if source == Source::Sampled { KEEP_EQUIVALENT } else { "" }
+            ),
             accept: TaskKind::SurvivingMutant.accept().into(),
         })
         .collect()
 }
 
-/// A surviving-mutant task's steps; a sampled survivor's can end in KEEP.
-fn steps(source: Source) -> String {
-    let mut steps = "For each survivor: the change it makes is behaviour no test checks. If the behaviour matters, add an assertion through the module's interface that the mutant breaks. \
-                     If it does not matter, the code is more than it needs to be: simplify it until the mutant cannot exist. \
-                     The new assertion must be fast: add it to a fast test, never a slow one; if only a slow test could catch the mutant, simplify the code instead."
-        .to_string();
-    if source == Source::Sampled {
-        steps += " KEEP it when it is equivalent: no input tells the mutated code from the original (`<` to `<=` on a bound that can never be equal), so no test can kill it and no code is left to delete (`slimfit keep --help` says when): \
-                   `slimfit keep --mutant '<name>' --reason \"<why no input tells them apart>\"` (the survivor's `name`), then commit `.slimfit/baseline.json`.";
-    }
-    steps
-}
-
-/// A sample's tasks: its survivors, less those `kept` as equivalent, as
+/// A sample's tasks: its survivors, less those kept as equivalent, as
 /// `sampled` surviving-mutant tasks, and, when it drew any, its record to
 /// commit. No `check` reads either.
-pub fn sampled(s: &crate::measure::sample::Sampled, kept: &[KeptMutant]) -> Result<Vec<Task>> {
+pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
     let (path, text) = s.sample.file()?;
     let mut out = Vec::new();
     for (suite, drawn) in &s.sample.drawn {
         let mut by_file: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
-        for d in drawn.iter().filter(|d| d.outcome == Some(MutantStatus::Survived) && !s.kept(kept, suite, d)) {
+        for d in drawn.iter().filter(|d| d.outcome == Some(MutantStatus::Survived) && !s.is_equivalent(suite, d)) {
             let Some((_, c)) = s.candidates.iter().find(|(x, c)| x == suite && c.name == d.name) else { continue };
             let mutant = c.name.splitn(4, ':').nth(3).map_or(c.name.as_str(), str::trim);
             by_file.entry(&c.file).or_default().push(json!({ "line": c.line, "mutant": mutant, "name": c.name }));
         }
         out.extend(survivors(suite, by_file, Source::Sampled));
     }
-    let counts = s.counts(kept);
+    let counts = s.counts();
     if s.sample.drawn.values().any(|d| !d.is_empty()) {
         out.push(Task {
             kind: TaskKind::RecordSample,
@@ -979,7 +975,7 @@ mod t {
         let text = "fn f(x: u8) -> bool {\n    x < 255\n}\n\nfn g() {}\n";
         let name = |line: u32| format!("src/a.rs:{line}:7: replace < with <= in f");
         let hash = |text: &str, line| crate::measure::function_hash(crate::config::Preset::Rust, text, line);
-        let kept = [KeptMutant {
+        let kept = [crate::ratchet::KeptMutant {
             suite: "rust".into(),
             mutant: crate::model::unplaced(&name(2)),
             hash: hash(text, 2),
@@ -987,27 +983,20 @@ mod t {
         }];
         let sampled = |text: &str, line: u32| {
             let other = "src/a.rs:5:1: replace g with ()".to_string();
-            let c = |name: String, line| Candidate {
-                name,
-                file: "src/a.rs".into(),
-                line,
-                hash: hash(text, line),
-                ..Default::default()
-            };
+            let c = |name: String, line| Candidate { name, file: "src/a.rs".into(), line, ..Default::default() };
             let drawn =
                 [name(line), other.clone()].map(|name| Drawn { name, outcome: Some(MutantStatus::Survived) }).to_vec();
             let sample = Sample { tip: "t".into(), drawn: [("rust".to_string(), drawn)].into(), ..Default::default() };
-            let s = Sampled {
-                sample,
-                candidates: vec![("rust".into(), c(name(line), line)), ("rust".into(), c(other, 5))],
-            };
-            let tasks = sampled(&s, &kept).unwrap();
+            let candidates = vec![("rust".into(), c(name(line), line)), ("rust".into(), c(other, 5))];
+            let equivalent = crate::measure::sample::equivalent(&candidates, &kept, |_, c| hash(text, c.line));
+            let s = Sampled { sample, candidates, equivalent };
+            let tasks = sampled(&s).unwrap();
             let survivors: Vec<Value> = tasks
                 .iter()
                 .filter(|t| t.kind == TaskKind::SurvivingMutant)
                 .flat_map(|t| t.evidence["survivors"].as_array().unwrap().iter().map(|s| s["name"].clone()))
                 .collect();
-            (survivors, s.counts(&kept))
+            (survivors, s.counts())
         };
         let other = json!("src/a.rs:5:1: replace g with ()");
         let (survivors, counts) = sampled(text, 2);

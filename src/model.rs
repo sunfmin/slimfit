@@ -129,10 +129,6 @@ pub struct Candidate {
     /// the lines of those not picked.
     #[serde(skip)]
     pub field: bool,
-    /// The hash of its function's text (`measure::function_hash`): what a
-    /// verdict keeping it as equivalent holds to. Set for a sample's draw.
-    #[serde(skip)]
-    pub hash: String,
 }
 
 /// A mutant's name without its line and column (`file: change`): what it
