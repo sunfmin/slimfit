@@ -135,6 +135,7 @@ pub(crate) enum Cmd {
     ///
     /// - `task`: the first task, or `null` when none is left. With `--all`, `tasks` lists them instead.
     /// - `remaining` (`counts` with `--all`): per kind, how many tasks there are, past the listed ones too.
+    /// - `candidates`: how many redundant-test candidates those tasks hold (a task is a file of them).
     /// - `notes`: what was not measured and what that hides: mutants not run, or a test run that records no coverage per test (redundant-test tasks need it; the test runs of {const:PER_TEST} record it).
     /// - `next`: what to do now.
     ///
@@ -144,7 +145,7 @@ pub(crate) enum Cmd {
     /// - `pick-mutants`: `lines`, the source lines the change adds, and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
     /// - `justify-growth`: `lines`, the source lines the change adds net; `allowance`, `growth_allowance`; `from`, where the change starts (`git diff <from>` is the diff the reviewer is given); and `grown`, each file whose source lines changed, with its `lines` (net, negative for a file that shrank), most first.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
-    /// - `redundant-test`: `test`, its `seconds`, `lines` (how many source lines it runs) and `other_test`, the test whose lines it overlaps most: one that runs every one of them too, when there is one.
+    /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds` and `lines` (how many source lines it runs). A test kept leaves its file's task.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
     /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
     /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
@@ -504,6 +505,7 @@ fn help() -> Help {
         .constant("TREND_LANDINGS", tasks::TREND_LANDINGS)
         .constant("TREND_MIN", tasks::TREND_MIN)
         .constant("TIME_NOISE", format!("{:.0}%", tasks::TIME_NOISE * 100.0))
+        .constant("MERGE_OVERLAP", format!("{:.0}%", tasks::MERGE_OVERLAP * 100.0))
         .constant("COMMON_LINES", format!("{:.0}%", tasks::COMMON_LINES * 100.0))
         .constant("METRICS", model::METRICS_HELP)
         .constant("VIOLATION", ratchet::VIOLATION_HELP)

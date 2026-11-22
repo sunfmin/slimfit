@@ -1,0 +1,33 @@
+{
+  "tree": "0587b948e4284b660c99d429cf599cb094330415+d1fba762150c532c",
+  "picker": "claude-code:f38daa4e-29dc-4634-bbb9-a5986ee5f56e:claude-opus-5-5",
+  "author": "claude-code:bac2159c-0208-56bd-8f24-f64ba4ec1b19:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:370:94: replace != with == in redundant",
+        "why": "Guards the task's file list so its own file comes first and isn't repeated; only two `files` asserts check this ordering.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:360:16: replace += with *= in redundant",
+        "why": "The per-file seconds total orders tasks and is reported as evidence; from 0 it stays 0, so only the exact 0.9/0.8 seconds assert catches it.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:360:16: replace += with -= in redundant",
+        "why": "A negative total flips which file comes first; this checks that the sort direction and the seconds value are both pinned.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:406:36: replace == with != in candidates",
+        "why": "The kind filter in the new candidates count; it matters only when other task kinds are in the list, which neither test mixes in.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

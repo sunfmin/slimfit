@@ -101,7 +101,7 @@ for lang in $langs; do
     json '[t["kind"] for t in d["tasks"]]' <"$out/next.json" | grep -q uncovered
     case $lang in
       rust | go)
-        json '[t["evidence"]["test"] for t in d["tasks"] if t["kind"] == "redundant-test"]' <"$out/next.json" \
+        json '[c["test"] for t in d["tasks"] if t["kind"] == "redundant-test" for c in t["evidence"]["candidates"]]' <"$out/next.json" \
           | grep -qiE 'adds|slow' || { echo "e2e $lang: no redundant-test task" >&2; cat "$out/next.json" >&2; exit 1; }
         ;;
     esac

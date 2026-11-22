@@ -549,9 +549,13 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     // the test does not ask. Kept, with a reason, it is not proposed again.
     let proposed = |next: &Value| -> Vec<String> {
         let tasks = next["tasks"].as_array().unwrap().iter();
-        tasks.map(|t| t["evidence"]["test"].as_str().unwrap().to_string()).collect()
+        let candidates = tasks.flat_map(|t| t["evidence"]["candidates"].as_array().unwrap().iter());
+        candidates.map(|c| c["test"].as_str().unwrap().to_string()).collect()
     };
-    let before = proposed(&run("next", &["--all", "--kind", "redundant-test"], 0));
+    let all = run("next", &["--all", "--kind", "redundant-test"], 0);
+    let before = proposed(&all);
+    // One file holds them: one task, its candidates counted.
+    assert_eq!((all["counts"]["redundant-test"].clone(), all["candidates"].clone()), (1.into(), 2.into()), "{all:#}");
     let twins = ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"];
     assert!(before.len() == 2 && before.iter().all(|t| twins.contains(&t.as_str())), "{before:?}");
     let twin = before[0].as_str();
@@ -957,19 +961,20 @@ fn go() {
     let s = Sample::new(&GO);
     measures_through_its_tools(&s, &GO, false);
     // Each test's own run gives its lines: `TestAdds`, `TestAddsAgain` and
-    // `TestSlow` run the same ones, so two of them are proposed, in the
-    // test file their funcs are in; one kept is not proposed again.
+    // `TestSlow` run the same ones, so two of them are proposed, in one task
+    // of the test file their funcs are in; one kept is not proposed again.
+    let candidates = |next: &Value| -> Vec<String> {
+        let tasks = next["tasks"].as_array().unwrap().iter();
+        let c = tasks.flat_map(|t| t["evidence"]["candidates"].as_array().unwrap().iter());
+        c.map(|c| c["test"].as_str().unwrap().to_string()).collect()
+    };
     let next = s.ok(&["next", "--all", "--kind", "redundant-test"]);
-    let tasks = next["tasks"].as_array().unwrap();
+    let before = candidates(&next);
     let twins = ["example.com/calc::TestAdds", "example.com/calc::TestAddsAgain", "example.com/calc::TestSlow"];
-    assert!(
-        tasks.len() == 2 && tasks.iter().all(|t| twins.contains(&t["evidence"]["test"].as_str().unwrap())),
-        "{next:#}"
-    );
-    assert_eq!(tasks[0]["files"], serde_json::json!(["calc_test.go"]), "{next:#}");
-    let twin = tasks[0]["evidence"]["test"].as_str().unwrap();
-    s.ok(&["keep", twin, "--reason", "it checks its own case"]);
-    assert_eq!(s.ok(&["next", "--all", "--kind", "redundant-test"])["tasks"].as_array().unwrap().len(), 1);
+    assert!(before.len() == 2 && before.iter().all(|t| twins.contains(&t.as_str())), "{next:#}");
+    assert_eq!(next["tasks"][0]["files"], serde_json::json!(["calc_test.go"]), "{next:#}");
+    s.ok(&["keep", &before[0], "--reason", "it checks its own case"]);
+    assert_eq!(candidates(&s.ok(&["next", "--all", "--kind", "redundant-test"])), before[1..]);
     s.take();
     faults_reach_the_agent(&s, &GO);
     let cfg = std::fs::read_to_string(s.repo.join("slimfit.toml")).unwrap();
