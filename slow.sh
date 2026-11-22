@@ -5,7 +5,8 @@
 # tools (tests/standins.rs). The real toolchains run only when asked for:
 #   E2E_LANGS="rust go" ./slow.sh   those languages
 #   E2E_LANGS=all ./slow.sh         every language whose toolchain is present
-#   E2E_MUTANTS=1                   the Rust sample's mutants of a change too
+#   E2E_MUTANTS=1                   the Rust sample's mutants of a change too (the
+#                                   Python sample's, cheap, always run)
 set -eu
 cd "$(dirname "$0")"
 ./gate.sh

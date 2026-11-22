@@ -1,7 +1,7 @@
 //! Stand-ins for the tools slimfit drives, for slimfit's own tests: one
 //! binary, linked under each tool's name (`cargo`, `cargo-nextest`,
 //! `llvm-profdata`, `llvm-cov`, `go`, `gremlins`, `swift`, `xcrun`, `muter`, `npx`,
-//! `gradlew`) into a directory placed
+//! `gradlew`, `uv`) into a directory placed
 //! first on PATH, and under a Go test binary's (`<package>.test`) where `go
 //! test -c` builds one. It reads the arguments as the real tool does, refuses
 //! (exit 64, no report) what the real tool would not take, and writes the
@@ -110,6 +110,7 @@ fn main() {
         "go" if args.iter().any(|a| a == "-c") => "go test -c".to_string(),
         // A Go test binary: its step is the flag it was run with.
         t if t.ends_with(".test") => format!("{t} {}", args.first().map_or("", |a| a.split('=').next().unwrap_or(""))),
+        "uv" => format!("uv {}", uv_program(args).map(|(p, _)| p).unwrap_or_default()),
         _ => format!("{tool} {sub}"),
     };
     let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
@@ -131,6 +132,7 @@ fn main() {
         "muter" => muter(&sub, args),
         "gradlew" => gradlew(args),
         "npx" => npx(&sub, args),
+        "uv" => uv(args, &dir, &state.reports),
         _ => Err(format!("no stand-in for {tool}")),
     };
     let work = work.unwrap_or_else(|why| die(&step, &why));
@@ -876,5 +878,85 @@ fn npx(sub: &str, args: &[String]) -> Result<Work, Refusal> {
             Ok(Work { copies: vec![("mutation.json".into(), STRYKER_JSON.into())], ..Work::default() })
         }
         _ => Err(format!("no `{sub} run`")),
+    }
+}
+
+/// What `uv run [--with <req>]... <program> <args>...` runs: the program,
+/// named with its script for `python` (`python -`, stdin's, or the
+/// script's file name), and the requirements `--with` adds.
+fn uv_program(args: &[String]) -> Result<(String, Vec<String>), Refusal> {
+    if args.first().map(String::as_str) != Some("run") {
+        return Err("only `uv run` stands in".into());
+    }
+    let (mut with, mut i) = (Vec::new(), 1);
+    while let Some(a) = args.get(i).filter(|a| a.starts_with('-')) {
+        match a.as_str() {
+            "--with" => with.extend(args.get(i + 1).cloned()),
+            _ => return Err(format!("uv run: no option {a}")),
+        }
+        i += 2;
+    }
+    let program = args.get(i).ok_or("uv run: no program")?;
+    let script = args.get(i + 1).filter(|_| program == "python");
+    let name = |s: &String| Path::new(s).file_name().map_or(s.clone(), |n| n.to_string_lossy().into_owned());
+    Ok((script.map_or(program.clone(), |s| format!("python {}", name(s))), with))
+}
+
+/// `uv run` of the Python preset's commands: `true` (the build); pytest
+/// with pytest-cov, writing the JUnit report and the LCOV where their
+/// flags say (coverage.py's data file where `COVERAGE_FILE` says, test
+/// contexts on); `python -` reading that data file, which prints what each
+/// test ran; and the mutmut driver, given cargo-mutants' flags, which lists
+/// the real list's mutants the diff touches, or writes the outcomes of
+/// those `-F` names to `--output`.
+fn uv(args: &[String], dir: &Path, reports: &Path) -> Result<Work, Refusal> {
+    let (program, with) = uv_program(args)?;
+    let after = |p: &str| args.iter().position(|a| a == p).map_or(&[][..], |i| &args[i + 1..]);
+    match program.as_str() {
+        "true" => Ok(Work::default()),
+        "pytest" => {
+            if !with.iter().any(|w| w == "pytest-cov") || std::env::var_os("COVERAGE_FILE").is_none() {
+                return Err("pytest: no pytest-cov, or no COVERAGE_FILE".into());
+            }
+            let args = after("pytest");
+            if value(args, "--cov-context").as_deref() != Some("test") {
+                return Err("pytest: no --cov-context=test".into());
+            }
+            let lcov = need(args, "--cov-report")?;
+            let lcov = lcov.strip_prefix("lcov:").ok_or(format!("pytest: --cov-report={lcov} is not lcov"))?;
+            let junit = need(args, "--junitxml")?;
+            Ok(Work {
+                copies: vec![("junit.xml".into(), junit.into()), ("lcov.info".into(), lcov.into())],
+                ..Work::default()
+            })
+        }
+        "python -" => {
+            let data = after("python").get(1).ok_or("python -: no coverage data file")?;
+            if Some(data.as_str()) != std::env::var("COVERAGE_FILE").ok().as_deref() {
+                return Err(format!("python -: {data} is not COVERAGE_FILE"));
+            }
+            Ok(Work { stdout: Some(REACH.into()), ..Work::default() })
+        }
+        "python python-mutants.py" => {
+            if with != [MUTMUT] {
+                return Err(format!("the mutmut driver: --with {with:?}, not {MUTMUT}"));
+            }
+            let args = after("python");
+            if !Path::new(&args[0]).is_file() {
+                return Err(format!("python: can't open file {:?}", args[0]));
+            }
+            let output = PathBuf::from(need(args, "--output")?);
+            let diff = need(args, "--in-diff")?;
+            let text = std::fs::read_to_string(&diff).map_err(|e| format!("--in-diff {diff}: {e}"))?;
+            let list = std::fs::read_to_string(reports.join("mutants.list.json")).unwrap();
+            let list = serde_json::from_str(&list).unwrap();
+            let kept = Kept { names: names(args)?, lines: Some(in_diff(&text, dir)?), list, unviable: None };
+            if args.iter().any(|a| a == "--list") {
+                has(args, "--json")?;
+                return Ok(Work { stdout: Some("mutants.list.json".into()), named: Some(kept), ..Work::default() });
+            }
+            Ok(Work { copies: vec![(MUTMUT_OUTCOMES.into(), output)], named: Some(kept), ..Work::default() })
+        }
+        p => Err(format!("uv run: no stand-in for {p}")),
     }
 }

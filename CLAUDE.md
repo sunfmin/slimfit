@@ -15,7 +15,8 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 - `src/select.rs`: which tests each mutant runs (ADR 0007): the plan, and the shim slimfit becomes when run as `cargo-nextest`.
 - `src/rust_source.rs`: the one reader of Rust syntax: where an item ends, `fn`s and their names, `#[cfg(test)]` items and modules, const-ness. `loc`, `measure` and `select` ask it.
 - `src/go_source.rs`: the one reader of Go syntax: where a top-level test `func` is and its text. `measure` asks it.
-- `src/presets/`: preset commands too long for a Rust string (the Rust test command and its per-test runner; the Go test command and its run of each test).
+- `src/python_source.rs`: the one reader of Python syntax: where a pytest test `def` is and its text. `measure` asks it.
+- `src/presets/`: preset commands too long for a Rust string (the Rust test command and its per-test runner; the Go test command and its run of each test; the Python test command, and the mutmut driver that takes cargo-mutants' flags and writes its shapes).
 - `build.rs` + `src/version.rs`: stamp `slimfit --version`. A release (`packaging/release.sh cut`) sets `SLIMFIT_RELEASE` from the tag; Cargo.toml's version is not edited.
 - `testdata/<language>/`: one sample project per language, with real reports in `reports/`. Every sample holds the same five situations (see `src/fixtures.rs`).
 - `src/tools.rs`: where the tools write reports on their own, shared with the stand-ins.
@@ -25,7 +26,7 @@ A CLI that keeps a codebase small and its tests few, fast and strong. It is used
 ## Checks
 
 - `./gate.sh` (fast): fmt, clippy, then slimfit checks itself (tests and the mutants record; coverage and time as trends against `.slimfit/baseline.json`).
-- `./slow.sh`: the fast gate; `E2E_LANGS` adds `./e2e.sh` on those languages' real toolchains (`E2E_MUTANTS=1` adds the Rust sample's mutants of a change, on request).
+- `./slow.sh`: the fast gate; `E2E_LANGS` adds `./e2e.sh` on those languages' real toolchains (the Python sample's mutants of a change always; `E2E_MUTANTS=1` adds the Rust sample's, on request).
 - No gate and no commit runs mutation testing on slimfit itself: mutants are never in a gate (`slimfit --help`, rule 2), and run only on a change, picked: nothing mutates the whole codebase (ADR 0006), nor every mutant of a change (ADR 0008). Every change to source picks its mutants before it lands: `slimfit check --mutants` lists them; pick at most 5 on the decisions the change makes and run them with `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`, then `slimfit ratchet`, and the commit carries the record it writes in `.slimfit/mutants/` (or `slimfit ratchet --no-mutants "<why>"` when nothing is worth one); the gate's plain `slimfit check` fails without a record (ADR 0008). A surviving pick is killed, or loosened with a reason, and that commit carries the ratcheted `.slimfit/baseline.json`.
 - A new report format or preset change needs real output from the real tool in `testdata/<language>/reports/`, never a hand-written one. Replace absolute paths with `/REPO`.
 

@@ -142,6 +142,7 @@ const TOOLS: &[Tool] = &[
     Tool { needle: "swift test", exe: Some("swift"), install: "install Xcode, or a Swift toolchain from swift.org" },
     Tool { needle: "muter", exe: Some("muter"), install: "`brew install muter-mutation-testing/formulae/muter`" },
     Tool { needle: "npx ", exe: Some("npx"), install: "install Node.js: `brew install node`" },
+    Tool { needle: "uv run", exe: Some("uv"), install: "`brew install uv`" },
     Tool { needle: "gradlew", exe: None, install: "`brew install openjdk@21`, then set `JAVA_HOME` to it" },
 ];
 

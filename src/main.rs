@@ -12,6 +12,7 @@ mod landing;
 mod loc;
 mod measure;
 mod model;
+mod python_source;
 mod ratchet;
 mod report;
 mod rust_source;
@@ -454,7 +455,7 @@ mod answer_tests {
 
         git(dir.path(), &["init", "-q"]);
         let f = faults(dir.path(), "init");
-        assert!(f[0].fault.starts_with("no Rust, Go, Swift, Kotlin or TypeScript project found"), "{f:?}");
+        assert!(f[0].fault.starts_with("no Rust, Go, Swift, Kotlin, TypeScript or Python project found"), "{f:?}");
         assert!(f[0].fix.starts_with("write slimfit.toml by hand: a `[[suite]]` with name, preset"), "{f:?}");
         std::fs::create_dir(dir.path().join(".slimfit")).unwrap();
         std::fs::write(dir.path().join(".slimfit/baseline.json"), "[]").unwrap();
