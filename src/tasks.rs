@@ -395,7 +395,7 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                 steps: "Coverage only proposes; each candidate's `class` says how it is decided. Read the file once and decide every candidate in it. \
                         `asserts-contained`: DELETE `test`: every statement it makes, its assertions and their setup, is in its `other_test` as it is written, which runs every line it runs. \
                         `same-shape`: MERGE its group (`evidence.groups[group]`) into one table-driven test: the tests differ only in the literals each row names, \
-                        so the table's rows are those literals and its body the tests' body with each row's literal in their place; each row fails with its own name. \
+                        so the table's rows are those literals and its body the tests' body with each row's literal in their place; each row fails with its own name; rows of the same literals are one case, kept once. \
                         `read`: the assertions decide. For \
                         each: for every assertion of its `test`, find the assertion in its `other_test` (or another test you name) that \
                         checks the same outcome on the same setup. Then do one: \
@@ -966,30 +966,35 @@ mod t {
     /// differing in literals, make one group, the fastest (no candidate, the
     /// others' other test) a row too; a subset whose assertion its other test
     /// makes, on the same setup, is deleted; one whose assertion differs, or
-    /// whose assertion is the other's on another setup, is read.
+    /// whose assertion is the other's on another setup, or that asserts nothing, is read;
+    /// a comment is no statement.
     #[test]
     fn candidates_are_classed_by_their_tests_shapes() {
         let rust = [
             "fn start_gmail() {\n    let d = start(\"gmail\", 7);\n    assert_eq!(d.sources(), 1);\n}",
             "fn start_gh() {\n    let d = start(\"gh\", 7);\n    assert_eq!(d.sources(), 1);\n}",
             "fn start_none() {\n    let d = start(\"\", 7);\n    assert_eq!(d.sources(), 0);\n}",
-            "fn copy() {\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
+            "fn copy() {\n    // the sum\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
             "fn orig() {\n    let x = add(2, 3);\n    assert!(x > 0);\n    assert_eq!(x, 5);\n}",
             "fn differ() {\n    let _y = 0;\n    assert_eq!(add(1, 1), 3);\n}",
             "fn base() {\n    assert_eq!(add(1, 1), 2);\n}",
             "fn on_itself() {\n    let h = hub(\"itself\");\n    assert!(!h.behind());\n}",
             "fn on_unheard() {\n    let h = hub(\"unheard\");\n    assert!(!h.behind());\n    assert!(h.silent());\n}",
+            "fn quiet() {\n    let x = add(2, 3);\n}",
+            "fn loud() {\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
         ];
         let go = [
             "func TestStartGmail(t *testing.T) {\n\tif Start(\"gmail\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gmail\")\n\t}\n}",
             "func TestStartGh(t *testing.T) {\n\tif Start(\"gh\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gh\")\n\t}\n}",
             "func TestStartNone(t *testing.T) {\n\tif Start(\"\", 7).Sources() != 0 {\n\t\tt.Fatal(\"none\")\n\t}\n}",
-            "func TestCopy(t *testing.T) {\n\tx := Add(2, 3)\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
+            "func TestCopy(t *testing.T) {\n\t// the sum\n\tx := Add(2, 3)\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
             "func TestOrig(t *testing.T) {\n\tx := Add(2, 3)\n\tif x <= 0 {\n\t\tt.Fatal(\"positive\")\n\t}\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
             "func TestDiffer(t *testing.T) {\n\t_ = 0\n\tif Add(1, 1) != 3 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
             "func TestBase(t *testing.T) {\n\tif Add(1, 1) != 2 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
             "func TestOnItself(t *testing.T) {\n\th := Hub(\"itself\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n}",
             "func TestOnUnheard(t *testing.T) {\n\th := Hub(\"unheard\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n\tif !h.Silent() {\n\t\tt.Fatal(\"silent\")\n\t}\n}",
+            "func TestQuiet(t *testing.T) {\n\t_ = Add(2, 3)\n}",
+            "func TestLoud(t *testing.T) {\n\t_ = Add(2, 3)\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
         ];
         let tests = [
             ("gmail", 0.3, 1..=10),
@@ -1001,6 +1006,8 @@ mod t {
             ("base", 0.1, 40..=49),
             ("on_itself", 0.2, 60..=62),
             ("on_unheard", 0.1, 60..=69),
+            ("quiet", 0.2, 80..=82),
+            ("loud", 0.1, 80..=89),
         ];
         for (preset, texts) in [(crate::config::Preset::Rust, rust), (crate::config::Preset::Go, go)] {
             let mut s = suite(tests.clone().map(|(n, secs, ls)| (n, secs, ls.collect())));
@@ -1021,6 +1028,7 @@ mod t {
                 ("copy", json!("asserts-contained"), Value::Null),
                 ("differ", json!("read"), Value::Null),
                 ("on_itself", json!("read"), Value::Null),
+                ("quiet", json!("read"), Value::Null),
             ];
             assert_eq!(got, want.map(|(t, c, g)| (format!("t::{t}"), c, g)), "{preset:?}");
             let rows = &task.evidence["groups"][0];
