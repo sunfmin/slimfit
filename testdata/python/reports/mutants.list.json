@@ -196,5 +196,59 @@
   },
   "replacement": "19",
   "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:16:12: replace - with + in negate",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 16,
+    "column": 12
+   },
+   "end": {
+    "line": 16
+   }
+  },
+  "function": {
+   "function_name": "negate"
+  },
+  "replacement": "+",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:20:14: replace * with / in triple",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 20,
+    "column": 14
+   },
+   "end": {
+    "line": 20
+   }
+  },
+  "function": {
+   "function_name": "triple"
+  },
+  "replacement": "/",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:20:16: replace 3 with 4 in triple",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 20,
+    "column": 16
+   },
+   "end": {
+    "line": 20
+   }
+  },
+  "function": {
+   "function_name": "triple"
+  },
+  "replacement": "4",
+  "genre": "Mutmut"
  }
 ]

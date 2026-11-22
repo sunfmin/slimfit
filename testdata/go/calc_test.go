@@ -23,6 +23,18 @@ func TestAdult(t *testing.T) {
 	}
 }
 
+func TestNegates(t *testing.T) {
+	if Negate(5) != -5 {
+		t.Fatal("-5")
+	}
+}
+
+func TestTriples(t *testing.T) {
+	if Triple(4) != 12 {
+		t.Fatal("12")
+	}
+}
+
 func TestSlow(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 	if Add(1, 1) != 2 {

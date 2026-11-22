@@ -19,11 +19,25 @@ end_of_record
 SF:/REPO/tests/test_calc.py
 DA:15,1
 end_of_record
+test tests.test_calc	test_negates
+SF:/REPO/src/calc.py
+DA:16,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:19,1
+end_of_record
 test tests.test_calc	test_slow
 SF:/REPO/src/calc.py
 DA:2,1
 end_of_record
 SF:/REPO/tests/test_calc.py
-DA:19,1
+DA:27,1
+DA:28,1
+end_of_record
+test tests.test_calc	test_triples
+SF:/REPO/src/calc.py
 DA:20,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:23,1
 end_of_record

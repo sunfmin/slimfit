@@ -1,3 +1,25 @@
+test calc	tests::negates
+SF:/REPO/src/lib.rs
+FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_7negates
+FNDA:1,_RNvCsdQ98wxMlzei_4calc6negate
+DA:15,1
+DA:16,1
+DA:17,1
+DA:43,1
+DA:44,1
+DA:45,1
+end_of_record
+test calc	tests::triples
+SF:/REPO/src/lib.rs
+FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_7triples
+FNDA:1,_RNvCsdQ98wxMlzei_4calc6triple
+DA:19,1
+DA:20,1
+DA:21,1
+DA:48,1
+DA:49,1
+DA:50,1
+end_of_record
 test calc	tests::adds_again
 SF:/REPO/src/lib.rs
 FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_10adds_again
@@ -5,31 +27,9 @@ FNDA:1,_RNvCsdQ98wxMlzei_4calc3add
 DA:1,1
 DA:2,1
 DA:3,1
-DA:25,1
-DA:26,1
-DA:27,1
-end_of_record
-test calc	tests::adds
-SF:/REPO/src/lib.rs
-FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_4adds
-FNDA:1,_RNvCsdQ98wxMlzei_4calc3add
-DA:1,1
-DA:2,1
-DA:3,1
-DA:20,1
-DA:21,1
-DA:22,1
-end_of_record
-test calc	tests::adult
-SF:/REPO/src/lib.rs
-FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_5adult
-FNDA:1,_RNvCsdQ98wxMlzei_4calc8is_adult
-DA:11,1
-DA:12,1
-DA:13,1
-DA:30,1
-DA:31,1
-DA:32,1
+DA:33,1
+DA:34,1
+DA:35,1
 end_of_record
 test calc	tests::slow
 SF:/REPO/src/lib.rs
@@ -38,8 +38,30 @@ FNDA:1,_RNvCsdQ98wxMlzei_4calc3add
 DA:1,1
 DA:2,1
 DA:3,1
-DA:35,1
-DA:36,1
-DA:37,1
+DA:53,1
+DA:54,1
+DA:55,1
+DA:56,1
+end_of_record
+test calc	tests::adult
+SF:/REPO/src/lib.rs
+FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_5adult
+FNDA:1,_RNvCsdQ98wxMlzei_4calc8is_adult
+DA:11,1
+DA:12,1
+DA:13,1
 DA:38,1
+DA:39,1
+DA:40,1
+end_of_record
+test calc	tests::adds
+SF:/REPO/src/lib.rs
+FNDA:1,_RNvNtCsdQ98wxMlzei_4calc5testss_4adds
+FNDA:1,_RNvCsdQ98wxMlzei_4calc3add
+DA:1,1
+DA:2,1
+DA:3,1
+DA:28,1
+DA:29,1
+DA:30,1
 end_of_record

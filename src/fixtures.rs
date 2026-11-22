@@ -2,7 +2,10 @@
 //! `testdata/<language>/`, read end to end into tasks. Every sample holds
 //! the same five situations: a tested `add`, an uncovered `unused`, an
 //! `is_adult` whose boundary mutant survives, a redundant copy of the `add`
-//! test, and a slow test.
+//! test, and a slow test. In the samples whose test run records each test's
+//! lines (Rust, Go, Python), `negate` and `triple` have a test each, so that
+//! `add`'s three tests are half of them, not most: `add` is what they check,
+//! not shared setup (slimfit#91).
 
 use crate::config::{CheckConfig, Config, Preset, preset};
 use crate::formats::{self, CoverageFormat, MutantsFormat, TestsFormat};
@@ -122,19 +125,23 @@ fn rust_sample() {
     );
     assert_the_five_situations(&s, "src/lib.rs", 12);
     // the inline test module is test code, not uncovered prod code
-    assert!(s.uncovered.iter().all(|sp| sp.end < 16), "{:?}", s.uncovered);
+    assert!(s.uncovered.iter().all(|sp| sp.end < 24), "{:?}", s.uncovered);
     assert_eq!(s.uncovered[0].function.as_deref(), Some("unused"));
     // Which tests ran each function: `add` the three that call it, `unused`
-    // none, `is_adult` one; the tests' own functions are not listed.
+    // none, `is_adult`, `negate` and `triple` one each; the tests' own functions are not listed.
     let reach = s.reach.as_ref().expect("the Rust sample records reach");
     let ran = |line: u32| -> Vec<String> {
         reach.functions["src/lib.rs"][&line].iter().map(|i| reach.tests[*i as usize].id()).collect::<Vec<_>>()
     };
-    assert_eq!(reach.functions["src/lib.rs"].keys().copied().collect::<Vec<_>>(), [1, 5, 11]);
+    assert_eq!(reach.functions["src/lib.rs"].keys().copied().collect::<Vec<_>>(), [1, 5, 11, 15, 19]);
     let mut add = ran(1);
     add.sort();
     assert_eq!(add, ["calc::tests::adds", "calc::tests::adds_again", "calc::tests::slow"]);
     assert_eq!((ran(5), ran(11)), (vec![], vec!["calc::tests::adult".to_string()]));
+    assert_eq!(
+        (ran(15), ran(19)),
+        (vec!["calc::tests::negates".to_string()], vec!["calc::tests::triples".to_string()])
+    );
     // And which source lines each ran, its own test code left out; each
     // test's own function is found, from its `fn` line.
     let lines = reach.lines.as_ref().expect("the Rust sample records lines");
@@ -142,7 +149,7 @@ fn rust_sample() {
     assert_eq!(lines[of("calc::tests::adds")], [("src/lib.rs".to_string(), vec![1, 2, 3])].into());
     assert_eq!(lines[of("calc::tests::adult")], [("src/lib.rs".to_string(), vec![11, 12, 13])].into());
     let source = reach.tests[of("calc::tests::adds")].source.as_ref().unwrap();
-    assert_eq!((source.file.as_str(), source.line), ("src/lib.rs", 20));
+    assert_eq!((source.file.as_str(), source.line), ("src/lib.rs", 28));
     // The copy of `adds` asserts what `adds` does: delete it; `slow` asserts another sum: read.
     let want = [("calc::tests::slow", "read"), ("calc::tests::adds_again", "asserts-contained")];
     assert_eq!(classes(&s), want.map(|(t, c)| (t.to_string(), json!(c))));

@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="nextest-run" tests="4" skipped="0" failures="0" errors="0" uuid="af1178fa-9c1e-447f-b4c5-d4c4d3ab40a0" timestamp="2026-11-18T09:47:49.638+08:00" time="0.626">
-    <testsuite name="calc" tests="4" skipped="0" errors="0" failures="0">
-        <testcase name="tests::adds" classname="calc" timestamp="2026-11-18T09:47:49.639+08:00" time="0.023"/>
-        <testcase name="tests::adds_again" classname="calc" timestamp="2026-11-18T09:47:49.639+08:00" time="0.024"/>
-        <testcase name="tests::adult" classname="calc" timestamp="2026-11-18T09:47:49.639+08:00" time="0.024"/>
-        <testcase name="tests::slow" classname="calc" timestamp="2026-11-18T09:47:49.639+08:00" time="0.625"/>
+<testsuites name="nextest-run" tests="6" skipped="0" failures="0" errors="0" uuid="6c1ea816-b620-47c0-873a-e27f76cc01f6" timestamp="2026-11-22T11:25:13.732+09:00" time="0.613">
+    <testsuite name="calc" tests="6" skipped="0" errors="0" failures="0">
+        <testcase name="tests::negates" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.013"/>
+        <testcase name="tests::adds" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.013"/>
+        <testcase name="tests::adds_again" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.013"/>
+        <testcase name="tests::triples" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.013"/>
+        <testcase name="tests::adult" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.013"/>
+        <testcase name="tests::slow" classname="calc" timestamp="2026-11-22T11:25:13.732+09:00" time="0.613"/>
     </testsuite>
 </testsuites>

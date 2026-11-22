@@ -52,6 +52,10 @@ const RUST: Lang = Lang {
         "llvm-cov export",
         "llvm-cov export",
         "llvm-cov export",
+        "llvm-cov export",
+        "llvm-cov export",
+        "llvm-profdata merge",
+        "llvm-profdata merge",
         "llvm-profdata merge",
         "llvm-profdata merge",
         "llvm-profdata merge",
@@ -73,6 +77,8 @@ const GO: Lang = Lang {
     // and runs each on its own.
     reach_steps: &[
         "1.test -test.list",
+        "1.test -test.run",
+        "1.test -test.run",
         "1.test -test.run",
         "1.test -test.run",
         "1.test -test.run",
@@ -416,7 +422,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     // Rust's runner and Go's runs of each test record each test's CPU
     // time, as many as ran; the others' test commands record none.
     let records = std::fs::read_dir(s.repo.join(".slimfit/out").join(lang.name).join("test-cpu")).unwrap().count();
-    assert_eq!(records, if ["rust", "go"].contains(&lang.name) { 4 } else { 0 }, "{}", lang.name);
+    assert_eq!(records, if ["rust", "go"].contains(&lang.name) { 6 } else { 0 }, "{}", lang.name);
     let base = s.read(".slimfit/baseline.json");
     if let Some((_, dry)) = printed.first() {
         // What the dry run said it would write, but for `test_seconds` (CPU
@@ -723,8 +729,8 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
         })
         .collect();
     // In the order the tests ran, as the reach report lists them.
-    let adds = "(binary_id(=calc) & test(=tests::adds_again)) | (binary_id(=calc) & test(=tests::adds)) | \
-                (binary_id(=calc) & test(=tests::slow))";
+    let adds = "(binary_id(=calc) & test(=tests::adds_again)) | (binary_id(=calc) & test(=tests::slow)) | \
+                (binary_id(=calc) & test(=tests::adds))";
     let adult = "(binary_id(=calc) & test(=tests::adult))";
     assert_eq!((runs, filters), (3, vec![adds, adult]), "{calls:#?}");
     let mutants = calls.iter().rfind(|c| c.step == "cargo mutants").unwrap();
@@ -776,14 +782,14 @@ fn rust_test_args() {
         map.lines().map(|l| l.split('\t').nth(2).unwrap().to_string()).collect()
     };
     let init = s.ok(&["init"]);
-    assert_eq!(init["baseline"]["rust"]["tests"], 3, "{init:#}");
-    assert_eq!(ran(&s), ["tests::adds_again", "tests::adds", "tests::adult"]);
+    assert_eq!(init["baseline"]["rust"]["tests"], 5, "{init:#}");
+    assert_eq!(ran(&s), ["tests::negates", "tests::triples", "tests::adds_again", "tests::adult", "tests::adds"]);
     assert!(s.repo.join("target/nextest/fast/junit.xml").exists() && !s.repo.join("target/nextest/default").exists());
     assert!(!s.repo.join("target/debug").exists(), "the build directory holds a test binary");
     slow("test(=tests::adult)");
     let check = s.ok(&["check"]);
-    assert_eq!(check["metrics"]["rust"]["tests"], 3, "{check:#}");
-    assert_eq!(ran(&s), ["tests::adds_again", "tests::adds", "tests::slow"]);
+    assert_eq!(check["metrics"]["rust"]["tests"], 5, "{check:#}");
+    assert_eq!(ran(&s), ["tests::negates", "tests::triples", "tests::adds_again", "tests::slow", "tests::adds"]);
     // A mutant of `add`, which `adds`, `adds_again` and `slow` run: only
     // those `test_args` leave run it, under its profile.
     slow("test(=tests::slow)");
@@ -819,9 +825,9 @@ fn rust_runs_every_test_whatever_fails() {
         s
     };
     let every = |s: &Sample, init: &Value| {
-        assert_eq!(init["baseline"]["rust"]["tests"], 4, "{init:#}");
+        assert_eq!(init["baseline"]["rust"]["tests"], 6, "{init:#}");
         let reach = s.read(".slimfit/out/rust/reach.txt");
-        assert_eq!(reach.lines().filter(|l| l.starts_with("test ")).count(), 4, "{reach}");
+        assert_eq!(reach.lines().filter(|l| l.starts_with("test ")).count(), 6, "{reach}");
         let run = s.take().into_iter().find(|c| c.step == "cargo-nextest nextest").unwrap();
         assert_eq!(run.args.iter().filter(|a| *a == "--no-fail-fast").count(), 1, "{run:?}");
     };
@@ -843,7 +849,7 @@ fn rust_runs_every_test_whatever_fails() {
     let s = measured("--no-fail-fast");
     every(&s, &s.ok(&["init"]));
     let s = measured("--fail-fast");
-    s.error(&["init"], &["not run: calc tests::adds, calc tests::adult, calc tests::slow", "--fail-fast"]);
+    s.error(&["init"], &["not run: calc tests::triples, calc tests::adds_again, calc tests::slow, calc tests::adult, calc tests::adds", "--fail-fast"]);
 }
 
 /// A sample of 2 draws 4 and runs them in one cargo-mutants run, which

@@ -1,6 +1,6 @@
 import time
 
-from calc import add, is_adult
+from calc import add, is_adult, negate, triple
 
 
 def test_adds():
@@ -13,6 +13,14 @@ def test_adds_again():
 
 def test_adult():
     assert is_adult(30)
+
+
+def test_negates():
+    assert negate(5) == -5
+
+
+def test_triples():
+    assert triple(4) == 12
 
 
 def test_slow():
