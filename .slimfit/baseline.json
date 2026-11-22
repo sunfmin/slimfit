@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7399,
-      "test_lines": 5462,
+      "prod_lines": 7403,
+      "test_lines": 5478,
       "tests": 133,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5101,
+      "covered_lines": 5122,
       "uncovered_lines": 39
     }
   },
@@ -47,19 +47,12 @@
       "reason": "slimfit#43: test_seconds is now the tests' CPU time (ADR 0010), no longer wall time corrected for load; re-set once from a CPU-timed slimfit check of this tree under worker exclusive (measurements in slimfit#43's comments)."
     }
   ],
-  "kept": [
-    {
-      "suite": "rust",
-      "test": "slimfit::bin/slimfit::answer_tests::a_landing_passes_only_with_a_record_of_its_mutants",
-      "hash": "dd9eb7e94fccd020",
-      "reason": "No assertion maps: it checks the mutants record (ADR 0008: unrecorded_mutants, picks, --why, picker/author, --no-mutants, merge of two records, report's mutants_records, a target gone), the other checks the growth record (ADR 0012: growth_allowance, deletions paying, justify-growth, reviewer/author, report's growth_records). The setups conflict: the other's growth_allowance = 4 makes this test's merged landing (6 lines net) fail as unrecorded_growth where it must pass, and this one's mutants_tests = All changes what the other measures; only sample_repo and the adopt commit are shared."
-    }
-  ],
+  "kept": [],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 61,
-      "test_seconds": 31.217
+      "uncovered_lines": 44,
+      "test_seconds": 32.364
     }
   }
 }
