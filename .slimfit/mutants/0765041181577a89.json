@@ -1,0 +1,21 @@
+{
+  "tree": "cf96b28c68a685967df4fa74ecdabc8ae6c566f2+d1fba762150c532c",
+  "picker": "grok:01a20107-8200-7bd1-9787-ca532aa5b745:grok-4.7-build",
+  "author": "claude-code:ba56a8dc-984c-51d1-8adc-73201f154fe7:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:348:80: replace < with <= in redundant",
+        "why": "Same-line subsets already satisfy is_subset, so <= holds for both directions and names the pair twice; the added test only builds a strictly shorter subset (x::own inside y::reads).",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:345:40: replace > with >= in redundant",
+        "why": "The o != t filter keeps the (secs, name) tuples unequal, so >= selects the same slower test as >.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
