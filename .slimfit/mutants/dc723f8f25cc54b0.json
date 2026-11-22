@@ -1,0 +1,21 @@
+{
+  "tree": "0d4ad7abbc508970b07955adb7b2b32d838c4cf7+d1fba762150c532c",
+  "picker": "claude-code:c5826a07-0de2-4a96-bb31-60a4552d9a87:claude-opus-5-5",
+  "author": "claude-code:0b3d2e48-6575-538d-8962-82ef36ac810b:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:434:31: replace && with || in classify",
+        "why": "Every candidate in the tests is a `subset` that asserts, so `(subset || asserts) && within` gives the same classes; no overlap candidate, and no candidate without assertions, tells the two apart.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/test_shape.rs:153:50: replace && with || in top_statements",
+        "why": "With `||`, anonymous `{`/`}` tokens and comments count as statements. Both tests share the braces, and no test has a comment only one of them holds, so containment likely comes out the same.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
