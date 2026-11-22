@@ -49,6 +49,7 @@ pub enum Preset {
     Swift,
     Kotlin,
     Typescript,
+    Python,
 }
 
 impl Preset {
@@ -65,6 +66,7 @@ impl Preset {
             Preset::Swift => "Swift",
             Preset::Kotlin => "Kotlin",
             Preset::Typescript => "TypeScript",
+            Preset::Python => "Python",
         }
     }
 }
@@ -253,6 +255,10 @@ pub(crate) const RUST_TESTS: &[&str] =
 /// coverage, and which functions each test ran (ADR 0007).
 const RUST_TEST: &str = include_str!("presets/rust-test.sh");
 const GO_TEST: &str = include_str!("presets/go-test.sh");
+const PYTHON_TEST: &str = include_str!("presets/python-test.sh");
+/// The Python preset's mutants command: slimfit's driver of mutmut, which
+/// takes cargo-mutants' flags and writes its shapes (see the script).
+const PYTHON_MUTANTS: &str = include_str!("presets/python-mutants.py");
 /// The Rust preset's mutants command. cargo-mutants builds each mutant in a
 /// copy of the tree with no `target`, so its first build compiled every
 /// dependency (94-115s on factorium). `cargo llvm-cov show-env` gives the
@@ -386,6 +392,22 @@ pub fn preset(p: Preset) -> Suite {
                 &["**/*.test.*", "**/*.spec.*", "**/__tests__/**", "test/**", "tests/**", "**/*.config.*", "**/*.d.ts"],
             )
         },
+        Preset::Python => Suite {
+            // Syncs the environment the test command runs in.
+            build_command: "uv run --with pytest-cov true".into(),
+            test_command: PYTHON_TEST.replace("{REACH}", REACH),
+            tests_report: report(TestsFormat::Junit, "$SLIMFIT_OUT/junit.xml"),
+            reach_report: report(ReachFormat::Lcov, &format!("$SLIMFIT_OUT/{REACH}")),
+            // The driver is written out, then run; the flags slimfit gives follow.
+            mutants_command: format!(
+                "f=\"$SLIMFIT_OUT/python-mutants.py\"; cat > \"$f\" <<'DRIVER'\n{PYTHON_MUTANTS}DRIVER\n\
+                 uv run --with {MUTMUT} python \"$f\" --output \"$SLIMFIT_OUT/{MUTMUT_OUTCOMES}\""
+            ),
+            mutants_report: report(MutantsFormat::CargoMutants, &format!("$SLIMFIT_OUT/{MUTMUT_OUTCOMES}")),
+            mutants_diff_flag: "--in-diff".into(),
+            mutants_pick_flag: "-F".into(),
+            ..base(&["**/*.py"], &["tests/**", "**/tests/**", "test/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"])
+        },
     }
 }
 
@@ -397,6 +419,7 @@ const MARKERS: &[(&str, Preset)] = &[
     ("settings.gradle", Preset::Kotlin),
     ("build.gradle.kts", Preset::Kotlin),
     ("tsconfig.json", Preset::Typescript),
+    ("pyproject.toml", Preset::Python),
 ];
 
 /// One suite per project root found among `files`: the shallowest marker of
@@ -455,7 +478,7 @@ pub fn parse(repo: &Path, text: &str) -> Result<Config> {
             format!("{FILE} is not valid: {}", e.to_string().trim()),
             format!(
                 "edit {FILE} where the fault points; each [[suite]] needs name and preset (rust, go, swift, \
-                     kotlin or typescript), and may set root"
+                     kotlin, typescript or python), and may set root"
             ),
         )
     })?;
@@ -534,7 +557,7 @@ mod tests {
         assert!(f[0].fault.starts_with("cannot read") && f[0].fix.starts_with("`slimfit init` writes it"), "{f:?}");
         let f = faults(Some("[[suite]]\nname = \"a\"\npreset = \"cobol\"\n"));
         assert!(f[0].fault.starts_with("slimfit.toml is not valid") && f[0].fault.contains("cobol"), "{f:?}");
-        assert!(f[0].fix.contains("preset (rust, go, swift, kotlin or typescript)"), "{f:?}");
+        assert!(f[0].fix.contains("preset (rust, go, swift, kotlin, typescript or python)"), "{f:?}");
         let f = faults(Some("suite = []\n"));
         assert!(f[0].fix.starts_with("add one: `[[suite]]`"), "{f:?}");
         let s = |name: &str, root: &str| format!("[[suite]]\nname = \"{name}\"\npreset = \"go\"\nroot = \"{root}\"\n");

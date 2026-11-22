@@ -3,25 +3,26 @@
 # testdata/, with the language's real tools. For each language:
 #   init                      → baseline written
 #   next --all                → an `uncovered` task names the `unused` function's file;
-#                               for rust and go, whose test runs record each test's
-#                               lines, a `redundant-test` task names a copy of the
-#                               add test
+#                               for rust, go and python, whose test runs record each
+#                               test's lines, a `redundant-test` task names a copy of
+#                               the add test
 #   check                     → passes
 #   add an untested function  → check's uncovered_lines trend names its lines as
 #                               a new span (a trend: it fails no check)
-# With E2E_MUTANTS=1, also, for rust (the one preset whose mutants tool lists
-# a change's mutants and runs them by name; nothing mutates a whole sample),
-# after the injection:
+# For python, and with E2E_MUTANTS=1 for rust (the presets whose mutants
+# tool lists a change's mutants and runs them by name; nothing mutates a
+# whole sample), after the injection:
 #   check --mutants           → lists the injected lines' mutants
-#   check --mutants <2 picks> → cargo-mutants runs only those two of the
-#                               untested function, each with only the tests
-#                               that ran its function (none), and their
-#                               survivors fail the check
-#   next --all                → a `surviving-mutant` task in src/lib.rs, from
-#                               the same measurement (cached; no mutant runs again)
+#   check --mutants <2 picks> → the tool runs only those two of the untested
+#                               function, and their survivors fail the check;
+#                               cargo-mutants runs each with only the tests
+#                               that ran its function (none)
+#   next --all                → a `surviving-mutant` task in the injected
+#                               file, from the same measurement (cached; no
+#                               mutant runs again)
 # A language whose toolchain for this run is incomplete (cargo-mutants too
 # under E2E_MUTANTS=1) is skipped, and the skip names what is missing.
-# Usage: ./e2e.sh [rust|go|typescript|kotlin|swift]...
+# Usage: ./e2e.sh [rust|go|typescript|kotlin|swift|python]...
 set -eu
 cd "$(dirname "$0")"
 [ -d "$HOME/.cargo/bin" ] && PATH="$HOME/.cargo/bin:$PATH"
@@ -46,6 +47,7 @@ missing() {
     rust) need cargo-llvm-cov; need cargo-nextest; mut cargo-mutants ;;
     go) need go ;;
     typescript) need npm ;;
+    python) need uv ;;
     kotlin) [ -n "${JAVA_HOME:-}" ] && "$JAVA_HOME/bin/java" -version >/dev/null 2>&1 || m="$m java (JAVA_HOME)" ;;
     swift)
       need swift
@@ -62,17 +64,19 @@ inject() {
     typescript) printf '\nexport function untested(x: number): number {\n  const y = x * 3;\n  return y - 1;\n}\n' ;;
     kotlin) printf '\nfun untested(x: Int): Int {\n    val y = x * 3\n    return y - 1\n}\n' ;;
     swift) printf '\npublic func untested(_ x: Int) -> Int {\n    let y = x * 3\n    return y - 1\n}\n' ;;
+    python) printf '\n\ndef untested(x):\n    y = x * 3\n    return y - 1\n' ;;
   esac >> "$(source_of "$1")"
 }
 source_of() {
   case "$1" in
     rust) echo src/lib.rs ;; go) echo calc.go ;; typescript) echo src/calc.ts ;;
     kotlin) echo src/main/kotlin/com/example/Calc.kt ;; swift) echo Sources/Calc/Calc.swift ;;
+    python) echo src/calc.py ;;
   esac
 }
 json() { uv run --no-project python -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
-langs=${*:-rust go typescript kotlin swift}
+langs=${*:-rust go typescript kotlin swift python}
 failed=0
 for lang in $langs; do
   lack=$(missing "$lang")
@@ -100,7 +104,7 @@ for lang in $langs; do
     "$bin" next --all >"$out/next.json" 2>/dev/null
     json '[t["kind"] for t in d["tasks"]]' <"$out/next.json" | grep -q uncovered
     case $lang in
-      rust | go)
+      rust | go | python)
         json '[c["test"] for t in d["tasks"] if t["kind"] == "redundant-test" for c in t["evidence"]["candidates"]]' <"$out/next.json" \
           | grep -qiE 'adds|slow' || { echo "e2e $lang: no redundant-test task" >&2; cat "$out/next.json" >&2; exit 1; }
         ;;
@@ -110,18 +114,20 @@ for lang in $langs; do
     "$bin" check >"$out/check.json" 2>/dev/null || :
     json '[s["file"] for t in d["verdict"]["uncovered_lines"] for s in t["new_spans"]]' <"$out/check.json" \
       | grep -qF "$(source_of "$lang")" || { echo "e2e $lang: no new uncovered span" >&2; cat "$out/check.json" >&2; exit 1; }
-    if [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; then
+    if [ "$lang" = python ] || { [ "${E2E_MUTANTS:-}" = 1 ] && [ "$lang" = rust ]; }; then
       "$bin" check --mutants >"$out/list.json" 2>"$out/list.log" || { tail -20 "$out/list.log"; exit 1; }
-      pick() { json "[c['name'] for c in d['candidates']['rust'] if c['function'] == 'untested'][$1]" <"$out/list.json"; }
+      pick() { json "[c['name'] for c in d['candidates']['$lang'] if c['function'] == 'untested'][$1]" <"$out/list.json"; }
       first=$(pick 0) second=$(pick 1)
       "$bin" check --mutants "$first" "$second" --why "its result" "its result" >"$out/change.json" 2>"$out/change.log" \
         && { echo "check --mutants passed the untested function" >&2; exit 1; }
-      json '[p["outcome"] for p in d["mutated"]["rust"]["picks"]]' <"$out/change.json" \
+      json "[p['outcome'] for p in d['mutated']['$lang']['picks']]" <"$out/change.json" \
         | grep -qx "\['survived', 'survived'\]" || { cat "$out/change.json"; tail -20 "$out/change.log"; exit 1; }
-      grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
-        || { echo "the untested function's mutants ran tests" >&2; tail -20 "$out/change.log"; exit 1; }
+      if [ "$lang" = rust ]; then
+        grep -qh "^slimfit: src/lib.rs:[0-9]*: 0 of [0-9]* tests run its function" .slimfit/out/rust/mutants.out/log/*.log \
+          || { echo "the untested function's mutants ran tests" >&2; tail -20 "$out/change.log"; exit 1; }
+      fi
       "$bin" next --all 2>/dev/null | json '[t["files"] for t in d["tasks"] if t["kind"] == "surviving-mutant"]' \
-        | grep -q "src/lib.rs" || { echo "no surviving-mutant task in src/lib.rs" >&2; exit 1; }
+        | grep -qF "$(source_of "$lang")" || { echo "no surviving-mutant task in $(source_of "$lang")" >&2; exit 1; }
     fi
     echo "e2e $lang: ok ($(( $(date +%s) - start ))s)"
   ) || { echo "e2e $lang: FAILED"; failed=1; }

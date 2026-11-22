@@ -67,7 +67,7 @@ fn measure_with_coverage(
     for x in &mut m {
         x.file = st.resolver.resolve(&x.file).unwrap_or_else(|| x.file.clone());
     }
-    // The Rust and Go samples' test runs also record what each test ran.
+    // The Rust, Go and Python samples' test runs also record what each test ran.
     let r = preset(p).reach_report;
     let reach = (!r.path.is_empty()).then(|| formats::read_reach(r.format, &here(read(lang, &["reach.txt"]))).unwrap());
     // The tests' CPU time as their wall time: the sample's reports hold no other.
@@ -185,6 +185,25 @@ fn go_sample() {
     let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
     assert!(!redundant.is_empty(), "{tasks:#?}");
     assert!(redundant.iter().all(|t| t.files == ["calc_test.go"]), "{redundant:#?}");
+}
+
+/// Python's test run records each test's lines (coverage.py's contexts),
+/// so the copy of the add test is proposed, in the module its `def` is in;
+/// mutmut's driver reports in cargo-mutants' shape.
+#[test]
+fn python_sample() {
+    let s = measure(
+        "python",
+        Preset::Python,
+        (TestsFormat::Junit, &["junit.xml"]),
+        (CoverageFormat::Lcov, &["lcov.info"]),
+        (MutantsFormat::CargoMutants, &["mutmut.json"]),
+    );
+    assert_the_five_situations(&s, "src/calc.py", 12);
+    let tasks = of_measurement(&s, &[]);
+    let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
+    assert!(!redundant.is_empty(), "{tasks:#?}");
+    assert!(redundant.iter().all(|t| t.files == ["tests/test_calc.py"]), "{redundant:#?}");
 }
 
 #[test]

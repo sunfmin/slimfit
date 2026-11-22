@@ -1,0 +1,200 @@
+[
+ {
+  "name": "src/calc.py:2:14: replace + with - in add",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 2,
+    "column": 14
+   },
+   "end": {
+    "line": 2
+   }
+  },
+  "function": {
+   "function_name": "add"
+  },
+  "replacement": "-",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:6:15: replace x * 2 with None in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 6,
+    "column": 15
+   },
+   "end": {
+    "line": 6
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "None",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:6:17: replace * with / in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 6,
+    "column": 17
+   },
+   "end": {
+    "line": 6
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "/",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:6:19: replace 2 with 3 in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 6,
+    "column": 19
+   },
+   "end": {
+    "line": 6
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "3",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:7:15: replace doubled + 7 with None in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 7,
+    "column": 15
+   },
+   "end": {
+    "line": 7
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "None",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:7:23: replace + with - in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 7,
+    "column": 23
+   },
+   "end": {
+    "line": 7
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "-",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:7:25: replace 7 with 8 in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 7,
+    "column": 25
+   },
+   "end": {
+    "line": 7
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "8",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:8:20: replace // with / in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 8,
+    "column": 20
+   },
+   "end": {
+    "line": 8
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "/",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:8:23: replace 3 with 4 in unused",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 8,
+    "column": 23
+   },
+   "end": {
+    "line": 8
+   }
+  },
+  "function": {
+   "function_name": "unused"
+  },
+  "replacement": "4",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:12:16: replace >= with > in is_adult",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 12,
+    "column": 16
+   },
+   "end": {
+    "line": 12
+   }
+  },
+  "function": {
+   "function_name": "is_adult"
+  },
+  "replacement": ">",
+  "genre": "Mutmut"
+ },
+ {
+  "name": "src/calc.py:12:19: replace 18 with 19 in is_adult",
+  "file": "src/calc.py",
+  "span": {
+   "start": {
+    "line": 12,
+    "column": 19
+   },
+   "end": {
+    "line": 12
+   }
+  },
+  "function": {
+   "function_name": "is_adult"
+  },
+  "replacement": "19",
+  "genre": "Mutmut"
+ }
+]

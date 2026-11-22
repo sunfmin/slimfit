@@ -25,13 +25,14 @@ Redundant-test tasks need the lines each test ran. Rust's test run records them 
 | cobra 1.8.0 | 259 | 0.33-0.36s | 4.17-4.60s | 0.58 → 1.52s |
 | excelize 2.10.1 | 424 | 23.3-32.3s | 84.2-94.6s | 25.5 → 46.8s |
 
-Excelize's tests are all in one package, so its runs of each test are one after another. Time `slimfit init` on the repo before placing `slimfit check` in a gate.
+Excelize's tests are all in one package, so its runs of each test are one after another. Python's test run records them as it runs: coverage.py keeps each line with the tests that ran it (`--cov-context=test`), read once after pytest exits; on slimfit's Python sample (4 tests, at host load 8-11) the preset's test command took 0.89-1.12s against a plain `uv run pytest`'s 0.71-0.97s. Time `slimfit init` on the repo before placing `slimfit check` in a gate.
 
 ## The first build
 
 A mutation tool builds its mutants in a copy of the tree. Its first build compiles whatever that copy cannot reuse; each later mutant recompiles only what it changed (on factorium 1-5s; about 20s for the first that compiles, which links the test binaries).
 
 - Rust: cargo-mutants' copy has no `target`, so its first build compiled every dependency: 94-115s on factorium, half of a 226s run of 17 mutants. The preset builds each mutant as the test run built (`cargo llvm-cov show-env`) into the test run's own target directory, so only the mutated crates compile: 9-11s, and the run took 126-136s. Copying `target` into the copy (`--copy-target`) gains nothing, since a target directory at a new path recompiles every crate with a build script; mutating in place (`--in-place`) builds cold too, and leaves the shim no unmutated tree to find the mutant by, so every mutant runs every test (335s). The next test run then recompiles the workspace's own crates once (35s on factorium), as it would after any edit.
+- Python: mutmut builds nothing; the driver copies the tree's files and mutmut runs the picks there, each with only the tests that ran its function, after one run of every test (its stats) and one of those the picks need. On slimfit's Python sample, `slimfit check --mutants` with two picks took 2.2s, and its listing alone 0.3s (no test runs).
 - The other presets' first builds are not measured: time one `slimfit check --mutants <name>` on a small change.
 
 ## A mutant that hangs
