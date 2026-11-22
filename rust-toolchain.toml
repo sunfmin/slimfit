@@ -1,0 +1,6 @@
+# The toolchain the gate passes on is the one a cut builds with: the tap's
+# release workflow builds what the host's gate built (slimfit#101).
+[toolchain]
+channel = "nightly-2026-10-22"
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
