@@ -3,7 +3,7 @@
 //! by index; and, over [`BUDGET`], grouped per function, with a few
 //! candidates of each spelled out and the way to list one in full.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
@@ -26,15 +26,16 @@ pub struct Listing<'a> {
     /// Each removed test that ran a candidate's line, once (`file:line:
     /// name`, where the change starts): what `removed` indexes.
     pub removed_tests: BTreeMap<String, Vec<String>>,
-    /// The candidates: all of them, or, grouped, [`EXAMPLES`] per function.
+    /// The candidates: all of them, or, grouped, up to [`EXAMPLES`] per
+    /// function, as many as fit the budget.
     pub candidates: BTreeMap<String, Vec<Entry<'a>>>,
     /// Grouped only: every function holding candidates.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub functions: Option<BTreeMap<String, Vec<Function<'a>>>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub functions: BTreeMap<String, Vec<Function<'a>>>,
 }
 
 /// A candidate as listed.
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Entry<'a> {
     #[serde(flatten)]
     pub candidate: &'a Candidate,
@@ -86,33 +87,61 @@ pub fn of<'a>(
     if !functions.is_empty() || size(&listing) <= BUDGET {
         return listing;
     }
-    let mut functions = BTreeMap::new();
-    for (suite, entries) in std::mem::take(&mut listing.candidates) {
-        let mut groups: Vec<(Function, Vec<Entry>)> = Vec::new();
-        for e in entries {
+    let mut groups: BTreeMap<String, Vec<Vec<Entry>>> = BTreeMap::new();
+    for (suite, entries) in listing.candidates.iter_mut() {
+        let (fs, of_each) =
+            (listing.functions.entry(suite.clone()).or_default(), groups.entry(suite.clone()).or_default());
+        for e in std::mem::take(entries) {
             let c = e.candidate;
-            let at = groups.iter().position(|(f, _)| f.file == c.file && f.function == c.function);
-            let (f, examples) = match at {
-                Some(i) => &mut groups[i],
-                None => {
-                    let f = Function { file: &c.file, function: &c.function, mutants: 0, removed: vec![] };
-                    groups.push((f, vec![]));
-                    groups.last_mut().unwrap()
+            let at = fs.iter().position(|f| f.file == c.file && f.function == c.function).unwrap_or_else(|| {
+                fs.push(Function { file: &c.file, function: &c.function, mutants: 0, removed: vec![] });
+                of_each.push(vec![]);
+                fs.len() - 1
+            });
+            fs[at].mutants += 1;
+            fs[at].removed.extend(&e.removed);
+            of_each[at].push(e);
+        }
+        for f in fs.iter_mut() {
+            f.removed.sort_unstable();
+            f.removed.dedup();
+        }
+    }
+    // What is left of the budget goes to examples, a round of one per function
+    // at a time; each suite spells out one at least, so a grouped listing
+    // always names a candidate to pick.
+    let (mut spent, mut full) = (size(&listing), false);
+    let mut spelled: BTreeMap<&String, Vec<(usize, usize)>> = BTreeMap::new();
+    for round in 0..EXAMPLES {
+        for (suite, of_each) in &groups {
+            for (at, entries) in of_each.iter().enumerate() {
+                let Some(e) = entries.get(round) else { continue };
+                let cost = cost(e);
+                let first = round == 0 && !spelled.contains_key(suite);
+                full = full || spent + cost > BUDGET - NEXT;
+                if first || !full {
+                    spelled.entry(suite).or_default().push((at, round));
+                    spent += cost;
                 }
-            };
-            f.mutants += 1;
-            let union: BTreeSet<usize> = f.removed.iter().chain(&e.removed).copied().collect();
-            f.removed = union.into_iter().collect();
-            if examples.len() < EXAMPLES {
-                examples.push(e);
             }
         }
-        let (fs, examples): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
-        listing.candidates.insert(suite.clone(), examples.into_iter().flatten().collect());
-        functions.insert(suite, fs);
     }
-    listing.functions = Some(functions);
+    for (suite, mut places) in spelled {
+        places.sort_unstable();
+        let of_each = &groups[suite];
+        let examples = places.into_iter().map(|(at, round)| of_each[at][round].clone());
+        listing.candidates.insert(suite.clone(), examples.collect());
+    }
     listing
+}
+
+/// The bytes left of [`BUDGET`] for the rest of the answer (`next`).
+const NEXT: usize = 2_000;
+
+/// The bytes `e` adds to a listing as it is printed, nested as a candidate.
+fn cost(e: &Entry) -> usize {
+    let text = serde_json::to_string_pretty(e).unwrap_or_default();
+    text.len() + 6 * text.lines().count() + 2
 }
 
 /// Whether `c` is in the function `key` names (`<file>: <function>`).
@@ -132,9 +161,9 @@ fn indexes(table: &mut Vec<String>, tests: &[String]) -> Vec<usize> {
     tests.iter().map(|t| at(table, t)).collect()
 }
 
-/// The bytes `listing` answers in.
+/// The bytes `listing` answers in, printed as slimfit prints its answers.
 pub fn size(listing: &Listing) -> usize {
-    serde_json::to_string(listing).map_or(0, |t| t.len())
+    serde_json::to_string_pretty(listing).map_or(0, |t| t.len())
 }
 
 #[cfg(test)]
@@ -174,13 +203,13 @@ mod tests {
         let candidates = BTreeMap::from([("rust".to_string(), listed)]);
         let removed = BTreeMap::from([("rust".to_string(), vec![tests[3].clone()])]);
         let listing = of(&candidates, &removed, &[]);
-        let text = serde_json::to_string(&listing).unwrap();
-        assert!(text.len() <= BUDGET, "{}", text.len());
+        let text = serde_json::to_string_pretty(&listing).unwrap();
+        assert!(text.len() <= BUDGET - NEXT, "{}", text.len());
         for t in &tests {
             assert_eq!(text.matches(&format!("\"{t}\"")).count(), 1, "{t}");
         }
         assert_eq!(listing.removed_tests["rust"][0], tests[3], "the change's removed tests lead the table");
-        let functions = &listing.functions.as_ref().unwrap()["rust"];
+        let functions = &listing.functions["rust"];
         let counts: Vec<(&str, &str, usize)> = functions.iter().map(|f| (f.file, f.function, f.mutants)).collect();
         assert_eq!(counts.len(), 123);
         assert_eq!(counts[..1], [("src/m0.rs", "Thing::f0", 20)]);
@@ -189,10 +218,30 @@ mod tests {
             [("src/m0.rs", "Thing::other", 2), ("src/n.rs", "Thing::f0", 4), ("src/big.rs", "big", 2_000)]
         );
         assert_eq!((functions[0].removed.len(), &functions[121].removed[..]), (60, &[][..]));
-        assert_eq!(listing.candidates["rust"].len(), 120 * EXAMPLES + 2 + 2 * EXAMPLES);
+        // The budget left is spent a round at a time, in order, until an example does not fit.
+        let spelled = |f: &Function| {
+            let of_it = |e: &&Entry| e.candidate.file == f.file && e.candidate.function == f.function;
+            listing.candidates["rust"].iter().filter(of_it).count()
+        };
+        let per: Vec<usize> = functions.iter().map(spelled).collect();
+        let firsts = per.iter().take_while(|&&n| n == 1).count();
+        assert!(firsts > 1 && per[firsts..].iter().all(|&n| n == 0), "{per:?}");
+        // Few functions, many mutants each: room for every round.
+        let deep: Vec<Candidate> = (0..3).flat_map(|f| many(&format!("src/d{f}.rs"), "f", 2_000, &[])).collect();
+        let deep = BTreeMap::from([("rust".to_string(), deep)]);
+        let listing = of(&deep, &BTreeMap::new(), &[]);
+        assert_eq!((listing.functions["rust"].len(), listing.candidates["rust"].len()), (3, 3 * EXAMPLES));
+        // Grouped past the budget with the functions alone: one candidate is still spelled out.
+        let mut wide: Vec<Candidate> = Vec::new();
+        for f in 0..3_000 {
+            wide.extend(many(&format!("src/w{f}.rs"), "f", 2, &[]));
+        }
+        let wide = BTreeMap::from([("rust".to_string(), wide)]);
+        let listing = of(&wide, &BTreeMap::new(), &[]);
+        assert_eq!((listing.functions["rust"].len(), listing.candidates["rust"].len()), (3_000, 1));
         // One function's whole listing, as `--function` asks it: every candidate, in full, past the budget too.
         let full = of(&candidates, &BTreeMap::new(), &["src/big.rs: big".to_string()]);
-        assert_eq!((full.candidates["rust"].len(), full.functions.is_none()), (2_000, true));
+        assert_eq!((full.candidates["rust"].len(), full.functions.is_empty()), (2_000, true));
         assert!(size(&full) > BUDGET);
         assert_eq!(full.candidates["rust"][19].removed, (0..60).collect::<Vec<_>>());
         let named = |key: &str| {
@@ -200,12 +249,12 @@ mod tests {
             one.candidates["rust"]
                 .iter()
                 .map(|e| (e.candidate.file.clone(), e.candidate.function.clone()))
-                .collect::<BTreeSet<_>>()
+                .collect::<std::collections::BTreeSet<_>>()
         };
-        let at = |f: &str, g: &str| BTreeSet::from([(f.to_string(), g.to_string())]);
+        let at = |f: &str, g: &str| std::collections::BTreeSet::from([(f.to_string(), g.to_string())]);
         assert_eq!(named("src/m0.rs: Thing::f0"), at("src/m0.rs", "Thing::f0"));
         assert_eq!(named("src/n.rs: Thing::f0"), at("src/n.rs", "Thing::f0"));
-        assert_eq!(named("src/m0.rs: nothing"), BTreeSet::new());
+        assert!(named("src/m0.rs: nothing").is_empty());
     }
 
     /// A listing within the budget is answered whole, each candidate with
@@ -217,7 +266,7 @@ mod tests {
         listed.extend(many("src/b.rs", "g", 1, &[]));
         let candidates = BTreeMap::from([("rust".to_string(), listed)]);
         let listing = of(&candidates, &BTreeMap::from([("rust".to_string(), tests.clone())]), &[]);
-        assert_eq!(listing.functions, None);
+        assert!(listing.functions.is_empty());
         let removed: Vec<&[usize]> = listing.candidates["rust"].iter().map(|e| &e.removed[..]).collect();
         assert_eq!(removed, [&[1][..], &[1], &[]]);
         assert_eq!(listing.removed_tests["rust"], tests);

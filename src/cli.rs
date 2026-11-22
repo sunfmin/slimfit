@@ -210,7 +210,7 @@ pub(crate) enum Cmd {
     ///
     /// With `--mutants` and no name it measures nothing and answers, per suite, `removed_tests`, each test the change removes that ran a candidate's line, once (file:line: name where it starts), and `candidates`, the mutants of the change's lines, as its mutation tool lists them without building, {const:CANDIDATE}; and `next`. It exits {const:EXIT_OK}.
     ///
-    /// A listing past {const:BUDGET} bytes is more than a picker reads with the diff: it is grouped per function instead. `candidates` then holds the first {const:EXAMPLES} of each function, and `functions`, per suite, every function holding candidates, {const:FUNCTION}. `{const:EXPAND}` lists one function's candidates in full, never grouped. Any candidate listed so may be picked, spelled out in the grouped listing or not: `--mutants <name>` refuses only a name the tool does not list.
+    /// A listing past {const:BUDGET} bytes is more than a picker reads with the diff: it is grouped per function instead. `functions` then holds, per suite, every function holding candidates, {const:FUNCTION}, and `candidates` up to {const:EXAMPLES} of each function, as many as the budget leaves room for: a round of one per function at a time, and one at least per suite. The budget is of the answer as printed. `{const:EXPAND}` lists one function's candidates in full, never grouped. Any candidate listed so may be picked, spelled out in the grouped listing or not: `--mutants <name>` refuses only a name the tool does not list.
     ///
     /// ## What it may refuse
     ///

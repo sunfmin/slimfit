@@ -183,7 +183,7 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
                 "removed_tests": listing.removed_tests.remove(&suite).unwrap_or_default(),
                 "candidates": listing.candidates.remove(&suite).unwrap_or_default(),
             });
-            if let Some(functions) = listing.functions.as_mut().and_then(|f| f.remove(&suite)) {
+            if let Some(functions) = listing.functions.remove(&suite) {
                 evidence["functions"] = json!(functions);
             }
             let what = match u.tests {
