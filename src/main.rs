@@ -262,19 +262,34 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Keep { test, mutant, kind, reason, .. } => {
+        Cmd::Keep { test, mutant, kind, reason: reasons, .. } => {
             let mut s = Session::open(&repo)?;
-            let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
+            if reasons.is_empty() || reasons.iter().any(|r| r.trim().is_empty()) {
                 return Err(fault::fault(
                     "keep without --reason",
                     "add `--reason \"<what the test checks that the other does not, why the module is deep enough, what the span runs against, or why no input tells the mutant from the original>\"`: \
                      it is kept in the baseline",
                 ));
-            };
-            match mutant {
-                Some(mutant) => keep_mutant(&mut s, mutant, reason)?,
-                None => keep(&mut s, test.unwrap_or_default(), kind, reason)?,
             }
+            let named = if mutant.is_some() { 1 } else { test.len() };
+            if reasons.len() != named {
+                return Err(fault::fault(
+                    format!("keep names {named} to keep and gives {} `--reason`", reasons.len()),
+                    "give one `--reason \"<why>\"` per test, file or span, in the same order: \
+                     `slimfit keep <a> <b> --reason \"<why a>\" --reason \"<why b>\"`",
+                ));
+            }
+            let mut reasons = reasons.into_iter();
+            let mut measured = None;
+            match mutant {
+                Some(mutant) => keep_mutant(&mut s, mutant, reasons.next().unwrap_or_default())?,
+                None => {
+                    for (at, reason) in test.into_iter().zip(reasons) {
+                        keep(&mut s, &mut measured, at, kind, reason)?;
+                    }
+                }
+            }
+            let measurement = measured.as_ref().map_or("none", |(_, from)| *from);
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
             Ok((
                 json!({
@@ -282,6 +297,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     "kept_files": s.base.kept_files,
                     "kept_spans": s.base.kept_spans,
                     "kept_mutants": s.base.kept_mutants,
+                    "measurement": measurement,
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 }),
                 EXIT_OK,
@@ -403,10 +419,31 @@ fn keep_mutant(s: &mut Session, name: String, reason: String) -> Result<()> {
     Ok(())
 }
 
+/// The tree's measurement for `keep`, taken once for every test and span
+/// it names: read from the cache (`cached`), or else measured (`measured`).
+fn keep_measurement<'a>(
+    s: &Session,
+    m: &'a mut Option<(model::Measurement, &'static str)>,
+) -> Result<&'a model::Measurement> {
+    if m.is_none() {
+        *m = Some(match measure::cached(&s.repo, &s.tree, &s.cfg) {
+            Some(cached) => (cached, "cached"),
+            None => (s.measure(Default::default())?, "measured"),
+        });
+    }
+    Ok(&m.as_ref().expect("set above").0)
+}
+
 /// Records in `s`'s baseline that `at` (a span, a source file or a test)
 /// is kept, for `reason`, in place of an earlier verdict on it (a test's
-/// of the same `kind`).
-fn keep(s: &mut Session, at: String, kind: ratchet::KeepKind, reason: String) -> Result<()> {
+/// of the same `kind`); a test or a span from `measured`, taken once.
+fn keep(
+    s: &mut Session,
+    measured: &mut Option<(model::Measurement, &'static str)>,
+    at: String,
+    kind: ratchet::KeepKind,
+    reason: String,
+) -> Result<()> {
     let test_only = || {
         let fix = "drop `--kind slow-test`: it keeps a test, by a slow-test task's `test`";
         Err(fault::fault(format!("--kind slow-test keeps a test, and {at} is a span or a source file"), fix))
@@ -416,7 +453,7 @@ fn keep(s: &mut Session, at: String, kind: ratchet::KeepKind, reason: String) ->
         if slow {
             return test_only();
         }
-        let m = s.measure(Default::default())?;
+        let m = keep_measurement(s, measured)?;
         let found = m.suites.iter().find_map(|m| {
             let sp = m.uncovered.iter().find(|sp| (sp.file.as_str(), sp.start, sp.end) == (file, start, end))?;
             Some((m.suite.clone(), sp.clone(), sp.hash.clone()?))
@@ -443,7 +480,7 @@ fn keep(s: &mut Session, at: String, kind: ratchet::KeepKind, reason: String) ->
         s.base.kept_files.push(ratchet::KeptFile { suite, file: at, prod_lines, commits_90d, commits_total, reason });
         return Ok(());
     }
-    let m = s.measure(Default::default())?;
+    let m = keep_measurement(s, measured)?;
     let found = m.suites.iter().find_map(|s| {
         let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == at)?;
         let cpu = s.tests.iter().find(|c| c.id == at).map_or(0.0, |c| c.cpu);

@@ -75,6 +75,22 @@ fn retimed(cached: Option<Measurement>, timed: Option<Measurement>, key: &str) -
     Some(c)
 }
 
+/// The cached measurement of this tree (its test run, maybe without the
+/// mutants a caller wants), or `None` when measuring it would run its tests.
+pub fn cached(repo: &Path, tree: &crate::landing::Tree, cfg: &Config) -> Option<Measurement> {
+    let wt = &tree.wt;
+    let same_suites = |m: &Measurement| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name));
+    let tested = std::fs::read_to_string(repo.join(OUT).join("measurement.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Measurement>(&text).ok())
+        .filter(|m| m.tree == wt.key && same_suites(m));
+    let timed_run = std::fs::read_to_string(repo.join(OUT).join(TIMED))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Timed>(&text).ok())
+        .filter(|t| t.content == wt.content && same_suites(&t.measurement));
+    retimed(tested, timed_run.map(|t| t.measurement), &wt.key)
+}
+
 /// The measurement of the tree as it is now: from the cache when it was
 /// taken of this exact tree (with as many mutants as are wanted, of a change
 /// taken from the same commit). A cached measurement of the tree that lacks
@@ -91,17 +107,7 @@ pub fn current(repo: &Path, tree: &crate::landing::Tree, cfg: &Config, opts: &Op
     };
     let with_mutants = !picks.is_empty();
     let timed_cache = repo.join(OUT).join(TIMED);
-    let same_suites = |m: &Measurement| m.suites.iter().map(|s| &s.suite).eq(cfg.suites.iter().map(|s| &s.name));
-    // The cached measurement of this tree, when not asked to measure afresh.
-    let tested = std::fs::read_to_string(&cache)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Measurement>(&text).ok())
-        .filter(|m| !opts.fresh && m.tree == key && same_suites(m));
-    let timed_run = std::fs::read_to_string(&timed_cache)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Timed>(&text).ok())
-        .filter(|t| !opts.fresh && t.content == wt.content && same_suites(&t.measurement));
-    let tested = retimed(tested, timed_run.map(|t| t.measurement), &key);
+    let tested = if opts.fresh { None } else { cached(repo, tree, cfg) };
     let wanted: BTreeSet<&str> = picks.iter().map(|p| p.name.as_str()).collect();
     let fresh_mutants = |m: &Measurement| m.with_mutants && mutants::picked(m) == wanted;
     let timed = |m: &Measurement| !opts.timed || m.suites.iter().all(|s| !s.untimed);

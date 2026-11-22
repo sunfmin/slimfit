@@ -409,9 +409,12 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                         MERGE when some assertion does not map but the two build compatible setups: fold the unmapped assertions, and the setup they need, \
                         into one test, or turn both into one test over a table of cases, so the setup is paid once; the merged test keeps every \
                         assertion of both, each failing with its own message, and the commit message lists where each assertion went. \
-                        KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed: \
-                        record it with `slimfit keep <test> --reason \"<why>\"` and commit `.slimfit/baseline.json`, so `test` is not proposed again \
-                        until its text changes. \
+                        KEEP both when the setups conflict (folding one changes what the other checks) or a merge would hide which behaviour failed, \
+                        so `test` is not proposed again until its text changes. \
+                        Decide every candidate first, then record every KEEP of the file in one call, before changing a test: \
+                        `slimfit keep <test>... --reason \"<why>\"...` (one `--reason` per test, in order). The tree is the one this task was measured on, \
+                        so it reads the cached measurement and runs no test: run it directly, not through `factorium worker exclusive` (only a tree changed \
+                        since the measurement makes it measure, and its answer's `measurement` says which it did). \
                         Then, in this order, measuring the whole suite only where it says: change the tests; run the changed file's \
                         tests with the project's own test command (plain and fast, not slimfit); a delete or a merge removes a test, \
                         so the change owes picks over the lines it ran, run against the tests left (a `pick-mutants` task): a survivor \
