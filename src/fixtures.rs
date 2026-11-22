@@ -81,7 +81,7 @@ fn measure_with_coverage(
 
 /// Each redundant-test candidate with its class (slimfit#88), task by task.
 fn classes(s: &SuiteMeasurement) -> Vec<(String, Value)> {
-    let tasks = of_measurement(s, &[]);
+    let tasks = of_measurement(s, &Default::default());
     let candidates = tasks
         .iter()
         .filter(|t| t.kind == TaskKind::RedundantTest)
@@ -93,7 +93,7 @@ fn classes(s: &SuiteMeasurement) -> Vec<(String, Value)> {
 fn assert_the_five_situations(s: &SuiteMeasurement, source: &str, adult_line: u32) {
     assert_eq!(s.metrics.failures, 0, "{}: no failures", s.suite);
     assert!(s.metrics.tests >= 4, "{}: four tests, got {:?}", s.suite, s.tests);
-    let tasks = of_measurement(s, &[]);
+    let tasks = of_measurement(s, &Default::default());
     let kinds: Vec<TaskKind> = tasks.iter().map(|t| t.kind).collect();
 
     let unused = s.uncovered.iter().find(|sp| sp.file == source && sp.lines >= 3);
@@ -202,7 +202,7 @@ fn go_sample() {
     assert_the_five_situations(&s, "calc.go", 14);
     // Each test's own run gives its lines, so the copy of the add test is
     // proposed, in the test file its func is in.
-    let tasks = of_measurement(&s, &[]);
+    let tasks = of_measurement(&s, &Default::default());
     let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
     assert!(!redundant.is_empty(), "{tasks:#?}");
     assert!(redundant.iter().all(|t| t.files == ["calc_test.go"]), "{redundant:#?}");
@@ -223,7 +223,7 @@ fn python_sample() {
         (MutantsFormat::CargoMutants, &["mutmut.json"]),
     );
     assert_the_five_situations(&s, "src/calc.py", 12);
-    let tasks = of_measurement(&s, &[]);
+    let tasks = of_measurement(&s, &Default::default());
     let redundant: Vec<_> = tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).collect();
     assert!(!redundant.is_empty(), "{tasks:#?}");
     assert!(redundant.iter().all(|t| t.files == ["tests/test_calc.py"]), "{redundant:#?}");

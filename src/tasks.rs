@@ -6,7 +6,7 @@ use crate::git;
 use crate::landing::{SuiteTree, Tree};
 use crate::loc::Kind;
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement, TestSource};
-use crate::ratchet::{Baseline, Kept, KeptFile, Measured};
+use crate::ratchet::{Baseline, Kept, KeptFile, KeptSpan, Measured};
 use crate::test_shape::Shape;
 use anyhow::Result;
 use serde::Serialize;
@@ -26,7 +26,7 @@ pub enum TaskKind {
     /// The change adds more than `growth_allowance` source lines net and no growth record: the gate's `check` fails until it does. Cut what you can, then ask a second agent, never yourself, whether it could be smaller (see [the reviewer](help:reviewer)), do or answer what it names, and ratchet with its verdict.
     #[value(verbatim_doc_comment)]
     JustifyGrowth,
-    /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
+    /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. Lines that run only against the real host or the real program, where a fast test could only run them: keep them (`slimfit keep <file>:<start>-<end>`). `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
     /// Coverage proposes a test whose every source line another test runs too, some past both binaries' shared setup (a test of setup alone, such as one reading a shipped file, gives coverage no evidence), or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate as its `class` says: delete it (`asserts-contained`), merge its group into one table-driven test (`same-shape`), or by both tests' assertions delete it, merge the two, or keep it (`slimfit keep`) (`read`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
@@ -129,7 +129,7 @@ pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Basel
     out.extend(held.as_ref().and_then(|h| justify_growth(h, cfg.check.growth_allowance)));
     let landed = landed(repo);
     for (sc, s) in cfg.suites.iter().zip(&m.suites) {
-        out.extend(of_measurement(s, &base.kept));
+        out.extend(of_measurement(s, base));
         out.extend(rising(repo, &cfg.check, s, &landed));
         out.extend(deepen(repo, tree.suite(cfg, &sc.name)?, &base.kept_files));
     }
@@ -138,9 +138,10 @@ pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Basel
 }
 
 /// The tasks a suite's measurement alone shows (everything but `deepen`,
-/// which reads git history), less the redundant tests `kept`.
-pub fn of_measurement(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
-    [failing(s), uncovered(s), redundant(s, kept), slow(s), surviving(s)].concat()
+/// which reads git history), less the uncovered spans and redundant tests
+/// `base` keeps.
+pub fn of_measurement(s: &SuiteMeasurement, base: &Baseline) -> Vec<Task> {
+    [failing(s), uncovered(s, &base.kept_spans), redundant(s, &base.kept), slow(s), surviving(s)].concat()
 }
 
 fn failing(s: &SuiteMeasurement) -> Vec<Task> {
@@ -244,10 +245,12 @@ fn justify_growth(h: &crate::landing::Held, allowance: u64) -> Option<Task> {
     })
 }
 
-fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
+/// A task per uncovered span of two lines or more, less those `kept`,
+/// unchanged since.
+fn uncovered(s: &SuiteMeasurement, kept: &[KeptSpan]) -> Vec<Task> {
     s.uncovered
         .iter()
-        .filter(|sp| sp.lines >= 2)
+        .filter(|sp| sp.lines >= 2 && !kept.iter().any(|k| k.holds(&s.suite, sp)))
         .map(|sp| Task {
             kind: TaskKind::Uncovered,
             suite: s.suite.clone(),
@@ -267,7 +270,11 @@ fn uncovered(s: &SuiteMeasurement) -> Vec<Task> {
                     A test that only runs the lines, asserting nothing they decide, is no fix: coverage would count it, \
                     and no bound holds you to coverage, so nothing is gained by it. \
                     The new test must be fast (milliseconds, no sleeps, network or process spawns): if only a slow test can reach the line, delete the code or escalate, never add the slow test. \
-                    It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence."
+                    It is a product feature nobody seems to use: do not delete it; removing features is a product decision, so escalate with this evidence. \
+                    KEEP it when it runs only against the real host or the real program (a binary's `main` under the tests that spawn it, \
+                    which coverage does not record), so a fast test could only run it without asserting what it decides: record why with \
+                    `slimfit keep <file>:<start>-<end> --reason \"<why>\"` (this task's span) and commit `.slimfit/baseline.json`; \
+                    it is proposed again once a line of it changes or the span grows past it."
                 .into(),
             accept: TaskKind::Uncovered.accept().into(),
         })

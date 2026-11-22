@@ -269,9 +269,45 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 json!({
                     "kept": base.kept,
                     "kept_files": base.kept_files,
+                    "kept_spans": base.kept_spans,
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 })
             };
+            if let Some((file, start, end)) = span_at(&test) {
+                let m = s.measure(Default::default())?;
+                let found = m.suites.iter().find_map(|m| {
+                    let sp =
+                        m.uncovered.iter().find(|sp| (sp.file.as_str(), sp.start, sp.end) == (file, start, end))?;
+                    Some((m.suite.clone(), sp.clone()))
+                });
+                let Some((suite, sp)) = found else {
+                    return Err(fault::fault(
+                        format!("no suite's coverage has an uncovered span {test}"),
+                        "name it as the uncovered task's summary does, `<file>:<start>-<end>`: \
+                         `slimfit next --all --kind uncovered` lists them",
+                    ));
+                };
+                let Some(hash) = sp.hash else {
+                    return Err(fault::fault(
+                        format!("{test}'s lines were not read, so there is no text to hold the verdict to"),
+                        "measure afresh: `slimfit check --fresh`, then keep it again",
+                    ));
+                };
+                s.base
+                    .kept_spans
+                    .retain(|k| !(k.suite == suite && (k.file.as_str(), k.start, k.end) == (file, start, end)));
+                s.base.kept_spans.push(ratchet::KeptSpan {
+                    suite,
+                    file: sp.file,
+                    start,
+                    end,
+                    function: sp.function,
+                    hash,
+                    reason,
+                });
+                std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
+                return Ok((answer(&s.base), EXIT_OK));
+            }
             if let Some((suite, prod_lines)) = tasks::source_suite(&s.tree, &s.cfg, &test)? {
                 let (commits_90d, commits_total) = tasks::churn(&repo, &test);
                 s.base.kept_files.retain(|k| !(k.suite == suite && k.file == test));
@@ -398,6 +434,14 @@ fn gitignore(text: &str) -> String {
     }
     let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
     format!("{text}{sep}{}\n", measure::OUT)
+}
+
+/// The span `keep` names as `<file>:<start>-<end>`, as an uncovered task's
+/// summary does; `None` for a test or a file.
+fn span_at(at: &str) -> Option<(&str, u32, u32)> {
+    let (file, lines) = at.rsplit_once(':')?;
+    let (start, end) = lines.split_once('-')?;
+    Some((file, start.parse().ok()?, end.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -925,14 +969,56 @@ mod answer_tests {
         assert_eq!((code, &out["verdict"]["violations"]), (crate::EXIT_OK, &serde_json::json!([])), "{out:#}");
         let t = &out["verdict"]["uncovered_lines"][0];
         assert_eq!((t["baseline"].as_f64(), t["current"].as_f64()), (Some(0.0), Some(measured as f64)), "{t:#}");
-        let span =
-            serde_json::json!([{ "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused" }]);
+        let hash = crate::test_shape::fnv(&text.lines().skip(4).take(5).collect::<Vec<_>>().join("\n"));
+        let span = serde_json::json!([
+            { "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused", "hash": hash }
+        ]);
         assert_eq!(t["new_spans"], span, "{t:#}");
         // Kept low, and not loosened: there is no bound to raise.
         slimfit(repo, "ratchet").unwrap();
         assert_eq!(crate::session::Session::open(repo).unwrap().base.suites["rust"].uncovered_lines, 0);
         let f = faults(repo, "ratchet --loosen uncovered_lines --reason r");
         assert!(f[0].fault.contains("never loosened") && f[0].fix.contains("asserts what the lines decide"), "{f:?}");
+    }
+
+    /// An uncovered span kept (slimfit#93) is not proposed while its lines'
+    /// text is unchanged; an edit in it brings it back, and `ratchet` drops
+    /// the stale verdict.
+    #[test]
+    fn a_kept_span_returns_once_a_line_of_it_changes() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        let tests = cfg.suites[0].overrides.test_command.as_mut().unwrap();
+        tests.push_str(" && sed 's#/REPO/##' \"$SLIMFIT_OUT/lcov.info\" > \"$SLIMFIT_OUT/l\" && mv \"$SLIMFIT_OUT/l\" \"$SLIMFIT_OUT/lcov.info\"");
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        slimfit(repo, "init").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "init"]);
+        let proposed = |repo: &Path| {
+            let (out, _) = slimfit(repo, "next --all --kind uncovered").unwrap();
+            out["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["summary"].as_str().unwrap().starts_with("src/lib.rs:5-9 "))
+        };
+        assert!(proposed(repo));
+        let f = faults(repo, "keep src/lib.rs:5-8 --reason r");
+        assert!(f[0].fault.contains("no suite's coverage has an uncovered span src/lib.rs:5-8"), "{f:?}");
+        let (out, _) =
+            slimfit_args(repo, &["keep", "src/lib.rs:5-9", "--reason", "runs only under the real host"]).unwrap();
+        let k = &out["kept_spans"][0];
+        assert_eq!(
+            (&k["file"], &k["start"], &k["end"], &k["function"]),
+            (&json!("src/lib.rs"), &json!(5), &json!(9), &json!("unused"))
+        );
+        assert!(!proposed(repo));
+        // A line of it edited: proposed again, and the ratchet drops the verdict.
+        let lib = repo.join("src/lib.rs");
+        std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap().replace("doubled + 7", "doubled + 8")).unwrap();
+        assert!(proposed(repo));
+        slimfit_args(repo, &["ratchet", "--no-mutants", "a constant", "--picker", "p", "--author", "a"]).unwrap();
+        assert!(crate::session::Session::open(repo).unwrap().base.kept_spans.is_empty());
     }
 
     /// A sample of a landed change's mutants, out of the loop: no name the
@@ -1077,9 +1163,11 @@ mod answer_tests {
         let landed: Vec<&str> =
             e["landings"].as_array().unwrap().iter().map(|l| l["subject"].as_str().unwrap()).collect();
         assert_eq!(landed, ["landing 1", "landing 2", "landing 3"]);
+        let mut spans = e["spans"].clone();
+        assert!(spans[0].as_object_mut().unwrap().remove("hash").is_some_and(|h| h.is_string()), "{e:#}");
         let span =
             serde_json::json!([{ "file": "src/lib.rs", "start": 5, "end": 9, "lines": 5, "function": "unused" }]);
-        assert_eq!(e["spans"], span, "{e:#}");
+        assert_eq!(spans, span, "{e:#}");
         assert!(tasks[0]["steps"].as_str().unwrap().contains("`git show <commit>`"), "{next:#}");
         // A task, never a bound.
         let (held, code) = slimfit(repo, "check").unwrap();
