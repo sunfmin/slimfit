@@ -29,7 +29,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate as its `class` says: delete it (`asserts-contained`), merge its group into one table-driven test (`same-shape`), or by both tests' assertions delete it, merge the two, or keep it (`slimfit keep`) (`read`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
+    /// Coverage proposes a test whose every source line another test runs too, some past both binaries' shared setup (a test of setup alone, such as one reading a shipped file, gives coverage no evidence), or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate as its `class` says: delete it (`asserts-contained`), merge its group into one table-driven test (`same-shape`), or by both tests' assertions delete it, merge the two, or keep it (`slimfit keep`) (`read`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
@@ -289,7 +289,7 @@ pub const COMMON_LINES: f64 = 0.5;
 /// of the lines either runs with another (the slower of the two is
 /// proposed). Overlap is computed without the lines more than
 /// [`COMMON_LINES`] of the test's binary's tests run, which shared setup makes, not what a
-/// test checks; a subset is of all lines, as setup cannot make one. Each is named once, with the other test it most overlaps.
+/// test checks; a subset is of all lines, but only of a test whose own lines (those past its binary's shared setup) the other test runs as its own too: a test of shared setup alone, such as reading a shipped file, is a subset of every test that reads it, and its lines say nothing of what it checks. Each is named once, with the other test it most overlaps.
 /// A task is one test file with every candidate in it, slowest first; the
 /// files most seconds to save first. Coverage only proposes:
 /// the steps decide by reading the assertions. A test kept, unchanged since,
@@ -343,9 +343,10 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
             .filter(|((o, _, _), _)| o != t)
             .map(|((o, theirs, o_secs), theirs_own)| {
                 let slower = (secs, t) > (o_secs, o);
-                let within = mine.is_subset(theirs) && (mine.len() < theirs.len() || slower);
-                // Own lines that only overlap: the pair is named once, by its slower test.
+                // A subset runs own lines of its own in common: one of only shared setup gives no evidence (slimfit#91).
                 let both = mine_own.intersection(theirs_own).count();
+                let within = both > 0 && mine.is_subset(theirs) && (mine.len() < theirs.len() || slower);
+                // Own lines that only overlap: the pair is named once, by its slower test.
                 let overlap = both < mine_own.len() && both < theirs_own.len() && slower;
                 let union = mine_own.union(theirs_own).count();
                 (o, if union == 0 { 0.0 } else { both as f64 / union as f64 }, within, overlap)
@@ -1114,5 +1115,25 @@ mod t {
             ("z::f", 0.1, with(0..=0, 71..=75)),
         ];
         assert_eq!(pairs(&suite(tests), &[]), [("y::near".to_string(), "y::near2".to_string())]);
+    }
+
+    /// A test whose lines are all its binary's shared setup (a library both
+    /// binaries read, such as a shipped file) is a subset of a test in
+    /// another binary that reads it too, but coverage says nothing of what it
+    /// checks: it is not proposed. One with own lines the other runs is.
+    #[test]
+    fn a_subset_of_shared_setup_alone_is_not_proposed() {
+        let with = |setup: std::ops::RangeInclusive<u32>, own: std::ops::RangeInclusive<u32>| {
+            setup.chain(own).collect::<Vec<u32>>()
+        };
+        let tests = [
+            ("x::shipped", 0.2, with(100..=110, 1..=0)),
+            ("x::shipped2", 0.1, with(100..=110, 1..=0)),
+            ("x::own", 0.1, with(100..=110, 1..=5)),
+            ("y::reads", 0.1, (200..=210).chain(with(100..=110, 1..=5)).collect()),
+            ("y::b", 0.1, with(200..=210, 31..=35)),
+            ("y::c", 0.1, with(200..=210, 41..=45)),
+        ];
+        assert_eq!(pairs(&suite(tests), &[]), [("x::own".to_string(), "y::reads".to_string())]);
     }
 }
