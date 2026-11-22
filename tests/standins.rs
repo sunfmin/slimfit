@@ -359,6 +359,7 @@ fn every_preset_through_its_standins() {
 
     go();
     python();
+    redundant_test_walk();
     for lang in [&TYPESCRIPT, &KOTLIN, &SWIFT] {
         let s = Sample::new(lang);
         measures_through_its_tools(&s, lang, false);
@@ -1031,6 +1032,47 @@ fn python() {
     // The pick alone, by its name: one `-F`.
     let run = s.take().into_iter().rfind(|c| c.step == PYTHON.mutants_step).unwrap();
     assert_eq!(run.args.iter().filter(|a| *a == "-F").count(), 1, "{:?}", run.args);
+}
+
+/// A redundant-test task walked as its steps say, in factorium (slimfit#97):
+/// change the tests, `slimfit ratchet`, commit, the gate. The full suite
+/// runs at most twice, once in `ratchet` and once in the gate's
+/// `slimfit check --fresh`, with no separate accept run before the gate;
+/// and the gate's verdict answers what that accept did: no failing test,
+/// `new_spans`, `test_seconds`.
+fn redundant_test_walk() {
+    let s = Sample::new(&PYTHON);
+    s.ok(&["init"]);
+    git(&s.repo, &["add", "-A"]);
+    git(&s.repo, &["commit", "-qm", "init"]);
+    git(&s.repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let next = s.ok(&["next", "--all", "--kind", "redundant-test"]);
+    let steps = next["tasks"][0]["steps"].as_str().unwrap().to_string();
+    assert!(steps.contains("The gate's `slimfit check` verdict is the accept"), "{steps}");
+    s.take();
+    // Change the tests: delete a copy of the add test.
+    let file = s.repo.join("tests/test_calc.py");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replace("def test_adds_again():\n    assert add(2, 3) == 5\n\n\n", "")).unwrap();
+    let mut runs = vec![];
+    let mut suite_runs = |cmd: &str| {
+        let n = s.take().iter().filter(|c| c.step == PYTHON.runs_tests).count();
+        runs.push(format!("{cmd}: {n}"));
+    };
+    s.ok(&["ratchet", "--no-mutants", "a copy deleted", "--picker", "p:1:m", "--author", "a:2:m"]);
+    suite_runs("slimfit ratchet");
+    git(&s.repo, &["add", "-A"]);
+    git(&s.repo, &["commit", "-qm", "delete a copy"]);
+    suite_runs("git commit");
+    let gate = s.ok(&["check", "--fresh"]);
+    suite_runs("slimfit check --fresh (the gate)");
+    assert_eq!(runs, ["slimfit ratchet: 1", "git commit: 0", "slimfit check --fresh (the gate): 1"]);
+    // No failing test; `new_spans` on `uncovered_lines` when it rose; `test_seconds` against the baseline.
+    let verdict = &gate["verdict"];
+    assert_eq!((&verdict["ok"], &gate["metrics"]["python"]["failures"]), (&true.into(), &0.into()), "{gate:#}");
+    for k in ["test_seconds", "uncovered_lines"] {
+        assert_eq!(verdict[k][0]["suite"], "python", "the gate answers {k}: {gate:#}");
+    }
 }
 
 /// A change's mutant of the Python sample's real list, which its tests catch.
