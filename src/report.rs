@@ -124,6 +124,9 @@ pub struct Lines {
     /// Deepen verdicts kept: files judged deep enough (`slimfit keep <file>`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kept_files: Option<usize>,
+    /// Uncovered verdicts kept: spans judged worth no fast test (`slimfit keep <file>:<start>-<end>`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept_spans: Option<usize>,
     /// What the measurement the baseline was written from measured: a rise
     /// the bounds above do not keep shows here.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,7 +135,7 @@ pub struct Lines {
 
 /// What a history point's suite prints, as the command pages name it.
 pub const LINES_HELP: &str = "`prod` and `test` lines, and what the baseline committed then held: `tests`, \
-     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept), `kept_files` (deepen verdicts kept) and `measured` (what was measured when the baseline was written: `uncovered_lines` and `test_seconds`, which only it shows rising, or in place of `test_seconds` why none was measured, `untimed`; absent before baselines kept it)";
+     `test_seconds` and `uncovered_lines` (trends, ratcheted down) and `kept` (redundant-test verdicts kept), `kept_files` (deepen verdicts kept), `kept_spans` (uncovered verdicts kept) and `measured` (what was measured when the baseline was written: `uncovered_lines` and `test_seconds`, which only it shows rising, or in place of `test_seconds` why none was measured, `untimed`; absent before baselines kept it)";
 
 /// The baseline's numbers for `suite` in `baseline` (a commit's
 /// `.slimfit/baseline.json`), read field by field: a baseline written by an
@@ -146,6 +149,7 @@ fn judged(baseline: Option<&Value>, suite: &str, lines: &mut Lines) {
     let count = |key: &str| b[key].as_array().map(|k| k.iter().filter(|k| k["suite"] == suite).count());
     lines.kept = count("kept");
     lines.kept_files = count("kept_files");
+    lines.kept_spans = count("kept_spans");
     lines.measured = serde_json::from_value(b["measured"][suite].clone()).ok();
 }
 

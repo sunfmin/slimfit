@@ -545,7 +545,9 @@ pub(crate) fn reduce(
     let uncovered_total = lines.values().flat_map(|l| l.values()).filter(|h| **h == 0).count() as u64;
     let mut uncovered = Vec::new();
     for (file, hits) in &lines {
-        uncovered.extend(spans(file, hits, functions.get(file).map(Vec::as_slice).unwrap_or(&[])));
+        let text = resolver.read(file);
+        let fns = functions.get(file).map(Vec::as_slice).unwrap_or(&[]);
+        uncovered.extend(spans(file, hits, fns, text.as_deref()));
     }
     uncovered.sort_by(|a, b| b.lines.cmp(&a.lines).then(a.file.cmp(&b.file)).then(a.start.cmp(&b.start)));
 
@@ -665,8 +667,9 @@ fn test_source(file: &str, line: u32, resolver: &Resolver, preset: Preset) -> Op
 
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
 /// does not mention, like blanks, don't break a run). Each span is named
-/// after the function it starts in, when the report names functions.
-fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function]) -> Vec<Span> {
+/// after the function it starts in, when the report names functions, and
+/// hashed by the text of its lines in `text`, the file's.
+fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function], text: Option<&str>) -> Vec<Span> {
     let mut out: Vec<Span> = Vec::new();
     let mut open: Option<Span> = None;
     for (&n, &h) in hits {
@@ -675,13 +678,19 @@ fn spans(file: &str, hits: &BTreeMap<u32, u64>, functions: &[Function]) -> Vec<S
                 s.end = n;
                 s.lines += 1;
             }
-            (None, 0) => open = Some(Span { file: file.into(), start: n, end: n, lines: 1, function: None }),
+            (None, 0) => {
+                open = Some(Span { file: file.into(), start: n, end: n, lines: 1, function: None, hash: None })
+            }
             (_, _) => out.extend(open.take()),
         }
     }
     out.extend(open);
     for s in &mut out {
         s.function = functions.iter().filter(|f| f.line <= s.start).max_by_key(|f| f.line).map(|f| f.name.clone());
+        s.hash = text.and_then(|t| {
+            let lines: Vec<&str> = t.lines().collect();
+            Some(crate::test_shape::fnv(&lines.get(s.start as usize - 1..s.end as usize)?.join("\n")))
+        });
     }
     out
 }
@@ -1044,9 +1053,16 @@ pub(crate) mod t {
     fn spans_join_zero_runs_and_name_functions() {
         let hits: BTreeMap<u32, u64> = [(1, 1), (3, 0), (4, 0), (6, 0), (7, 2), (9, 0)].into();
         let f = vec![Function { file: "a".into(), name: "g".into(), line: 2, hits: 0, symbol: String::new() }];
-        let s = spans("a", &hits, &f);
+        let text = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        let s = spans("a", &hits, &f, Some(text));
         assert_eq!(s.iter().map(|s| (s.start, s.end, s.lines)).collect::<Vec<_>>(), vec![(3, 6, 3), (9, 9, 1)]);
         assert_eq!(s[0].function.as_deref(), Some("g"));
+        // Hashed by its own lines' text: an edit in them changes it, one outside does not.
+        let hash = |text: &str| spans("a", &hits, &f, Some(text))[0].hash.clone();
+        assert_eq!(hash(text), Some(crate::test_shape::fnv("3\n4\n5\n6")));
+        assert_eq!(hash(&text.replace('8', "x")), hash(text));
+        assert_ne!(hash(&text.replace('5', "x")), hash(text));
+        assert_eq!((hash("1\n2\n3\n"), spans("a", &hits, &f, None)[0].hash.clone()), (None, None), "no such lines");
     }
 }
 

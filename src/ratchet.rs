@@ -30,6 +30,11 @@ pub struct Baseline {
     /// it has grown or churned well past them ([`KeptFile::holds`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept_files: Vec<KeptFile>,
+    /// Uncovered spans the agent judged worth no fast test (`slimfit keep
+    /// <file>:<start>-<end>`), each against its lines' text: not proposed
+    /// again until it changes ([`KeptSpan::holds`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_spans: Vec<KeptSpan>,
     /// The commit whose code no landing is charged to a mutants run for:
     /// what was there before the rule came in (ADR 0008). It counts only
     /// while the target has not reached it; set by hand, once.
@@ -59,11 +64,20 @@ impl Baseline {
             })
             .cloned()
             .collect();
+        // A kept span no uncovered span of its suite is now, as kept, holds no more.
+        let mut kept_spans = old.kept_spans.clone();
+        kept_spans.retain(|k| {
+            m.suites
+                .iter()
+                .find(|s| s.suite == k.suite)
+                .is_none_or(|s| s.uncovered.iter().any(|sp| k.holds(&s.suite, sp)))
+        });
         Baseline {
             suites,
             loosened: old.loosened.clone(),
             kept,
             kept_files: old.kept_files.clone(),
+            kept_spans,
             mutants_from: old.mutants_from.clone(),
             measured: Measured::of(m),
         }
@@ -147,6 +161,34 @@ impl KeptFile {
             && since < self.commits_90d as f64 * KEPT_CHURN
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct KeptSpan {
+    pub suite: String,
+    pub file: String,
+    pub start: u32,
+    pub end: u32,
+    /// The function it starts in, when the coverage report names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    /// The hash of its lines' text when it was kept (`Span::hash`).
+    pub hash: String,
+    pub reason: String,
+}
+
+impl KeptSpan {
+    /// Whether this verdict still holds for uncovered span `sp` of `suite`:
+    /// the same lines of the same function, their text unchanged.
+    pub fn holds(&self, suite: &str, sp: &Span) -> bool {
+        self.suite == suite
+            && (self.file.as_str(), self.start, self.end, &self.function)
+                == (sp.file.as_str(), sp.start, sp.end, &sp.function)
+            && sp.hash.as_ref() == Some(&self.hash)
+    }
+}
+
+/// What a [`KeptSpan`] prints, as the command pages name it.
+pub const KEPT_SPAN_HELP: &str = "each with `suite`, `file`, `start`, `end`, `function` (when known), `hash` (of its lines' text when kept) and `reason`";
 
 /// What a [`KeptFile`] prints, as the command pages name it.
 pub const KEPT_FILE_HELP: &str = "each with `suite`, `file`, its `prod_lines`, `commits_90d` and `commits_total` (every commit that changed it) when kept, and `reason`";
@@ -282,7 +324,7 @@ pub const TREND_HELP: &str = "each with `suite`, `baseline` (`null` for a suite 
 
 /// What `uncovered_lines`' trend prints besides.
 pub const NEW_SPANS_HELP: &str = "where it rose, `new_spans`: each uncovered span that holds a line the change \
-     adds since `landing.from`, with `file`, `start`, `end`, `lines` and `function`, when known (none without a landing)";
+     adds since `landing.from`, with `file`, `start`, `end`, `lines`, `function`, when known, and `hash`, of its lines' text (none without a landing)";
 
 impl Trend {
     /// Names, when it rose, the uncovered spans of `s` holding a line of
@@ -694,8 +736,37 @@ mod t {
         assert_eq!((holds(149, 13), holds(150, 13), holds(149, 14)), (true, false, false));
     }
 
+    /// A kept span holds for the same lines of the same function, their text
+    /// unchanged, in its own suite: grown past its lines, it does not.
+    #[test]
+    fn a_kept_span_holds_for_its_lines_as_kept_only() {
+        let k = KeptSpan {
+            suite: "s".into(),
+            file: "a.rs".into(),
+            start: 3,
+            end: 6,
+            function: Some("f".into()),
+            hash: "h".into(),
+            reason: "r".into(),
+        };
+        let sp = Span {
+            file: "a.rs".into(),
+            start: 3,
+            end: 6,
+            lines: 4,
+            function: Some("f".into()),
+            hash: Some("h".into()),
+        };
+        assert!(k.holds("s", &sp) && !k.holds("t", &sp));
+        let grown = Span { end: 7, lines: 5, ..sp.clone() };
+        let renamed = Span { function: Some("g".into()), ..sp.clone() };
+        let unhashed = Span { hash: None, ..sp.clone() };
+        assert_eq!([&grown, &renamed, &unhashed].map(|s| k.holds("s", s)), [false; 3]);
+    }
+
     /// The next baseline carries the old one's verdicts over (a keep verdict
-    /// only while its test's text is unchanged, or the test was not seen)
+    /// only while its test's, or its span's, text is unchanged, or its suite
+    /// was not seen)
     /// and takes the bounds it is given and the trends of the measurement.
     #[test]
     fn next_carries_the_verdicts_over_and_takes_the_measurements_trends() {
@@ -710,6 +781,23 @@ mod t {
             test: format!("b::{name}"),
             hash: "h".into(),
             reason: "r".into(),
+        };
+        let span = |start, hash: &str| Span {
+            file: "src/a.rs".into(),
+            start,
+            end: start + 1,
+            lines: 2,
+            function: Some("f".into()),
+            hash: Some(hash.into()),
+        };
+        let kept_span = |suite: &str, start| KeptSpan {
+            suite: suite.into(),
+            file: "src/a.rs".into(),
+            start,
+            end: start + 1,
+            function: Some("f".into()),
+            hash: "h".into(),
+            reason: "host only".into(),
         };
         let old = Baseline {
             suites: [("s".to_string(), m(10, 10.0)), ("gone".to_string(), m(1, 1.0))].into(),
@@ -729,16 +817,20 @@ mod t {
                 commits_total: 2,
                 reason: "deep".into(),
             }],
+            kept_spans: vec![kept_span("s", 1), kept_span("s", 5), kept_span("s", 9), kept_span("unseen", 1)],
             mutants_from: Some("abc".into()),
             measured: [("gone".to_string(), Measured::default())].into(),
         };
         let mut cur = measurement(m(8, 4.0), None);
         let tests = vec![test("same", "h"), test("edited", "h2")];
         cur.suites[0].reach = Some(Reach { tests, functions: BTreeMap::new(), lines: None });
+        // The span at 1 as kept, the one at 5 edited, the one at 9 covered since.
+        cur.suites[0].uncovered = vec![span(1, "h"), span(5, "h2")];
         let suites: BTreeMap<String, Metrics> = [("s".to_string(), m(9, 5.0))].into();
         let next = Baseline::next(&old, suites.clone(), &cur);
         let names: Vec<&str> = next.kept.iter().map(|k| k.test.as_str()).collect();
         assert_eq!(names, ["b::same", "b::x"]);
+        assert_eq!(next.kept_spans, [kept_span("s", 1), kept_span("unseen", 1)]);
         assert_eq!(
             (&next.loosened, &next.kept_files, &next.mutants_from),
             (&old.loosened, &old.kept_files, &old.mutants_from)
@@ -781,7 +873,8 @@ mod t {
     #[test]
     fn uncovered_lines_is_a_trend_that_names_the_changes_spans() {
         let cfg = CheckConfig::default();
-        let span = |file: &str, start, end| Span { file: file.into(), start, end, lines: 2, function: None };
+        let span =
+            |file: &str, start, end| Span { file: file.into(), start, end, lines: 2, function: None, hash: None };
         let mut more = measurement(m(14, 10.0), None);
         more.suites[0].uncovered = vec![span("a.rs", 3, 4), span("a.rs", 8, 9), span("b.rs", 1, 2)];
         let added: crate::landing::Lines =

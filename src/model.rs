@@ -178,6 +178,10 @@ pub struct Span {
     pub lines: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
+    /// A hash of the text of its lines, `start` to `end`: what a keep
+    /// verdict on it holds to. `None` in a measurement from before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 impl Span {

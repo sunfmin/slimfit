@@ -1,0 +1,10 @@
+{
+  "tree": "5e42e829ea700f6ec817d0a26298b9a273b7933c+d1fba762150c532c",
+  "lines": 113,
+  "serves": "slimfit#93",
+  "considered": "the existing keep path for tests and files (one baseline write, one answer now shared), Kept/KeptFile (a span's verdict differs: lines, function and text hash, so a third shape), the uncovered-span sample setup three tests repeated (now one fixture), the separate 'lines not read' refusal (folded into the no-span fault)",
+  "reviewer": "codex:01a20161-105c-7440-89ac-3367d700c4e9:default",
+  "author": "claude-code:7a2db134-2413-5f5b-84a4-fbc96dcc12ae:opus",
+  "cut": "src/main.rs: route span, file, and test keeps through one baseline write and response, and reuse the existing uncovered-span CLI fixture. src/ratchet.rs: put the stale-span predicate in a retain on the next baseline’s kept_spans and keep the pruning assertions in the existing baseline carry-forward test. src/cli.rs and src/tasks.rs: keep the eligibility rationale in `help keep` and reuse it by reference from the uncovered task, which still needs the exact command. Repository access was unavailable, so this review used the supplied diff.",
+  "answer": "Made all four: keep() records span, file and test verdicts and the command writes and answers once; Baseline::next prunes kept_spans with retain, its pruning assertions in next_carries_the_verdicts_over_and_takes_the_measurements_trends; covered_sample() is the one fixture for the three uncovered-span tests; the uncovered steps name the command and point to 'slimfit keep --help' for when. The unhashed-span refusal was folded into the no-span fault too. 137 -> 113 net source lines; the rest is the KeptSpan verdict, the span hash in the measurement, and the manual."
+}

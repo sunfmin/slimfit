@@ -1,0 +1,33 @@
+{
+  "tree": "601f8b1b60219329c94b8ff479a72429f25de8f2+d1fba762150c532c",
+  "picker": "codex:01a20158-8394-7a61-9fe4-c72c213734e1:default",
+  "author": "claude-code:7a2db134-2413-5f5b-84a4-fbc96dcc12ae:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:298:33: delete ! in run",
+        "why": "The test starts with an empty kept_spans list and never checks that keeping the same span twice replaces its verdict.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:298:52: replace && with || in run",
+        "why": "The test never checks that keeping a span preserves verdicts that share only its suite or only its file and range.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:298:43: replace == with != in run",
+        "why": "The test never checks that keeping a span preserves a verdict at the same file and range in another suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:298:89: replace == with != in run",
+        "why": "The test never checks that keeping a second span in the same suite preserves the first verdict.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
