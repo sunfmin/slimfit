@@ -30,7 +30,13 @@ struct Lang {
     mutants_tool: &'static str,
     mutants_step: &'static str,
     source: &'static str,
+    /// Where its mutants tool lists a change's mutants and runs them by
+    /// name: an edit of `source` that the pick, one of its mutants, is on.
+    mutates: Option<(Edit, &'static str)>,
 }
+
+/// An edit of a file's text.
+type Edit = fn(&str) -> String;
 
 const RUST: Lang = Lang {
     name: "rust",
@@ -55,6 +61,7 @@ const RUST: Lang = Lang {
     mutants_tool: "cargo",
     mutants_step: "cargo mutants",
     source: "src/lib.rs",
+    mutates: Some((|s| s.to_string() + "pub fn a_change() {}\n", PICK_KILLED)),
 };
 const GO: Lang = Lang {
     name: "go",
@@ -76,6 +83,7 @@ const GO: Lang = Lang {
     mutants_tool: "gremlins",
     mutants_step: "gremlins unleash",
     source: "calc.go",
+    mutates: None,
 };
 const TYPESCRIPT: Lang = Lang {
     name: "typescript",
@@ -87,6 +95,7 @@ const TYPESCRIPT: Lang = Lang {
     mutants_tool: "npx",
     mutants_step: "npx stryker",
     source: "src/calc.ts",
+    mutates: None,
 };
 const KOTLIN: Lang = Lang {
     name: "kotlin",
@@ -98,6 +107,7 @@ const KOTLIN: Lang = Lang {
     mutants_tool: "gradlew",
     mutants_step: "gradlew pitest",
     source: "src/main/kotlin/com/example/Calc.kt",
+    mutates: None,
 };
 const SWIFT: Lang = Lang {
     name: "swift",
@@ -109,12 +119,26 @@ const SWIFT: Lang = Lang {
     mutants_tool: "muter",
     mutants_step: "muter run",
     source: "Sources/Calc/Calc.swift",
+    mutates: None,
+};
+const PYTHON: Lang = Lang {
+    name: "python",
+    test_tools: &["uv"],
+    build_steps: &["uv true"],
+    test_steps: &["uv pytest"],
+    runs_tests: "uv pytest",
+    // coverage.py's data, read for what each test ran.
+    reach_steps: &["uv python -"],
+    mutants_tool: "uv",
+    mutants_step: "uv python python-mutants.py",
+    source: "src/calc.py",
+    mutates: Some((|s| s.replace("return a + b", "return a + b  # a change"), PYTHON_PICK)),
 };
 
 /// The tools the stand-in binary answers to, and what slimfit and the
 /// presets' shell lines need from the host.
 const STANDINS: &[&str] =
-    &["cargo", "cargo-nextest", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx"];
+    &["cargo", "cargo-nextest", "llvm-profdata", "llvm-cov", "go", "gremlins", "swift", "xcrun", "muter", "npx", "uv"];
 const HOST: &[&str] = &[
     "sh", "git", "find", "head", "basename", "mv", "cat", "sed", "grep", "xargs", "getconf", "cut", "sort", "mkdir",
     "nice",
@@ -328,6 +352,7 @@ fn every_preset_through_its_standins() {
     rust_runs_every_test_whatever_fails();
 
     go();
+    python();
     for lang in [&TYPESCRIPT, &KOTLIN, &SWIFT] {
         let s = Sample::new(lang);
         measures_through_its_tools(&s, lang, false);
@@ -415,7 +440,7 @@ fn measures_through_its_tools(s: &Sample, lang: &Lang, dry: bool) -> Vec<(&'stat
     let next = s.ok(&["next", "--all"]);
     let tasks = next["tasks"].as_array().unwrap();
     assert!(tasks.iter().any(|t| t["kind"] == "uncovered" && t["files"][0] == lang.source), "{}: {next:#}", lang.name);
-    if lang.name != "rust" {
+    if lang.mutates.is_none() {
         s.error(&["check", "--mutants"], &["cannot list a change's mutants", "never mutates the whole codebase"]);
     }
     let check = s.ok(&["check"]);
@@ -463,19 +488,19 @@ fn faults(json: &Value) -> String {
 /// their reports (a mutants tool's exit is covered in `rust`). No report
 /// is, and the error names the report and ends with the tool's own words.
 /// The mutants tool runs only on a change, and only where it can list its
-/// mutants and run them by name (Rust's); its listing runs first, and fails
-/// only with a failing exit.
+/// mutants and run them by name (Rust's and Python's); its listing runs
+/// first, and fails only with a failing exit.
 fn faults_reach_the_agent(s: &Sample, lang: &Lang) {
-    let mutates = lang.name == "rust";
+    let mutates = lang.mutates.is_some();
     let mut tools = lang.test_tools.to_vec();
-    let args: &[&str] = if mutates {
+    let args: &[&str] = if let Some((change, pick)) = lang.mutates {
         let source = s.repo.join(lang.source);
-        std::fs::write(&source, std::fs::read_to_string(&source).unwrap() + "pub fn a_change() {}\n").unwrap();
+        std::fs::write(&source, change(&std::fs::read_to_string(&source).unwrap())).unwrap();
         // A mutants tool that also runs the tests is missing for them first.
         if !tools.contains(&lang.mutants_tool) {
             tools.push(lang.mutants_tool);
         }
-        &["check", "--mutants", PICK_KILLED, "--why", "w", "--fresh"]
+        &["check", "--mutants", pick, "--why", "w", "--fresh"]
     } else {
         &["next", "--fresh"]
     };
@@ -953,6 +978,39 @@ fn every_printed_key_is_on_its_page(printed: &[(&'static str, Value)]) {
     assert_eq!(by_cmd.len(), 7, "{:?}", by_cmd.keys());
     assert!(missing.is_empty(), "printed but not named on the command's page:\n{}", missing.join("\n"));
 }
+
+/// Python's sample: each test's lines come from coverage.py's contexts,
+/// so the copies of the add test are proposed, in the module their `def`s
+/// are in, and one kept is not proposed again. A change's mutant, picked,
+/// runs through the mutmut driver, and its outcome is read.
+fn python() {
+    let s = Sample::new(&PYTHON);
+    measures_through_its_tools(&s, &PYTHON, false);
+    let candidates = |next: &Value| -> Vec<String> {
+        let tasks = next["tasks"].as_array().unwrap().iter();
+        let c = tasks.flat_map(|t| t["evidence"]["candidates"].as_array().unwrap().iter());
+        c.map(|c| c["test"].as_str().unwrap().to_string()).collect()
+    };
+    let next = s.ok(&["next", "--all", "--kind", "redundant-test"]);
+    let before = candidates(&next);
+    let twins = ["tests.test_calc::test_adds", "tests.test_calc::test_adds_again", "tests.test_calc::test_slow"];
+    assert!(before.len() == 2 && before.iter().all(|t| twins.contains(&t.as_str())), "{next:#}");
+    assert_eq!(next["tasks"][0]["files"], serde_json::json!(["tests/test_calc.py"]), "{next:#}");
+    s.ok(&["keep", &before[0], "--reason", "it checks its own case"]);
+    assert_eq!(candidates(&s.ok(&["next", "--all", "--kind", "redundant-test"])), before[1..]);
+    git(&s.repo, &["commit", "-qam", "kept"]);
+    git(&s.repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    s.take();
+    faults_reach_the_agent(&s, &PYTHON);
+    let check = s.ok(&["check", "--mutants", PYTHON_PICK, "--why", "the sum", "--fresh"]);
+    assert_eq!(check["mutated"]["python"]["picks"][0]["outcome"], "killed", "{check:#}");
+    // The pick alone, by its name: one `-F`.
+    let run = s.take().into_iter().rfind(|c| c.step == PYTHON.mutants_step).unwrap();
+    assert_eq!(run.args.iter().filter(|a| *a == "-F").count(), 1, "{:?}", run.args);
+}
+
+/// A change's mutant of the Python sample's real list, which its tests catch.
+const PYTHON_PICK: &str = "src/calc.py:2:14: replace + with - in add";
 
 /// Go's sample also: a command line the tool would not take is refused by
 /// its stand-in, so a preset that drifts from its tool fails here, not on

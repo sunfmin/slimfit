@@ -1,0 +1,29 @@
+test tests.test_calc	test_adds
+SF:/REPO/src/calc.py
+DA:2,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:7,1
+end_of_record
+test tests.test_calc	test_adds_again
+SF:/REPO/src/calc.py
+DA:2,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:11,1
+end_of_record
+test tests.test_calc	test_adult
+SF:/REPO/src/calc.py
+DA:12,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:15,1
+end_of_record
+test tests.test_calc	test_slow
+SF:/REPO/src/calc.py
+DA:2,1
+end_of_record
+SF:/REPO/tests/test_calc.py
+DA:19,1
+DA:20,1
+end_of_record

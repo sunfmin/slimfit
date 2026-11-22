@@ -5,8 +5,9 @@
 //! nothing that one does not. A language is data: its grammar, the node
 //! kinds of its literals and comments, and what an assertion is.
 //!
-//! Only the languages whose test runs record each test's lines (Rust, Go)
-//! have redundant-test candidates, so only theirs are here.
+//! Only the languages whose test runs record each test's lines have
+//! redundant-test candidates: Rust and Go have a grammar here; Python's
+//! candidates, without one, are all `read`.
 
 use crate::config::Preset;
 use serde::{Deserialize, Serialize};

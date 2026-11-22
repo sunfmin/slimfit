@@ -8,7 +8,7 @@ use crate::formats;
 use crate::landing::SuiteTree;
 use crate::loc::{Kind, Totals};
 use crate::model::*;
-use crate::{go_source, rust_source};
+use crate::{go_source, python_source, rust_source};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -579,8 +579,8 @@ pub(crate) fn reduce(
 /// every function the coverage report names in a source file, outside
 /// tests, keyed by its first line; and the source lines each ran, outside
 /// tests. Each test's own function is located, and hashed, in a Rust suite
-/// (a test is a `fn`, by its path) and a Go one (a top-level `func Test…`
-/// of its package).
+/// (a test is a `fn`, by its path), a Go one (a top-level `func Test…`
+/// of its package) and a Python one (a `def` in its module).
 fn reached(
     tests: Vec<formats::TestReach>,
     functions: &BTreeMap<String, Vec<Function>>,
@@ -614,6 +614,8 @@ fn reached(
             &t.name,
         )
         .and_then(|(file, line)| test_source(&file, line, resolver, preset)),
+        Preset::Python => python_source::test_function(totals.files.keys(), |f| resolver.read(f), &t.binary, &t.name)
+            .and_then(|(file, line)| test_source(&file, line, resolver, preset)),
         _ => None,
     };
     let every: Vec<(String, u32)> =
@@ -651,7 +653,11 @@ fn reached(
 /// first line to where it ends (as the language's reader cuts it), and its
 /// shape.
 fn test_source(file: &str, line: u32, resolver: &Resolver, preset: Preset) -> Option<TestSource> {
-    let cut = if preset == Preset::Go { go_source::func_text } else { rust_source::item_text };
+    let cut = match preset {
+        Preset::Go => go_source::func_text,
+        Preset::Python => python_source::def_text,
+        _ => rust_source::item_text,
+    };
     let text = cut(&resolver.read(file)?, line)?;
     let shape = crate::test_shape::shape(preset, &text);
     Some(TestSource { file: file.into(), line, hash: crate::test_shape::fnv(&text), shape })

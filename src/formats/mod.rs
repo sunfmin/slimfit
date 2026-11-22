@@ -38,7 +38,8 @@ pub enum CoverageFormat {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum MutantsFormat {
-    /// cargo-mutants `mutants.out/outcomes.json`.
+    /// cargo-mutants `mutants.out/outcomes.json`; also what the Python
+    /// preset's mutmut driver writes (`src/presets/python-mutants.py`).
     CargoMutants,
     /// Stryker's mutation-testing-report-schema JSON.
     Stryker,
