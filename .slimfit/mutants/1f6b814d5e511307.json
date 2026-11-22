@@ -1,0 +1,33 @@
+{
+  "tree": "a43b7806fe008ade9030ce00408ed1c051374a6f+d1fba762150c532c",
+  "picker": "codex:01a2024e-0cf6-7f63-b129-a1b0c3c6016e:default",
+  "author": "claude-code:79d66557-e481-547d-b477-31de691377d0:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure.rs:90:45: replace && with || in cached",
+        "why": "A timed cache entry for stale content can pass on suite names alone, a case the unchanged-tree keep assertion does not exercise.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:90:31: replace == with != in cached",
+        "why": "The cached keep assertion can pass using the ordinary cache without checking that matching timed entries are accepted and stale ones are rejected.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/measure.rs:86:38: replace && with || in cached",
+        "why": "An ordinary cache entry for a different tree can pass when suite names still match, while the new keep assertion uses an unchanged tree.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:267:35: replace || with && in run",
+        "why": "A batch with the right number of reasons and one whitespace-only reason would be accepted, while the added refusal check uses too few reasons.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
