@@ -1,0 +1,39 @@
+{
+  "tree": "bde02085227da652d9d5cafb57dd5c68f59acf92+d1fba762150c532c",
+  "picker": "claude-code:673ee8ec-5aff-4cb5-9339-11f08c7f9c2a:claude-opus-5-5",
+  "author": "claude-code:e0ee8996-2c8a-5929-ae9c-9f02ff29338a:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure.rs:615:9: delete match arm Preset::Python in reached",
+        "why": "Without this arm no Python test's own def is located or hashed. Redundant-test tasks might still appear from the reach data alone, so the tests may not notice.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/config.rs:397:13: delete field build_command from struct Suite expression in preset",
+        "why": "The `uv run --with pytest-cov true` sync step may never be checked by the tests, since the base default could leave a measurement that still passes.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/config.rs:400:13: delete field reach_report from struct Suite expression in preset",
+        "why": "Per-test reach is what drives Python's redundant-test tasks. This checks that losing it really fails the Python sample through the stand-ins.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/config.rs:406:13: delete field mutants_report from struct Suite expression in preset",
+        "why": "The mutmut driver's outcomes path and its CargoMutants format must be read back, or a pick's outcome would be lost unnoticed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/python_source.rs:40:90: replace > with >= in def_text",
+        "why": "This is the boundary that ends a def at a sibling at the same indent. It is a decision of the new reader, held only by one unit-test case.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

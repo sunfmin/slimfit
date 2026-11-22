@@ -1,0 +1,9 @@
+{
+  "tree": "bde02085227da652d9d5cafb57dd5c68f59acf92+d1fba762150c532c",
+  "lines": 127,
+  "serves": "slimfit#90",
+  "considered": "go_source::func_text (brace-ended, no use for Python's indentation), the Go and Rust presets' per-test reach (Python's comes from coverage.py contexts, read as the existing reach LCOV format), the cargo-mutants list and outcomes readers (reused: the mutmut driver writes their shapes, so no new Rust reader), the stand-in's Kept/in_diff/names (reused for uv's driver)",
+  "reviewer": "claude-code:e89725a5-e81a-4665-9192-58f0e0f5520d:claude-opus-5-5",
+  "author": "claude-code:e0ee8996-2c8a-5929-ae9c-9f02ff29338a:opus",
+  "as_is": "A new preset needs every piece added here: the preset and its marker (config.rs), the Python test locator beside go_source/rust_source (python_source.rs, about 30 lines; it cannot reuse Go's brace-based func_text), the mutmut driver (needed because mutmut takes no diff and no names in cargo-mutants' shape), a `uv` stand-in that refuses what the real tool would refuse, and real reports. The wider edits generalise existing Rust-only branches (e2e.sh, standins' `mutates` in place of `name == \"rust\"`) rather than copying them. No existing function does any of this, and nothing it leaves behind becomes dead."
+}
