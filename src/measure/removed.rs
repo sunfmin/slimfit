@@ -221,7 +221,12 @@ mod t {
         let t = |name: &str, at: Option<(&str, u32)>| crate::model::ReachTest {
             binary: "b".into(),
             name: name.into(),
-            source: at.map(|(f, l)| crate::model::TestSource { file: f.into(), line: l, hash: String::new() }),
+            source: at.map(|(f, l)| crate::model::TestSource {
+                file: f.into(),
+                line: l,
+                hash: String::new(),
+                shape: None,
+            }),
         };
         assert!(is(&t("m::x", Some(("src/a.rs", 7))), &g) && is(&t("m::x", None), &g));
         assert!(!is(&t("m::x", Some(("src/a.rs", 8))), &g) && !is(&t("m::x", Some(("src/b.rs", 7))), &g));

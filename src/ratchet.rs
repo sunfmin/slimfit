@@ -703,7 +703,7 @@ mod t {
         let test = |name: &str, hash: &str| ReachTest {
             binary: "b".into(),
             name: name.into(),
-            source: Some(TestSource { file: "t.rs".into(), line: 1, hash: hash.into() }),
+            source: Some(TestSource { file: "t.rs".into(), line: 1, hash: hash.into(), shape: None }),
         };
         let kept = |suite: &str, name: &str| Kept {
             suite: suite.into(),

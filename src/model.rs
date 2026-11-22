@@ -250,6 +250,9 @@ pub struct TestSource {
     pub line: u32,
     /// FNV-1a 64 of its lines, from its `fn` to its closing brace, in hex.
     pub hash: String,
+    /// Its shape, where a grammar reads its language (`test_shape`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<crate::test_shape::Shape>,
 }
 
 impl ReachTest {

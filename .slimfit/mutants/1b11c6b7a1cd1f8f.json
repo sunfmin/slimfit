@@ -1,0 +1,33 @@
+{
+  "tree": "700aed0a66116125a5cb42371d5744f9b577b8a0+d1fba762150c532c",
+  "picker": "claude-code:6565bd21-ee04-4bdb-9292-29dca8d9a927:claude-opus-5-5",
+  "author": "claude-code:0b3d2e48-6575-538d-8962-82ef36ac810b:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:461:85: replace != with == in classify",
+        "why": "Row 0 always equals itself, so `==` keeps every literal column. The test's fixtures make every literal differ between rows, so it cannot tell which columns were chosen.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:434:13: replace && with || in classify",
+        "why": "Every test candidate is a `subset`, and none hits the same-body, other-literals variant with contained assertions. Dropping the variant guard likely changes no class.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/test_shape.rs:159:22: replace ^ with | in fnv",
+        "why": "An OR-ed FNV still almost always gives different hashes for different texts. Only a pinned hash value would catch it, and none is visible in the diff.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/test_shape.rs:38:5: replace reads -> bool with true",
+        "why": "It only feeds the SHAPED help constant. Unless help text is snapshot-tested, listing every language there goes unnoticed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

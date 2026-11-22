@@ -19,6 +19,7 @@ mod rust_source;
 mod select;
 mod session;
 mod tasks;
+mod test_shape;
 mod tools;
 mod workspace;
 // build.rs runs it to stamp the version; compiled here too, for its tests and mutants.

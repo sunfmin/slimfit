@@ -603,8 +603,9 @@ fn reached(
         BTreeMap::new()
     };
     let source_of = |t: &formats::TestReach| match preset {
-        Preset::Rust => rust_source::test_function(&fns, &t.name)
-            .and_then(|(file, line)| test_source(file, line, resolver, rust_source::item_text)),
+        Preset::Rust => {
+            rust_source::test_function(&fns, &t.name).and_then(|(file, line)| test_source(file, line, resolver, preset))
+        }
         Preset::Go => go_source::test_function(
             totals.files.keys(),
             |f| resolver.read(f),
@@ -612,9 +613,9 @@ fn reached(
             &t.binary,
             &t.name,
         )
-        .and_then(|(file, line)| test_source(&file, line, resolver, go_source::func_text)),
+        .and_then(|(file, line)| test_source(&file, line, resolver, preset)),
         Preset::Python => python_source::test_function(totals.files.keys(), |f| resolver.read(f), &t.binary, &t.name)
-            .and_then(|(file, line)| test_source(&file, line, resolver, python_source::def_text)),
+            .and_then(|(file, line)| test_source(&file, line, resolver, preset)),
         _ => None,
     };
     let every: Vec<(String, u32)> =
@@ -648,20 +649,18 @@ fn reached(
     reach
 }
 
-/// Where the test function at `file:line` is and the hash of its text, from
-/// its first line to where it ends (`text`, the language's reader).
-fn test_source(
-    file: &str,
-    line: u32,
-    resolver: &Resolver,
-    text: fn(&str, u32) -> Option<String>,
-) -> Option<TestSource> {
-    let text = text(&resolver.read(file)?, line)?;
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.bytes() {
-        hash = (hash ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-    }
-    Some(TestSource { file: file.into(), line, hash: format!("{hash:016x}") })
+/// Where the test function at `file:line` is, the hash of its text from its
+/// first line to where it ends (as the language's reader cuts it), and its
+/// shape.
+fn test_source(file: &str, line: u32, resolver: &Resolver, preset: Preset) -> Option<TestSource> {
+    let cut = match preset {
+        Preset::Go => go_source::func_text,
+        Preset::Python => python_source::def_text,
+        _ => rust_source::item_text,
+    };
+    let text = cut(&resolver.read(file)?, line)?;
+    let shape = crate::test_shape::shape(preset, &text);
+    Some(TestSource { file: file.into(), line, hash: crate::test_shape::fnv(&text), shape })
 }
 
 /// Runs of zero-hit lines, not interrupted by a hit line (lines the report
@@ -996,7 +995,7 @@ pub(crate) mod t {
         // The hash is of the function's text: an edit inside it changes it, one outside does not.
         let hash = |text: &str| {
             std::fs::write(repo.path().join("src/a.rs"), text).unwrap();
-            test_source("src/a.rs", 5, &st.resolver, rust_source::item_text).map(|s| s.hash)
+            test_source("src/a.rs", 5, &st.resolver, Preset::Rust).map(|s| s.hash)
         };
         assert_eq!(hash(&text.replace("fn b() {}", "fn c() {}")), Some(source.hash.clone()));
         assert_ne!(hash(&text.replace("a();", "b();")), Some(source.hash.clone()));

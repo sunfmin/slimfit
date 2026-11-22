@@ -145,7 +145,7 @@ pub(crate) enum Cmd {
     /// - `pick-mutants`: `lines`, the source lines the change adds, `removed_tests`, the tests it removes (each as file:line: name where it starts), and `candidates`, the change's mutants to pick from: {const:CANDIDATE}.
     /// - `justify-growth`: `lines`, the source lines the change adds net; `allowance`, `growth_allowance`; `from`, where the change starts (`git diff <from>` is the diff the reviewer is given); and `grown`, each file whose source lines changed, with its `lines` (net, negative for a file that shrank), most first.
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, and `function`, when known.
-    /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds` and `lines` (how many source lines it runs). A test kept leaves its file's task.
+    /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds`, `lines` (how many source lines it runs) and `class`, read from both tests' text with tree-sitter ({const:SHAPED}): `asserts-contained` (a `subset` that asserts, and whose every statement, its assertions and the setup they check, `other_test` makes too, as written: delete it), `same-shape` (its body is another test's of the file but for literals: one table-driven test, with `group`, its index in `groups`) or `read` (the rest: the assertions decide); and `groups`, each a table-driven test's rows: a `test` and its `literals` that differ between the rows, in order. A test kept leaves its file's task.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`.
     /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
     /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
@@ -161,7 +161,7 @@ pub(crate) enum Cmd {
     /// - A pick-mutants task lists the change's mutants as the mutation tool does (`slimfit check --mutants`): that runs the tool's listing, a few seconds, and builds nothing; when the change removes tests, the first listing also measures the tree it starts from (see [costs](help:costs)).
     /// - Surviving-mutant tasks name only picks that survived, and with `--sample` the sample's survivors: nothing runs the whole codebase's mutants (see [mutants scope](help:mutants-scope)).
     /// - `--sample` runs mutants, unlike the rest of `next`: put it on the idle tasks line only, never in the loop or a gate. No `check` reads what it finds (see [the sample](help:sample)).
-    /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. Its steps decide it by reading both tests' assertions.
+    /// - A redundant-test task is a proposal from coverage, not a verdict: coverage cannot see what a test asserts. A candidate classed `read` is decided by reading both tests' assertions; the other classes are a check of their text, not of what the setup makes the values: the picks over the removed test's lines, run against the tests left, hold a delete or a merge.
     /// - {const:CACHE_PITFALL}
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Next {
@@ -491,6 +491,16 @@ fn help() -> Help {
         .constant("DIFF_LIMITED", languages_where(|s| !s.mutants_diff_flag.is_empty()))
         .constant("REACHED", languages_where(|s| s.mutants_tests == config::MutantTests::Reached))
         .constant("PER_TEST", languages_where(|s| !s.reach_report.path.is_empty()))
+        .constant(
+            "SHAPED",
+            prose_list(
+                config::Preset::all()
+                    .iter()
+                    .filter(|p| crate::test_shape::reads(**p))
+                    .map(|p| p.language().to_string()),
+                "and",
+            ),
+        )
         .constant("PICKS_MAX", measure::PICKS_MAX)
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)

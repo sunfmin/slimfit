@@ -5,8 +5,9 @@ use crate::config::Config;
 use crate::git;
 use crate::landing::{SuiteTree, Tree};
 use crate::loc::Kind;
-use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement};
+use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement, TestSource};
 use crate::ratchet::{Baseline, Kept, KeptFile, Measured};
+use crate::test_shape::Shape;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -28,7 +29,7 @@ pub enum TaskKind {
     /// Lines no test runs. No caller: delete them. A user path needs them: test it through its module's interface, with a fast test that asserts what the lines decide; a test that only runs them is no fix. A feature nobody uses: don't delete it, escalate: that is a product decision. `uncovered_lines` is a trend, not a bound: these tasks, not `check`, are how it falls.
     #[value(verbatim_doc_comment)]
     Uncovered,
-    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate by both tests' assertions: delete it, merge the two, or keep it (`slimfit keep`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
+    /// Coverage proposes a test whose every source line another test runs too, or whose lines mostly overlap another's. Overlap leaves out the lines more than {const:COMMON_LINES} of a test binary's tests run (its shared setup; a package or test file where tests have no binary), so two tests overlap by what they run past it. A task is one test file with every candidate whose test is in it, files with the most CPU seconds to save first: read the file once and decide each candidate as its `class` says: delete it (`asserts-contained`), merge its group into one table-driven test (`same-shape`), or by both tests' assertions delete it, merge the two, or keep it (`slimfit keep`) (`read`). Only where the test run records coverage per test ({const:PER_TEST}); runs no mutant, but a delete or a merge then owes picks over the lines the removed test ran (a `pick-mutants` task).
     #[value(verbatim_doc_comment)]
     RedundantTest,
     /// One test holds a large share of the suite's `test_seconds`, by its CPU time. Make it cheaper without testing less, or merge it into faster ones.
@@ -374,6 +375,8 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
         .into_iter()
         .map(|(file, (total, others, mut candidates))| {
             candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut candidates: Vec<Value> = candidates.into_iter().map(|(_, c)| c).collect();
+            let groups = classify(&file, &mut candidates, |id| at(id)?.source.as_ref());
             let files = std::iter::once(file.clone()).chain(others.into_iter().filter(|f| *f != file)).collect();
             Task {
                 kind: TaskKind::RedundantTest,
@@ -386,9 +389,14 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
                 evidence: json!({
                     "file": file,
                     "seconds": (total * 1000.0).round() / 1000.0,
-                    "candidates": candidates.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
+                    "candidates": candidates,
+                    "groups": groups,
                 }),
-                steps: "Coverage only proposes; the assertions decide. Read the file once and decide every candidate in it. For \
+                steps: "Coverage only proposes; each candidate's `class` says how it is decided. Read the file once and decide every candidate in it. \
+                        `asserts-contained`: DELETE `test`: every statement it makes, its assertions and their setup, is in its `other_test` as it is written, which runs every line it runs. \
+                        `same-shape`: MERGE its group (`evidence.groups[group]`) into one table-driven test: the tests differ only in the literals each row names, \
+                        so the table's rows are those literals and its body the tests' body with each row's literal in their place; each row fails with its own name; rows of the same literals are one case, kept once. \
+                        `read`: the assertions decide. For \
                         each: for every assertion of its `test`, find the assertion in its `other_test` (or another test you name) that \
                         checks the same outcome on the same setup. Then do one: \
                         DELETE `test` when every assertion maps (put the mapping in the commit message). \
@@ -407,6 +415,62 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
             }
         })
         .collect()
+}
+
+/// Sets the `class` of each of `file`'s `candidates` (slimfit#88), from the
+/// tests' sources (`source`): `asserts-contained`, a subset that asserts and
+/// whose every statement (its assertions, and the setup they check) its
+/// `other_test` makes too, as written; else `same-shape`, its body that of
+/// another test of the file but for literals (another candidate, or one's
+/// `other_test`), with `group`, its group's index in the answer: each group
+/// the rows of one table-driven test, a test and the literals that differ
+/// between its rows; else `read`.
+fn classify<'a>(file: &str, candidates: &mut [Value], source: impl Fn(&str) -> Option<&'a TestSource>) -> Vec<Value> {
+    let shape = |id: &Value| source(id.as_str().unwrap_or_default())?.shape.as_ref();
+    let contained = |c: &Value| {
+        let (Some(mine), Some(theirs)) = (shape(&c["test"]), shape(&c["other_test"])) else { return false };
+        // An assertion alone may hold on another setup: guild's doctor asserts no `behind_hub` of a hub, and of a machine.
+        let within = mine.statements.iter().all(|s| theirs.statements.contains(s));
+        c["kind"] == "subset" && !mine.asserts.is_empty() && within
+    };
+    for c in candidates.iter_mut() {
+        c["class"] = json!(if contained(c) { "asserts-contained" } else { "read" });
+    }
+    // The file's tests by body, but those deleted: each candidate's, then its other test's.
+    let deleted: Vec<&Value> = candidates.iter().filter(|c| c["class"] != "read").map(|c| &c["test"]).collect();
+    let mut groups: Vec<(&str, Vec<(&Value, &Shape)>)> = Vec::new();
+    for c in candidates.iter().filter(|c| c["class"] == "read") {
+        for id in [&c["test"], &c["other_test"]] {
+            let here = source(id.as_str().unwrap_or_default()).filter(|s| s.file == file);
+            let Some(s) = here.and_then(|s| s.shape.as_ref()).filter(|_| !deleted.contains(&id)) else { continue };
+            match groups.iter_mut().find(|(body, _)| *body == s.body) {
+                Some((_, rows)) if rows.iter().any(|(t, _)| *t == id) => {}
+                Some((_, rows)) => rows.push((id, s)),
+                None => groups.push((&s.body, vec![(id, s)])),
+            }
+        }
+    }
+    groups.retain(|(_, rows)| rows.len() > 1);
+    let tables: Vec<(Vec<Value>, Value)> = groups
+        .into_iter()
+        .map(|(_, rows)| {
+            let first = &rows[0].1.literals;
+            let differ: Vec<usize> =
+                (0..first.len()).filter(|&k| rows.iter().any(|(_, s)| s.literals[k] != first[k])).collect();
+            let ids = rows.iter().map(|(t, _)| (*t).clone()).collect();
+            let rows = rows.iter().map(
+                |(t, s)| json!({ "test": t, "literals": differ.iter().map(|k| &s.literals[*k]).collect::<Vec<_>>() }),
+            );
+            (ids, Value::Array(rows.collect()))
+        })
+        .collect();
+    for c in candidates.iter_mut() {
+        if let Some(g) = tables.iter().position(|(ids, _)| ids.contains(&c["test"])) {
+            c["class"] = json!("same-shape");
+            c["group"] = json!(g);
+        }
+    }
+    tables.into_iter().map(|(_, rows)| rows).collect()
 }
 
 /// How many redundant-test candidates `tasks` hold, over all their files.
@@ -708,7 +772,8 @@ mod t {
         for (id, secs, lines) in tests {
             // `binary::name`, or a name alone, in binary `t`.
             let (binary, name) = id.split_once("::").unwrap_or(("t", id));
-            let source = crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into() };
+            let source =
+                crate::model::TestSource { file: format!("tests/{name}.rs"), line: 1, hash: "h".into(), shape: None };
             reach.tests.push(ReachTest { binary: binary.into(), name: name.into(), source: Some(source) });
             reach.lines.as_mut().unwrap().push([("a.rs".to_string(), lines.into_iter().collect())].into());
             cases.push(TestCase { id: format!("{binary}::{name}"), seconds: 0.0, passed: true, cpu: secs });
@@ -895,6 +960,92 @@ mod t {
         let left = redundant(&s, &[keep("t::lone")]);
         assert_eq!((left.len(), candidates(&left)), (1, 3));
         assert_eq!(candidates(&redundant(&s, &[keep("t::two_again")])), 3);
+    }
+
+    /// In each language with redundant-test tasks: three tests of one shape,
+    /// differing in literals, make one group, the fastest (no candidate, the
+    /// others' other test) a row too; a subset whose assertion its other test
+    /// makes, on the same setup, is deleted; one whose assertion differs, or
+    /// whose assertion is the other's on another setup, or that asserts nothing, is read;
+    /// a comment is no statement.
+    #[test]
+    fn candidates_are_classed_by_their_tests_shapes() {
+        let rust = [
+            "fn start_gmail() {\n    let d = start(\"gmail\", 7);\n    assert_eq!(d.sources(), 1);\n}",
+            "fn start_gh() {\n    let d = start(\"gh\", 7);\n    assert_eq!(d.sources(), 1);\n}",
+            "fn start_none() {\n    let d = start(\"\", 7);\n    assert_eq!(d.sources(), 0);\n}",
+            "fn copy() {\n    // the sum\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
+            "fn orig() {\n    let x = add(2, 3);\n    assert!(x > 0);\n    assert_eq!(x, 5);\n}",
+            "fn differ() {\n    let _y = 0;\n    assert_eq!(add(1, 1), 3);\n}",
+            "fn base() {\n    assert_eq!(add(1, 1), 2);\n}",
+            "fn on_itself() {\n    let h = hub(\"itself\");\n    assert!(!h.behind());\n}",
+            "fn on_unheard() {\n    let h = hub(\"unheard\");\n    assert!(!h.behind());\n    assert!(h.silent());\n}",
+            "fn quiet() {\n    let x = add(2, 3);\n}",
+            "fn loud() {\n    let x = add(2, 3);\n    assert_eq!(x, 5);\n}",
+        ];
+        let go = [
+            "func TestStartGmail(t *testing.T) {\n\tif Start(\"gmail\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gmail\")\n\t}\n}",
+            "func TestStartGh(t *testing.T) {\n\tif Start(\"gh\", 7).Sources() != 1 {\n\t\tt.Fatal(\"gh\")\n\t}\n}",
+            "func TestStartNone(t *testing.T) {\n\tif Start(\"\", 7).Sources() != 0 {\n\t\tt.Fatal(\"none\")\n\t}\n}",
+            "func TestCopy(t *testing.T) {\n\t// the sum\n\tx := Add(2, 3)\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
+            "func TestOrig(t *testing.T) {\n\tx := Add(2, 3)\n\tif x <= 0 {\n\t\tt.Fatal(\"positive\")\n\t}\n\tif x != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
+            "func TestDiffer(t *testing.T) {\n\t_ = 0\n\tif Add(1, 1) != 3 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
+            "func TestBase(t *testing.T) {\n\tif Add(1, 1) != 2 {\n\t\tt.Fatal(\"1+1\")\n\t}\n}",
+            "func TestOnItself(t *testing.T) {\n\th := Hub(\"itself\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n}",
+            "func TestOnUnheard(t *testing.T) {\n\th := Hub(\"unheard\")\n\tif h.Behind() {\n\t\tt.Fatal(\"behind\")\n\t}\n\tif !h.Silent() {\n\t\tt.Fatal(\"silent\")\n\t}\n}",
+            "func TestQuiet(t *testing.T) {\n\t_ = Add(2, 3)\n}",
+            "func TestLoud(t *testing.T) {\n\t_ = Add(2, 3)\n\tif Add(2, 3) != 5 {\n\t\tt.Fatal(\"2+3\")\n\t}\n}",
+        ];
+        let tests = [
+            ("gmail", 0.3, 1..=10),
+            ("gh", 0.2, 1..=10),
+            ("none", 0.1, 1..=10),
+            ("copy", 0.2, 20..=25),
+            ("orig", 0.1, 20..=29),
+            ("differ", 0.2, 40..=42),
+            ("base", 0.1, 40..=49),
+            ("on_itself", 0.2, 60..=62),
+            ("on_unheard", 0.1, 60..=69),
+            ("quiet", 0.2, 80..=82),
+            ("loud", 0.1, 80..=89),
+        ];
+        for (preset, texts) in [(crate::config::Preset::Rust, rust), (crate::config::Preset::Go, go)] {
+            let mut s = suite(tests.clone().map(|(n, secs, ls)| (n, secs, ls.collect())));
+            for (t, text) in s.reach.as_mut().unwrap().tests.iter_mut().zip(texts) {
+                let source = t.source.as_mut().unwrap();
+                (source.file, source.shape) = ("tests/a.rs".into(), crate::test_shape::shape(preset, text));
+            }
+            let task = &redundant(&s, &[])[0];
+            let got: Vec<_> = task.evidence["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| (c["test"].as_str().unwrap().to_string(), c["class"].clone(), c["group"].clone()))
+                .collect();
+            let want = [
+                ("gmail", json!("same-shape"), json!(0)),
+                ("gh", json!("same-shape"), json!(0)),
+                ("copy", json!("asserts-contained"), Value::Null),
+                ("differ", json!("read"), Value::Null),
+                ("on_itself", json!("read"), Value::Null),
+                ("quiet", json!("read"), Value::Null),
+            ];
+            assert_eq!(got, want.map(|(t, c, g)| (format!("t::{t}"), c, g)), "{preset:?}");
+            let rows = &task.evidence["groups"][0];
+            let row = |i: usize| (rows[i]["test"].clone(), rows[i]["literals"].clone());
+            let tables = (rows.as_array().unwrap().len(), row(0), row(2));
+            let none = if preset == crate::config::Preset::Go {
+                json!(["\"\"", "0", "\"none\""])
+            } else {
+                json!(["\"\"", "0"])
+            };
+            let gmail = if preset == crate::config::Preset::Go {
+                json!(["\"gmail\"", "1", "\"gmail\""])
+            } else {
+                json!(["\"gmail\"", "1"])
+            };
+            assert_eq!(tables, (3, (json!("t::gmail"), gmail), (json!("t::none"), none)), "{preset:?}");
+        }
     }
 
     /// A test whose lines another runs too is proposed (of two that run the
