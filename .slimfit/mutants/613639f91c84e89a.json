@@ -1,0 +1,27 @@
+{
+  "tree": "37bec42a919b6d2f12054b181c805dcd02357b69+d1fba762150c532c",
+  "picker": "codex:01a202b8-4276-74d0-829f-427a5a66a97e:default",
+  "author": "claude-code:e5f12947-168f-56b6-9683-c37824034340:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/listing.rs:122:20: delete ! in of",
+        "why": "The over-budget case checks the example count but could miss that the guaranteed example comes from round two.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/listing.rs:122:45: replace > with >= in of",
+        "why": "The tests exercise examples that fit and examples that overflow, but do not construct an example that lands exactly on the cutoff.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/listing.rs:118:28: delete ! in of",
+        "why": "The grouped fixtures each use one suite, so they cannot check that a later suite still gets its guaranteed example after an earlier suite exhausts the budget.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
