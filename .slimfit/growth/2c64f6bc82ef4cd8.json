@@ -1,0 +1,10 @@
+{
+  "tree": "7fd04348bdf99346b05910000d2b1146beb35f98+d1fba762150c532c",
+  "lines": 138,
+  "serves": "slimfit#95",
+  "considered": "the redundant-test/slow-test keep (Kept, keyed by test text) and the uncovered keep (KeptSpan): neither keys a mutant by name without place and its function's text, so a KeptMutant beside them; the readers rust_source::item_text, go_source::func_text and python_source::def_text, reused for the function's text",
+  "reviewer": "codex:01a20193-1dc8-78e2-8a32-1c06e37f43c2:default",
+  "author": "claude-code:330818ed-ca1e-5837-9603-9b1cdc29ca09:opus",
+  "cut": "In src/measure/sample.rs, classify each sampled survivor once while selecting candidates and return the counts with the unkept task candidates. Delete the hash field from src/model.rs and its initializer in src/formats/mutants.rs, and have src/main.rs and src/tasks.rs reuse the returned counts and candidates. In src/tasks.rs, build the source-specific instructions once in survivors and drop the separate steps function. Review limited to the supplied diff because repository access was unavailable.",
+  "answer": "Done as named: sample() classifies the drawn survivors once (Sampled.equivalent), Candidate.hash and its initializer are gone, main and tasks reuse Sampled::counts/is_equivalent, and survivors builds its steps with the sampled KEEP sentence (no steps function)."
+}

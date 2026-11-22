@@ -63,12 +63,14 @@ impl Sample {
         Ok((format!("{DIR}/{}.json", self.tip), serde_json::to_string_pretty(self)? + "\n"))
     }
 
-    /// The drawn mutants by outcome.
-    pub fn counts(&self) -> MutantCounts {
+    /// The drawn mutants by outcome, a survivor of a suite that is
+    /// `equivalent` apart from the rest.
+    pub fn counts(&self, equivalent: impl Fn(&str, &Drawn) -> bool) -> MutantCounts {
         let mut c = MutantCounts::default();
-        for d in self.drawn.values().flatten() {
+        for (suite, d) in self.drawn.iter().flat_map(|(s, ds)| ds.iter().map(move |d| (s.as_str(), d))) {
             match d.outcome {
                 Some(MutantStatus::Killed) => c.killed += 1,
+                Some(MutantStatus::Survived) if equivalent(suite, d) => c.equivalent += 1,
                 Some(MutantStatus::Survived) => c.survived += 1,
                 Some(MutantStatus::Unviable) | None => c.unviable += 1,
             }
@@ -77,18 +79,38 @@ impl Sample {
     }
 }
 
-/// A sample, and the candidates of the mutants drawn: what the tasks need.
+/// A sample, the candidates of the mutants drawn, and those of them the
+/// baseline keeps as equivalent (suite, name): what the tasks need.
 pub struct Sampled {
     pub sample: Sample,
     pub candidates: Vec<(String, Candidate)>,
+    pub equivalent: BTreeSet<(String, String)>,
 }
 
-/// A mutant's name without its line and column: what a pick is still
-/// called after an edit above it moved it.
-fn unplaced(name: &str) -> String {
-    let Some((place, rest)) = name.split_once(": ") else { return name.to_string() };
-    let file = place.rsplitn(3, ':').last().unwrap_or(place);
-    format!("{file}: {rest}")
+impl Sampled {
+    /// Whether drawn mutant `d` of `suite` is kept as equivalent.
+    pub fn is_equivalent(&self, suite: &str, d: &Drawn) -> bool {
+        self.equivalent.contains(&(suite.to_string(), d.name.clone()))
+    }
+
+    /// The drawn mutants by outcome, those kept as equivalent apart.
+    pub fn counts(&self) -> MutantCounts {
+        self.sample.counts(|s, d| self.is_equivalent(s, d))
+    }
+}
+
+/// The (suite, name) of each of `candidates` that `kept` keeps as
+/// equivalent: the same change, its function's text (as `hash` hashes it
+/// now) unchanged since.
+pub fn equivalent(
+    candidates: &[(String, Candidate)],
+    kept: &[crate::ratchet::KeptMutant],
+    hash: impl Fn(&str, &Candidate) -> String,
+) -> BTreeSet<(String, String)> {
+    (candidates.iter())
+        .filter(|(s, c)| kept.iter().any(|k| k.holds(s, &c.name, &hash(s, c))))
+        .map(|(s, c)| (s.clone(), c.name.clone()))
+        .collect()
 }
 
 /// SplitMix64: a small generator whose sequence the seed alone fixes.
@@ -162,7 +184,15 @@ fn picked_since(repo: &Path, from: &str, head: &str) -> Result<BTreeSet<String>>
 /// picks run, each with its function's tests, on `m`, this tree's test run.
 /// A drawn mutant that does not build is replaced by the next in the draw,
 /// among `n` × [`DRAWN`] run at once. Cached in `.slimfit/out/` per tip and `n`.
-pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, n: usize) -> Result<Sampled> {
+/// The drawn mutants `kept` keeps as equivalent are marked so.
+pub fn sample(
+    repo: &Path,
+    tree: &landing::Tree,
+    cfg: &Config,
+    m: &Measurement,
+    n: usize,
+    kept: &[crate::ratchet::KeptMutant],
+) -> Result<Sampled> {
     let head = git::run(repo, &["rev-parse", "HEAD"])?.trim().to_string();
     let cache = repo.join(OUT).join("sample.json");
     let scratch = Scratch::new(repo, false)?;
@@ -204,8 +234,13 @@ pub fn sample(repo: &Path, tree: &landing::Tree, cfg: &Config, m: &Measurement, 
     };
     let drawn: BTreeSet<(&str, &str)> =
         sample.drawn.iter().flat_map(|(s, d)| d.iter().map(move |d| (s.as_str(), d.name.as_str()))).collect();
-    let candidates = order.iter().filter(|(s, c)| drawn.contains(&(s.as_str(), c.name.as_str()))).cloned().collect();
-    Ok(Sampled { sample, candidates })
+    let candidates: Vec<(String, Candidate)> =
+        order.iter().filter(|(s, c)| drawn.contains(&(s.as_str(), c.name.as_str()))).cloned().collect();
+    let equivalent = equivalent(&candidates, kept, |s, c| {
+        let Ok(st) = tree.suite(cfg, s) else { return String::new() };
+        super::function_hash(st.suite.preset, &st.resolver.read(&c.file).unwrap_or_default(), c.line)
+    });
+    Ok(Sampled { sample, candidates, equivalent })
 }
 
 /// Whether a mutant's outcome says it built.
@@ -317,13 +352,18 @@ mod t {
         use MutantStatus::*;
         let drawn = vec![d(Some(Killed)), d(Some(Survived)), d(Some(Unviable)), d(None), d(Some(Killed))];
         let s = Sample { drawn: [("rust".to_string(), drawn)].into(), ..Default::default() };
-        assert_eq!(s.counts(), MutantCounts { killed: 2, survived: 1, unviable: 2 });
+        assert_eq!(s.counts(|_, _| false), MutantCounts { killed: 2, survived: 1, unviable: 2, equivalent: 0 });
+        let kept = MutantCounts { killed: 2, survived: 0, unviable: 2, equivalent: 1 };
+        assert_eq!(s.counts(|s, d| s == "rust" && d.outcome == Some(Survived)), kept);
     }
 
-    /// A name without its place keeps its file and the change it makes.
+    /// A name without its place keeps its file and the change it makes;
+    /// its place is its file and line.
     #[test]
     fn a_name_unplaced_keeps_its_file_and_change() {
         assert_eq!(unplaced("src/x:y.rs:12:9: replace >= with < in f"), "src/x:y.rs: replace >= with < in f");
         assert_eq!(unplaced("odd"), "odd");
+        assert_eq!(placed("src/x:y.rs:12:9: replace >= with < in f"), Some(("src/x:y.rs", 12)));
+        assert_eq!((placed("odd"), placed("a.rs:x:9: f")), (None, None));
     }
 }

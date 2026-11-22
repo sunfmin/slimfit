@@ -103,14 +103,20 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             let mut notes = Vec::new();
             if let Some(n) = sample {
                 measure::refuse_unpickable(cfg)?;
-                let s = measure::sample::sample(&repo, tree, cfg, &m, n)?;
-                let c = s.sample.counts();
+                let sampled = measure::sample::sample(&repo, tree, cfg, &m, n, &s.base.kept_mutants)?;
+                let c = sampled.counts();
                 notes.push(format!(
-                    "sampled at {} from the changes since {}: {} killed, {} survived, {} unviable, of {} mutants no \
-                     record picked; out of the loop: no `check` reads it",
-                    s.sample.tip, s.sample.from, c.killed, c.survived, c.unviable, s.sample.pool
+                    "sampled at {} from the changes since {}: {} killed, {} survived, {} equivalent (kept), {} \
+                     unviable, of {} mutants no record picked; out of the loop: no `check` reads it",
+                    sampled.sample.tip,
+                    sampled.sample.from,
+                    c.killed,
+                    c.survived,
+                    c.equivalent,
+                    c.unviable,
+                    sampled.sample.pool
                 ));
-                list.extend(tasks::sampled(&s)?);
+                list.extend(tasks::sampled(&sampled)?);
                 list.sort_by_key(|t| t.kind);
             }
             if let Some(k) = kind {
@@ -256,22 +262,26 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Keep { test, kind, reason, .. } => {
+        Cmd::Keep { test, mutant, kind, reason, .. } => {
             let mut s = Session::open(&repo)?;
             let Some(reason) = reason.filter(|r| !r.trim().is_empty()) else {
                 return Err(fault::fault(
                     "keep without --reason",
-                    "add `--reason \"<what the test checks that the other does not, why the module is deep enough, or what the span runs against>\"`: \
+                    "add `--reason \"<what the test checks that the other does not, why the module is deep enough, what the span runs against, or why no input tells the mutant from the original>\"`: \
                      it is kept in the baseline",
                 ));
             };
-            keep(&mut s, test, kind, reason)?;
+            match mutant {
+                Some(mutant) => keep_mutant(&mut s, mutant, reason)?,
+                None => keep(&mut s, test.unwrap_or_default(), kind, reason)?,
+            }
             std::fs::write(repo.join(ratchet::FILE), ratchet::render(&s.base)?)?;
             Ok((
                 json!({
                     "kept": s.base.kept,
                     "kept_files": s.base.kept_files,
                     "kept_spans": s.base.kept_spans,
+                    "kept_mutants": s.base.kept_mutants,
                     "next": "commit .slimfit/baseline.json; then `slimfit next`",
                 }),
                 EXIT_OK,
@@ -366,6 +376,31 @@ fn gitignore(text: &str) -> String {
     }
     let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
     format!("{text}{sep}{}\n", measure::OUT)
+}
+
+/// Records in `s`'s baseline that mutant `name` is equivalent, for
+/// `reason`, against its function's text now, in place of an earlier
+/// verdict on it. Reads its file, and measures nothing.
+fn keep_mutant(s: &mut Session, name: String, reason: String) -> Result<()> {
+    let Some((file, line)) = model::placed(&name) else {
+        return Err(fault::fault(
+            format!("`{name}` is not a mutant's name: `<file>:<line>:<column>: <change>`"),
+            "name it as the surviving-mutant task's survivor `name` does",
+        ));
+    };
+    let Some((suite, _)) = tasks::source_suite(&s.tree, &s.cfg, file)? else {
+        return Err(fault::fault(
+            format!("no suite counts {file}, the file of `{name}`, as a source file"),
+            "name it as the surviving-mutant task's survivor `name` does, on the tree it was sampled from",
+        ));
+    };
+    let st = s.tree.suite(&s.cfg, &suite)?;
+    let text = st.resolver.read(file).unwrap_or_default();
+    let hash = measure::function_hash(st.suite.preset, &text, line);
+    s.base.kept_mutants.retain(|k| !k.names(&suite, &name));
+    let mutant = model::unplaced(&name);
+    s.base.kept_mutants.push(ratchet::KeptMutant { suite, mutant, hash, reason });
+    Ok(())
 }
 
 /// Records in `s`'s baseline that `at` (a span, a source file or a test)
@@ -1092,7 +1127,7 @@ mod answer_tests {
         assert_eq!(sample.from, adopt, "{text}");
         assert!(!drawn.contains(&killed), "{drawn:?}");
         // Every viable one ran in the first round: none is unviable in the fixture.
-        assert_eq!(sample.counts().unviable, 0);
+        assert_eq!(sample.counts(|_, _| false).unviable, 0);
         // The same tip draws the same, from the cache or not.
         let (again, _) = slimfit(repo, "next --all --sample 25").unwrap();
         assert_eq!(again["tasks"], out["tasks"]);

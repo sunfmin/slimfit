@@ -147,7 +147,7 @@ pub(crate) enum Cmd {
     /// - `uncovered`: `file`, `start`, `end` and `lines` of the span no test runs, `function`, when known, and `hash`, of its lines' text. A span kept (`slimfit keep <file>:<start>-<end>`: it runs only against the real host or the real program, so a fast test could only run it) is not proposed while it is the same lines of the same function, their text unchanged.
     /// - `redundant-test`: `file`, the test file (a test's binary when the run records no file), `seconds`, the CPU seconds its candidates take, and `candidates`, slowest first, each with its `test`, `other_test` (the test whose lines it overlaps most: one that runs every one of them too, when there is one), `kind` (`subset`: `other_test` runs every line it runs, and some of them past both binaries' shared setup: a test of setup alone is no candidate; `overlap`: they share at least {const:MERGE_OVERLAP} of their lines past the binary's shared setup), `share` (that share), `seconds`, `lines` (how many source lines it runs) and `class`, read from both tests' text with tree-sitter ({const:SHAPED}): `asserts-contained` (a `subset` that asserts, and whose every statement, its assertions and the setup they check, `other_test` makes too, as written: delete it), `same-shape` (its body is another test's of the file but for literals: one table-driven test, with `group`, its index in `groups`) or `read` (the rest: the assertions decide); and `groups`, each a table-driven test's rows: a `test` and its `literals` that differ between the rows, in order. A test kept leaves its file's task.
     /// - `slow-test`: `test`, its `seconds`, and `suite_seconds`, the suite's `test_seconds`. A test kept as slow (`slimfit keep <test> --kind slow-test`) is not proposed while its text is unchanged and its `seconds` within {const:KEPT_SLOWDOWN_TIMES} × those kept.
-    /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`.
+    /// - `surviving-mutant`: `source`, who chose the mutants (`picker`: picks of the change, by a second agent; `sampled`: drawn by `--sample`), and `survivors`, each that survived, with its `line` and `mutant` (the change it makes), and a sampled one its `name`. A sampled survivor kept as equivalent (`slimfit keep --mutant <name>`: no input tells the mutated code from the original, so no test can kill it) is not proposed, nor counted a survivor of the sample, while its function's text is unchanged.
     /// - `record-sample`: `path`, where the sample's record goes, `counts` (its mutants by outcome) and `text`, the record to write there.
     /// - `deepen`: `file`, its `prod_lines`, and `commits_90d`, the commits that changed it in {const:DEEPEN_DAYS} days.
     ///
@@ -300,22 +300,23 @@ pub(crate) enum Cmd {
         #[command(flatten)]
         growth: Box<GrowthArgs>,
     },
-    /// Records that a candidate is kept as it is: a redundant test, a slow test, a file a deepen task proposed, or an uncovered span. It is not proposed again until it changes as below.
+    /// Records that a candidate is kept as it is: a redundant test, a slow test, a file a deepen task proposed, an uncovered span, or a sampled survivor that is an equivalent mutant. It is not proposed again until it changes as below.
     ///
     /// ## When to run it
     ///
-    /// When a `redundant-test`, `slow-test`, `deepen` or `uncovered` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over; the test's time is what it checks (a real process, a real timeout, a real host program), so making it cheaper would test less (`--kind slow-test`); the module is already deep enough and nothing is worth changing; or the span runs only against the real host or the real program (a binary's `main` under the tests that spawn it, which coverage does not record), so a fast test could only run it without asserting what it decides. Then commit `.slimfit/baseline.json`.
+    /// When a `redundant-test`, `slow-test`, `deepen`, `uncovered` or sampled `surviving-mutant` task's steps end in KEEP: the assertions showed the test checks what the other cannot take over; the test's time is what it checks (a real process, a real timeout, a real host program), so making it cheaper would test less (`--kind slow-test`); the module is already deep enough and nothing is worth changing; or the span runs only against the real host or the real program (a binary's `main` under the tests that spawn it, which coverage does not record), so a fast test could only run it without asserting what it decides; or a sampled surviving mutant is equivalent: no input tells the mutated code from the original (`<` to `<=` on a bound that can never be equal), so no test can kill it, and the code it changes is needed, so there is none to delete (`--mutant`). Then commit `.slimfit/baseline.json`.
     ///
     /// A keep answers one kind of task, and the verdicts of different kinds never stand in for each other: a test kept as not redundant is still a slow-test candidate, and one kept as slow is still a redundant-test candidate.
     ///
     /// ## What it reads and writes
     ///
-    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. `<file>:<start>-<end>` (an uncovered task's summary names it so) is a span kept: it reads the measurement (as for a test, below) for an uncovered span with those lines, its function and a hash of its lines' text. A path to one of a suite's source files is a file kept: it reads the file's prod lines and its git history, and measures nothing. Anything else is a test: it reads the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. It writes `.slimfit/baseline.json`'s `kept` (the test, its `--kind`, that hash, for `slow-test` its CPU seconds now, and the reason), `kept_files` (the file, its size and churn now, and the reason) or `kept_spans` (the span, its function, that hash and the reason), replacing an earlier verdict on the same test (of the same kind), file or span.
+    /// It reads `slimfit.toml` and `.slimfit/baseline.json`. `<file>:<start>-<end>` (an uncovered task's summary names it so) is a span kept: it reads the measurement (as for a test, below) for an uncovered span with those lines, its function and a hash of its lines' text. A path to one of a suite's source files is a file kept: it reads the file's prod lines and its git history, and measures nothing. Anything else is a test: it reads the measurement (from the cache in `.slimfit/out/` when the tree is unchanged, else it measures as `slimfit check` does) for the test's own function: where it is and a hash of its text, from its `fn` line to its closing brace. `--mutant <name>` (a sampled survivor's `name`) is a mutant kept: it reads the mutant's file, at the line its name gives, for the function the line is in and a hash of its text (the innermost Rust `fn`, top-level Go `func` or Python `def` holding it; the whole file's text for other languages, or a line in no function), and measures nothing. It writes `.slimfit/baseline.json`'s `kept` (the test, its `--kind`, that hash, for `slow-test` its CPU seconds now, and the reason), `kept_files` (the file, its size and churn now, and the reason), `kept_spans` (the span, its function, that hash and the reason) or `kept_mutants` (the mutant's name without its line and column, its function's hash and the reason), replacing an earlier verdict on the same test (of the same kind), file, span or mutant.
     ///
     /// When it is proposed again:
     ///
     /// - A test: when its text changes; kept as slow, also once its CPU seconds pass {const:KEPT_SLOWDOWN_TIMES} × those kept. `slimfit ratchet` drops a verdict whose test changed or is gone.
     /// - A span: when a line of it changes, or the uncovered span grows past (or shrinks within) the kept lines, or it moves, or its function's name changes. `slimfit ratchet` drops a verdict no uncovered span of its suite matches any more.
+    /// - A mutant: when its function's text changes (a line moved above it does not), and it is counted a survivor of a sample again. `slimfit ratchet` keeps every mutant verdict; keeping it again replaces it.
     /// - A file: once its prod lines grow by {const:KEPT_GROWTH} of `prod_lines`, or {const:KEPT_CHURN} × `commits_90d` commits more change it (counted against `commits_total`), and it is still a deepen candidate. Keeping it again records its size and churn then.
     ///
     /// ## What it answers
@@ -323,6 +324,7 @@ pub(crate) enum Cmd {
     /// - `kept`: every test kept in the baseline, {const:KEPT}.
     /// - `kept_files`: every file kept in the baseline, {const:KEPT_FILE}.
     /// - `kept_spans`: every span kept in the baseline, {const:KEPT_SPAN}.
+    /// - `kept_mutants`: every mutant kept in the baseline, {const:KEPT_MUTANT}.
     /// - `next`: commit `.slimfit/baseline.json`, then `slimfit next`.
     ///
     /// ## What it may refuse
@@ -330,7 +332,8 @@ pub(crate) enum Cmd {
     /// It writes nothing when it refuses.
     ///
     /// - No `--reason`.
-    /// - `--kind slow-test` for a span or a file.
+    /// - `--kind slow-test` for a span or a file, and any `--kind` with `--mutant`.
+    /// - A `--mutant` that is not a mutant's name (`<file>:<line>:<column>: <change>`), or whose file no suite counts as a source file.
     /// - A span no suite's coverage leaves uncovered, as named (its lines are an uncovered task's, `start` to `end`), with its lines' hash (a measurement from before spans were hashed has none: measure afresh).
     /// - No suite's test run recorded the test (its `test` id is a redundant-test or slow-test task's `test`; only a run that records which tests run each function does), and no suite counts it as a source file.
     /// - Its own function was not found, so there is no text to hold the verdict to.
@@ -341,17 +344,21 @@ pub(crate) enum Cmd {
     /// - A test's verdict holds against the test's text only: a change to the other test, or to the code both run, does not bring it back. Any edit inside the test does, a reformat included.
     /// - A file's verdict holds against its size and churn only: a rewrite that keeps both under the thresholds does not bring it back.
     /// - A span's verdict holds against its line numbers too: lines added or removed above it move it, and bring it back.
+    /// - A mutant's verdict holds against its whole function's text: any edit inside the function brings it back, though the mutated line is unchanged. A verdict on a picked survivor of a change does not answer it: the gate holds those (kill it, or simplify the code).
     #[command(next_help_heading = "Run by the agent, in the loop", verbatim_doc_comment)]
     Keep {
         #[command(flatten)]
         at: At,
         /// The test kept (a redundant-test or slow-test task's `test`), the file kept (a deepen task's `file`) or the span kept (an uncovered task's `<file>:<start>-<end>`).
-        #[arg(verbatim_doc_comment)]
-        test: String,
+        #[arg(required_unless_present = "mutant", verbatim_doc_comment)]
+        test: Option<String>,
+        /// The mutant kept as equivalent, by a sampled surviving-mutant task's survivor `name`.
+        #[arg(long, value_name = "NAME", conflicts_with = "test", verbatim_doc_comment)]
+        mutant: Option<String>,
         /// The kind of task a test's keep answers.
-        #[arg(long, value_enum, default_value = "redundant-test", verbatim_doc_comment)]
+        #[arg(long, value_enum, default_value = "redundant-test", conflicts_with = "mutant", verbatim_doc_comment)]
         kind: ratchet::KeepKind,
-        /// Why it stays: what the test checks that the other does not, what its time checks, why the module is deep enough, or what the span runs against that no fast test can; kept in the baseline.
+        /// Why it stays: what the test checks that the other does not, what its time checks, why the module is deep enough, what the span runs against that no fast test can, or why no input tells the mutant from the original; kept in the baseline.
         #[arg(long, verbatim_doc_comment)]
         reason: Option<String>,
     },
@@ -546,6 +553,7 @@ fn help() -> Help {
         .constant("KEPT_SLOWDOWN_TIMES", 1.0 + ratchet::KEPT_SLOWDOWN)
         .constant("KEPT_FILE", ratchet::KEPT_FILE_HELP)
         .constant("KEPT_SPAN", ratchet::KEPT_SPAN_HELP)
+        .constant("KEPT_MUTANT", ratchet::KEPT_MUTANT_HELP)
         .constant("KEPT_GROWTH", format!("{:.0}%", ratchet::KEPT_GROWTH * 100.0))
         .constant("KEPT_CHURN", ratchet::KEPT_CHURN)
         .constant("MEASURE_REFUSALS", measure::refusals_help())

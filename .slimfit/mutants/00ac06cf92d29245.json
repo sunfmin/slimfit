@@ -1,0 +1,21 @@
+{
+  "tree": "7fd04348bdf99346b05910000d2b1146beb35f98+d1fba762150c532c",
+  "picker": "codex:01a20196-be99-75c3-9a37-a2ba80453f02:default",
+  "author": "claude-code:330818ed-ca1e-5837-9603-9b1cdc29ca09:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:400:36: delete ! in keep_mutant",
+        "why": "The keep test starts with no saved mutant verdicts, so it would miss duplicate verdicts on a repeat keep and the loss of unrelated verdicts.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/model.rs:90:5: replace is_zero -> bool with true",
+        "why": "The shown tests check nonzero equivalent counts in memory and in the report, leaving room for sample task JSON to silently omit the count.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
