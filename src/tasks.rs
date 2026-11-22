@@ -1127,8 +1127,8 @@ mod t {
             setup.chain(own).collect::<Vec<u32>>()
         };
         let tests = [
-            ("x::shipped", 0.2, with(100..=110, 1..=0)),
-            ("x::shipped2", 0.1, with(100..=110, 1..=0)),
+            ("x::shipped", 0.2, (100..=110).collect()),
+            ("x::shipped2", 0.1, (100..=110).collect()),
             ("x::own", 0.1, with(100..=110, 1..=5)),
             ("y::reads", 0.1, (200..=210).chain(with(100..=110, 1..=5)).collect()),
             ("y::b", 0.1, with(200..=210, 31..=35)),
