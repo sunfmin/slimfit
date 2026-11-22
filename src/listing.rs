@@ -234,14 +234,17 @@ mod tests {
         let deep = BTreeMap::from([("rust".to_string(), deep)]);
         let listing = of(&deep, &BTreeMap::new(), &[]);
         assert_eq!((listing.functions["rust"].len(), listing.candidates["rust"].len()), (3, 3 * EXAMPLES));
-        // Grouped past the budget with the functions alone: one candidate is still spelled out.
+        // Grouped past the budget with the functions alone: each suite still spells out its first.
         let mut wide: Vec<Candidate> = Vec::new();
         for f in 0..3_000 {
             wide.extend(many(&format!("src/w{f}.rs"), "f", 2, &[]));
         }
-        let wide = BTreeMap::from([("rust".to_string(), wide)]);
+        let wide = BTreeMap::from([("go".to_string(), wide.clone()), ("rust".to_string(), wide)]);
         let listing = of(&wide, &BTreeMap::new(), &[]);
-        assert_eq!((listing.functions["rust"].len(), listing.candidates["rust"].len()), (3_000, 1));
+        for suite in ["go", "rust"] {
+            let spelled: Vec<&str> = listing.candidates[suite].iter().map(|e| e.candidate.name.as_str()).collect();
+            assert_eq!((listing.functions[suite].len(), &spelled[..]), (3_000, &[wide[suite][0].name.as_str()][..]));
+        }
         // One function's whole listing, as `--function` asks it: every candidate, in full, past the budget too.
         let full = of(&candidates, &BTreeMap::new(), &["src/big.rs: big".to_string()]);
         assert_eq!((full.candidates["rust"].len(), full.functions.is_empty()), (2_000, true));
