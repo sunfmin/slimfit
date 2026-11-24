@@ -1,0 +1,44 @@
+{
+  "tree": "7aa819153278565aada24693335b70d7884526f3+d1fba762150c532c",
+  "picker": "codex:01a20f5e-cb53-72a1-a5c9-104e1d7471ea:default",
+  "author": "claude-code:a9203a77-53cc-5f5b-89a8-e0109d348def:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/tasks.rs:763:54: replace * with + in deepen",
+        "why": "The merged test checks file identity and task counts, so an arithmetic change that preserves eligibility can escape.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/loc.rs:116:29: replace match guard self.inline_tests with true in Classifier::file",
+        "why": "The fixture uses the default Rust preset and separates tests into their own file, leaving inline-test handling with the option disabled unexercised.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/rust_source.rs:25:24: replace match guard !opened with true in item_end",
+        "why": "The external module declaration cannot expose a semicolon inside a braced item being mistaken for the end of that item.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/loc.rs:96:71: replace && with || in Classifier::globbed",
+        "why": "The fixture uses ordinary Rust paths, leaving cases where only one of the two glob classification conditions holds untested.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/git.rs:94:68: replace && with || in worktree",
+        "why": "The fixture commits every write before inspecting the tree, so it may miss a worktree entry that satisfies only one side of the guard.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "removed_tests": {
+    "rust": [
+      "src/tasks.rs:830: a_test_module_file_is_no_deepen_candidate"
+    ]
+  }
+}
