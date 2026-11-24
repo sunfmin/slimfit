@@ -137,9 +137,9 @@ fn keep(
     let found = m.suites.iter().find_map(|s| {
         let t = s.reach.as_ref()?.tests.iter().find(|t| t.id() == at)?;
         let cpu = s.tests.iter().find(|c| c.id == at).map_or(0.0, |c| c.cpu);
-        Some((s.suite.clone(), t.source.clone(), cpu))
+        Some((s.suite.clone(), t.source.clone(), cpu, s.metrics.test_seconds))
     });
-    let Some((suite, source, cpu)) = found else {
+    let Some((suite, source, cpu, total)) = found else {
         return Err(fault::fault(
             format!("no suite's test run recorded a test {at}, and no suite counts it as a source file"),
             "name it as the redundant-test or slow-test task's `test` or the deepen task's `file` does: \
@@ -153,8 +153,8 @@ fn keep(
         ));
     };
     s.base.kept.retain(|k| !(k.suite == suite && k.test == at && k.kind == kind));
-    let seconds = slow.then_some(cpu);
-    s.base.kept.push(ratchet::Kept { suite, test: at, kind, hash: source.hash, seconds, reason });
+    let (seconds, suite_seconds) = (slow.then_some(cpu), slow.then_some(total));
+    s.base.kept.push(ratchet::Kept { suite, test: at, kind, hash: source.hash, seconds, suite_seconds, reason });
     Ok(())
 }
 

@@ -615,10 +615,11 @@ fn rust(s: &Sample, printed: &mut Vec<(&'static str, Value)>) {
     let file = run("keep", &["src/lib.rs", "--reason", "deep enough"], 0);
     assert_eq!(file["kept_files"][0]["file"], "src/lib.rs", "{file:#}");
     assert_eq!((&file["kept"][1]["test"], &file["measurement"]), (&twin.into(), &"none".into()), "{file:#}");
-    // Kept as slow too, its own verdict beside the redundant one, with its CPU seconds; a file is no slow test.
+    // Kept as slow too, its own verdict beside the redundant one, with its and its suite's CPU seconds; a file is no slow test.
     let slow = run("keep", &[twin, "--kind", "slow-test", "--reason", "its time is a real process"], 0);
     let k = &slow["kept"][2];
     assert_eq!((&k["test"], &k["kind"], k["seconds"].is_f64()), (&twin.into(), &"slow-test".into(), true), "{slow:#}");
+    assert!(k["suite_seconds"].as_f64().unwrap() >= k["seconds"].as_f64().unwrap(), "{slow:#}");
     assert_eq!(slow["kept"][1].get("kind"), None, "{slow:#}");
     s.error(&["keep", "src/lib.rs", "--kind", "slow-test", "--reason", "r"], &["--kind slow-test keeps a test"]);
     // A mutant kept as equivalent, named without its place, against its function's text, measuring nothing.
