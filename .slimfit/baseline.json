@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7427,
-      "test_lines": 5482,
-      "tests": 133,
+      "prod_lines": 7419,
+      "test_lines": 5460,
+      "tests": 132,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5134,
+      "covered_lines": 5133,
       "uncovered_lines": 39
     }
   },
@@ -65,8 +65,60 @@
       "test": "slimfit::standins::every_preset_through_its_standins",
       "kind": "slow-test",
       "hash": "4943b269c3b43557",
-      "seconds": 10.489999999999998,
-      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
+      "seconds": 10.774,
+      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; uninstrumented it is 10.8s CPU, 6.2 of it sys (spawns). A cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105) at 10.49s on this same tree; refiled at 29.57s (slimfit#111) by host load alone: its share of the suite's CPU held at 46-47%"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::lines_most_tests_run_are_left_out_of_overlap",
+      "hash": "51ee561b3c7bd846",
+      "reason": "Its assertion is the pair set past shared setup (COMMON_LINES); the other test asserts the steps' text order, no pairs: nothing maps, and a merge of two 7ms tests would hide which behaviour failed"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::redundant_tests_are_proposed_from_per_test_lines",
+      "hash": "59b43d3cf00fbcf8",
+      "reason": "Its assertions (subset/overlap pairs, kept verdicts by suite and hash, no per-test lines => none) are unit facts of redundant(); the standins run asserts none of them"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_redundant_test_task_is_a_file_of_candidates",
+      "hash": "0bc64747182be08d",
+      "reason": "Its assertions (file grouping, ordering by seconds, share, kept tests leaving a file's task) are unit facts of redundant(); the standins run asserts none of them"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_redundant_test_task_ratchets_then_takes_the_gate_as_its_accept",
+      "hash": "c5f0cb129da10aa5",
+      "reason": "It asserts the steps' and help's order and accept text; the other test asserts setup pairs only: nothing maps, and the setups differ"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::each_binarys_own_setup_is_left_out_of_overlap",
+      "hash": "cccb7aebbadcea9a",
+      "reason": "It asserts per-binary setup exclusion; the other asserts the steps' text: nothing maps, a merge would hide which behaviour failed"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_subset_of_shared_setup_alone_is_not_proposed",
+      "hash": "fd23e71fe600738d",
+      "reason": "It asserts a setup-only subset across binaries is not proposed, on a different suite than the other test's; folding the setups changes what each pair set is"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::cap_keeps_the_first_few_of_each_kind_in_each_suite",
+      "hash": "fe0476c8d46fde50",
+      "reason": "It asserts cap()'s per-kind per-suite limit; the other test asserts the empty answer of main: nothing maps"
+    }
+  ],
+  "kept_files": [
+    {
+      "suite": "rust",
+      "file": "src/tasks.rs",
+      "prod_lines": 635,
+      "commits_90d": 59,
+      "commits_total": 59,
+      "reason": "Already deep: main reaches it through four calls (all, sampled, candidates, cap) and keep through two (source_suite, churn); behind them each task kind's finder and its steps are private and live together, so a new kind or a reworded recipe lands in one place. The churn is that: step texts and new kinds, not callers reaching in. Splitting per kind into submodules would spread the TaskKind/Task/cap contract without hiding more behind it; the redundant-test overlap and trend reading are already single private functions with their own tests through the same Task output."
     }
   ],
   "kept_spans": [
@@ -83,8 +135,8 @@
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 48,
-      "test_seconds": 27.925
+      "uncovered_lines": 44,
+      "test_seconds": 32.189
     }
   }
 }

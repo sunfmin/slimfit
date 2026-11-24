@@ -826,32 +826,11 @@ mod t {
         }
     }
 
-    /// A big file that keeps changing is not proposed when it is test code:
-    /// a file some other file declares `#[cfg(test)] mod x;`.
-    #[test]
-    fn a_test_module_file_is_no_deepen_candidate() {
-        use crate::measure::t::git;
-        let dir = tempfile::tempdir().unwrap();
-        let repo = dir.path();
-        git(repo, &["init", "-q"]);
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("src/main.rs"), "#[cfg(test)]\nmod fixtures;\nfn main() {}\n").unwrap();
-        for i in 0..5 {
-            let body: String = (0..120).map(|n| format!("pub const C{n}: u8 = {i};\n")).collect();
-            for f in ["src/fixtures.rs", "src/big.rs"] {
-                std::fs::write(repo.join(f), &body).unwrap();
-            }
-            git(repo, &["add", "."]);
-            git(repo, &["commit", "-qm", &format!("c {i}")]);
-        }
-        let (tree, cfg) = (crate::measure::t::tree(repo), Config::one("s", crate::config::Preset::Rust));
-        let proposed: Vec<_> = deepen(repo, tree.suite(&cfg, "s").unwrap(), &[]).into_iter().map(|t| t.files).collect();
-        assert_eq!(proposed, [["src/big.rs"]]);
-    }
-
-    /// A big file that keeps changing is proposed; kept, it is not, until
-    /// its prod lines grow by KEPT_GROWTH or as many commits change it again
-    /// as made it a candidate; a verdict on another suite does not hold.
+    /// A big file that keeps changing is proposed, but not when it is test
+    /// code (a file some other file declares `#[cfg(test)] mod x;`); kept,
+    /// it is not, until its prod lines grow by KEPT_GROWTH or as many commits
+    /// change it again as made it a candidate; a verdict on another suite
+    /// does not hold.
     #[test]
     fn a_kept_file_returns_once_it_grows_or_churns_past_the_verdict() {
         use crate::measure::t::git;
@@ -859,10 +838,13 @@ mod t {
         let repo = dir.path();
         git(repo, &["init", "-q"]);
         let cfg = Config::one("s", crate::config::Preset::Rust);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/main.rs"), "#[cfg(test)]\nmod fixtures;\nfn main() {}\n").unwrap();
         let commit = |lines: usize, note: &str| {
             let body: String = (0..lines).map(|i| format!("pub const C{i}: u8 = {};\n", note.len())).collect();
-            std::fs::create_dir_all(repo.join("src")).unwrap();
-            std::fs::write(repo.join("src/big.rs"), format!("// {note}\n{body}")).unwrap();
+            for f in ["src/fixtures.rs", "src/big.rs"] {
+                std::fs::write(repo.join(f), format!("// {note}\n{body}")).unwrap();
+            }
             git(repo, &["add", "."]);
             git(repo, &["commit", "-qm", &format!("c {note}")]);
         };
@@ -870,9 +852,10 @@ mod t {
             commit(120, &"x".repeat(i));
         }
         // The tree as it is after the last commit.
-        let proposed =
-            |kept: &[KeptFile]| deepen(repo, crate::measure::t::tree(repo).suite(&cfg, "s").unwrap(), kept).len();
-        assert_eq!(proposed(&[]), 1);
+        let deepened = |kept: &[KeptFile]| deepen(repo, crate::measure::t::tree(repo).suite(&cfg, "s").unwrap(), kept);
+        let files: Vec<_> = deepened(&[]).into_iter().map(|t| t.files).collect();
+        assert_eq!(files, [["src/big.rs"]], "the test module src/fixtures.rs is no candidate");
+        let proposed = |kept: &[KeptFile]| deepened(kept).len();
         let (commits_90d, commits_total) = churn(repo, "src/big.rs");
         assert_eq!((commits_90d, commits_total), (5, 5));
         let prod_lines = source_suite(&crate::measure::t::tree(repo), &cfg, "src/big.rs").unwrap().unwrap().1;
