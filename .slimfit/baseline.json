@@ -81,6 +81,16 @@
       "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
     }
   ],
+  "kept_files": [
+    {
+      "suite": "rust",
+      "file": "src/tasks.rs",
+      "prod_lines": 635,
+      "commits_90d": 59,
+      "commits_total": 59,
+      "reason": "Already deep: main reaches it through four calls (all, sampled, candidates, cap) and keep through two (source_suite, churn); behind them each task kind's finder and its steps are private and live together, so a new kind or a reworded recipe lands in one place. The churn is that: step texts and new kinds, not callers reaching in. Splitting per kind into submodules would spread the TaskKind/Task/cap contract without hiding more behind it; the redundant-test overlap and trend reading are already single private functions with their own tests through the same Task output."
+    }
+  ],
   "kept_spans": [
     {
       "suite": "rust",
