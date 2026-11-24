@@ -340,7 +340,9 @@ fn redundant(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     type File = (f64, BTreeSet<String>, Vec<(f64, Value)>);
     let mut by_file: BTreeMap<String, File> = BTreeMap::new();
     for ((t, mine, secs), mine_own) in lines.iter().zip(&own) {
-        if at(t).is_some_and(|rt| kept.iter().any(|k| k.keeps(KeepKind::RedundantTest, &s.suite, rt, *secs))) {
+        if at(t).is_some_and(|rt| {
+            kept.iter().any(|k| k.keeps(KeepKind::RedundantTest, &s.suite, rt, *secs, s.metrics.test_seconds))
+        }) {
             continue;
         }
         // The other test with the most overlap; its share and whether it runs all of mine.
@@ -495,13 +497,13 @@ pub fn candidates(tasks: &[Task]) -> usize {
 }
 
 /// A task per test that takes a large share of the suite's CPU time, less
-/// those `kept` as slow, unchanged and not much slower since.
+/// those `kept` as slow, unchanged and their share of it not much larger.
 fn slow(s: &SuiteMeasurement, kept: &[Kept]) -> Vec<Task> {
     let total = s.metrics.test_seconds;
     let reach = s.reach.as_ref().map_or(&[][..], |r| &r.tests);
     let held = |id: &str, cpu| {
         let rt = reach.iter().find(|rt| rt.id() == id);
-        rt.is_some_and(|rt| kept.iter().any(|k| k.keeps(KeepKind::SlowTest, &s.suite, rt, cpu)))
+        rt.is_some_and(|rt| kept.iter().any(|k| k.keeps(KeepKind::SlowTest, &s.suite, rt, cpu, total)))
     };
     let mut tests: Vec<_> =
         s.tests.iter().filter(|t| t.cpu >= 0.5 && t.cpu >= total * 0.05 && !held(&t.id, t.cpu)).collect();
@@ -923,12 +925,14 @@ mod t {
     }
 
     /// A slow test kept as slow is not proposed as slow while its text is
-    /// unchanged and its CPU time within 1.5x of what was kept, and is still
-    /// a redundant-test candidate; a test kept as redundant is still slow.
+    /// unchanged and its share of the suite's CPU time within 1.5x of what
+    /// was kept, however the seconds swing with host load, and is still a
+    /// redundant-test candidate; a test kept as redundant is still slow. A
+    /// verdict kept without the suite's seconds holds to its seconds.
     #[test]
-    fn a_test_kept_as_slow_returns_once_its_text_changes_or_it_slows_down() {
-        let s = |cpu| SuiteMeasurement {
-            metrics: Metrics { test_seconds: cpu + 0.1, ..Metrics::default() },
+    fn a_test_kept_as_slow_returns_once_its_text_changes_or_its_share_grows() {
+        let s = |cpu, total| SuiteMeasurement {
+            metrics: Metrics { test_seconds: total, ..Metrics::default() },
             ..suite([
                 ("slow", cpu, (1..=5).collect()),
                 ("wide", 0.1, (1..=10).collect()),
@@ -936,24 +940,30 @@ mod t {
                 ("far", 0.1, (50..=55).collect()),
             ])
         };
-        let kept = |kind, hash: &str| Kept {
+        let kept = |kind, hash: &str, suite_seconds| Kept {
             suite: "s".into(),
             test: "t::slow".into(),
             kind,
             hash: hash.into(),
             seconds: (kind == KeepKind::SlowTest).then_some(2.0),
+            suite_seconds,
             reason: "r".into(),
         };
-        let kinds = |cpu, k: Kept| {
+        let kinds = |cpu, total, k: Kept| {
             let base = Baseline { kept: vec![k], ..Baseline::default() };
-            of_measurement(&s(cpu), &base).iter().map(|t| t.kind).collect::<Vec<_>>()
+            of_measurement(&s(cpu, total), &base).iter().map(|t| t.kind).collect::<Vec<_>>()
         };
         let (redundant, slow) = (TaskKind::RedundantTest, TaskKind::SlowTest);
-        assert_eq!(kinds(2.0, kept(KeepKind::SlowTest, "h")), [redundant]);
-        assert_eq!(kinds(3.0, kept(KeepKind::SlowTest, "h")), [redundant]);
-        assert_eq!(kinds(3.01, kept(KeepKind::SlowTest, "h")), [redundant, slow]);
-        assert_eq!(kinds(2.0, kept(KeepKind::SlowTest, "edited")), [redundant, slow]);
-        assert_eq!(kinds(2.0, kept(KeepKind::RedundantTest, "h")), [slow]);
+        let (by_share, by_seconds) = (kept(KeepKind::SlowTest, "h", Some(4.0)), kept(KeepKind::SlowTest, "h", None));
+        // Kept at 2s of 4s, half the suite: every test 3x slower is the same half.
+        assert_eq!(kinds(2.0, 4.0, by_share.clone()), [redundant]);
+        assert_eq!(kinds(6.0, 12.0, by_share.clone()), [redundant]);
+        assert_eq!(kinds(3.0, 4.0, by_share.clone()), [redundant]);
+        assert_eq!(kinds(3.01, 4.0, by_share.clone()), [redundant, slow]);
+        assert_eq!(kinds(2.0, 4.0, kept(KeepKind::SlowTest, "edited", Some(4.0))), [redundant, slow]);
+        assert_eq!(kinds(3.0, 6.0, by_seconds.clone()), [redundant]);
+        assert_eq!(kinds(3.01, 6.0, by_seconds), [redundant, slow]);
+        assert_eq!(kinds(2.0, 4.0, kept(KeepKind::RedundantTest, "h", None)), [slow]);
     }
 
     /// A sampled survivor kept as equivalent is no task and no survivor of

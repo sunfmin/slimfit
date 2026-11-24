@@ -135,6 +135,10 @@ pub struct Kept {
     /// Its CPU seconds when kept: a slow-test verdict's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seconds: Option<f64>,
+    /// Its suite's CPU seconds (`test_seconds`) when kept: a slow-test
+    /// verdict's, absent before verdicts kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_seconds: Option<f64>,
     pub reason: String,
 }
 
@@ -153,8 +157,9 @@ impl KeepKind {
     }
 }
 
-/// How much a slow test kept may slow down before it is proposed again:
-/// half as much again.
+/// How much a slow test kept may grow, as a share of its suite's CPU
+/// seconds, before it is proposed again: half as much again. Load moves
+/// every test's seconds together, so the share holds where seconds swing.
 pub const KEPT_SLOWDOWN: f64 = 0.5;
 
 impl Kept {
@@ -163,12 +168,17 @@ impl Kept {
         self.suite == suite && self.test == test.id() && test.source.as_ref().is_some_and(|s| s.hash == self.hash)
     }
 
-    /// Whether it keeps `test` of `suite`, now taking `cpu` seconds, from
-    /// `kind`'s tasks.
-    pub fn keeps(&self, kind: KeepKind, suite: &str, test: &ReachTest, cpu: f64) -> bool {
-        self.kind == kind
-            && self.holds(suite, test)
-            && self.seconds.is_none_or(|kept| cpu <= kept * (1.0 + KEPT_SLOWDOWN))
+    /// Whether it keeps `test` of `suite`, now taking `cpu` of the suite's
+    /// `total` CPU seconds, from `kind`'s tasks: by its share of the suite,
+    /// or by its seconds alone when kept without the suite's.
+    pub fn keeps(&self, kind: KeepKind, suite: &str, test: &ReachTest, cpu: f64, total: f64) -> bool {
+        let within = |now: f64, kept: f64| now <= kept * (1.0 + KEPT_SLOWDOWN);
+        let time = match (self.seconds, self.suite_seconds) {
+            (Some(kept), Some(of)) if of > 0.0 && total > 0.0 => within(cpu / total, kept / of),
+            (Some(kept), _) => within(cpu, kept),
+            (None, _) => true,
+        };
+        self.kind == kind && self.holds(suite, test) && time
     }
 }
 
@@ -264,7 +274,7 @@ pub const KEPT_SPAN_HELP: &str = "each with `suite`, `file`, `start`, `end`, `fu
 pub const KEPT_FILE_HELP: &str = "each with `suite`, `file`, its `prod_lines`, `commits_90d` and `commits_total` (every commit that changed it) when kept, and `reason`";
 
 /// What a [`Kept`] prints, as the command pages name it.
-pub const KEPT_HELP: &str = "each with `suite`, `test`, `kind` (`slow-test`; absent for `redundant-test`), `hash` (of the test's text when kept), `seconds` (its CPU seconds when kept, for `slow-test`) and `reason`";
+pub const KEPT_HELP: &str = "each with `suite`, `test`, `kind` (`slow-test`; absent for `redundant-test`), `hash` (of the test's text when kept), `seconds` and `suite_seconds` (its and its suite's CPU seconds when kept, for `slow-test`) and `reason`";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Loosening {
