@@ -81,6 +81,17 @@
       "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
     }
   ],
+  "kept_spans": [
+    {
+      "suite": "rust",
+      "file": "src/measure/removed.rs",
+      "start": 51,
+      "end": 56,
+      "function": "reached (closure)",
+      "hash": "59385a4a60445d63",
+      "reason": "Runs only after measuring the tree a change starts from (a git worktree and that suite's real test run) when that run recorded no lines per test (a suite with no reach report): no fast test reaches it, and the warning plus skip it decides is visible only through that real run."
+    }
+  ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
