@@ -79,6 +79,48 @@
       "hash": "4943b269c3b43557",
       "seconds": 10.489999999999998,
       "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::lines_most_tests_run_are_left_out_of_overlap",
+      "hash": "51ee561b3c7bd846",
+      "reason": "Its assertion is the pair set past shared setup (COMMON_LINES); the other test asserts the steps' text order, no pairs: nothing maps, and a merge of two 7ms tests would hide which behaviour failed"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::redundant_tests_are_proposed_from_per_test_lines",
+      "hash": "59b43d3cf00fbcf8",
+      "reason": "Its assertions (subset/overlap pairs, kept verdicts by suite and hash, no per-test lines => none) are unit facts of redundant(); the standins run asserts none of them"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_redundant_test_task_is_a_file_of_candidates",
+      "hash": "0bc64747182be08d",
+      "reason": "Its assertions (file grouping, ordering by seconds, share, kept tests leaving a file's task) are unit facts of redundant(); the standins run asserts none of them"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_redundant_test_task_ratchets_then_takes_the_gate_as_its_accept",
+      "hash": "c5f0cb129da10aa5",
+      "reason": "It asserts the steps' and help's order and accept text; the other test asserts setup pairs only: nothing maps, and the setups differ"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::each_binarys_own_setup_is_left_out_of_overlap",
+      "hash": "cccb7aebbadcea9a",
+      "reason": "It asserts per-binary setup exclusion; the other asserts the steps' text: nothing maps, a merge would hide which behaviour failed"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::a_subset_of_shared_setup_alone_is_not_proposed",
+      "hash": "fd23e71fe600738d",
+      "reason": "It asserts a setup-only subset across binaries is not proposed, on a different suite than the other test's; folding the setups changes what each pair set is"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::tasks::t::cap_keeps_the_first_few_of_each_kind_in_each_suite",
+      "hash": "fe0476c8d46fde50",
+      "reason": "It asserts cap()'s per-kind per-suite limit; the other test asserts the empty answer of main: nothing maps"
     }
   ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
