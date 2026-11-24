@@ -77,8 +77,8 @@
       "test": "slimfit::standins::every_preset_through_its_standins",
       "kind": "slow-test",
       "hash": "4943b269c3b43557",
-      "seconds": 10.489999999999998,
-      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines and git and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Its spawns were trimmed first (slimfit#105: one rev-parse per command, no empty cat-file)"
+      "seconds": 10.774000000000001,
+      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; uninstrumented it is 10.8s CPU, 6.2 of it sys (spawns). A cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105) at 10.49s on this same tree; refiled at 29.57s (slimfit#111) by host load alone: its share of the suite's CPU held at 46-47%"
     }
   ],
   "kept_files": [
