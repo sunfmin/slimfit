@@ -1,0 +1,29 @@
+{
+  "tip": "f37fe61ea619f684020e3f49c1fafa3aea03585d",
+  "from": "c71d1efa6d1d7304599630c1db0020fd0c940701",
+  "pool": 40,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/main.rs:56:5: replace run -> Result<(serde_json::Value, i32)> with Ok((Default::default(), 1))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:164:5: replace span_at -> Option<(&str, u32, u32)> with Some((\"\", 1, 0))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:164:5: replace span_at -> Option<(&str, u32, u32)> with Some((\"xyzzy\", 1, 0))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:56:5: replace run -> Result<(serde_json::Value, i32)> with Ok((Default::default(), -1))",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/git.rs:220:5: replace cat_file -> Result<Vec<Option<String>>> with Ok(vec![None])",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

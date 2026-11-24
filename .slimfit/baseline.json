@@ -91,6 +91,17 @@
       "reason": "Already deep: main reaches it through four calls (all, sampled, candidates, cap) and keep through two (source_suite, churn); behind them each task kind's finder and its steps are private and live together, so a new kind or a reworded recipe lands in one place. The churn is that: step texts and new kinds, not callers reaching in. Splitting per kind into submodules would spread the TaskKind/Task/cap contract without hiding more behind it; the redundant-test overlap and trend reading are already single private functions with their own tests through the same Task output."
     }
   ],
+  "kept_spans": [
+    {
+      "suite": "rust",
+      "file": "src/measure/removed.rs",
+      "start": 51,
+      "end": 56,
+      "function": "reached (closure)",
+      "hash": "59385a4a60445d63",
+      "reason": "Runs only after measuring the tree a change starts from (a git worktree and that suite's real test run) when that run recorded no lines per test (a suite with no reach report): no fast test reaches it, and the warning plus skip it decides is visible only through that real run."
+    }
+  ],
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
