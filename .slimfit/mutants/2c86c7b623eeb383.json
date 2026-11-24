@@ -1,0 +1,38 @@
+{
+  "tree": "1789647027af43b08e79c4cd92c33b77535923ab+d1fba762150c532c",
+  "picker": "codex:01a20f66-084c-7752-8dcf-56360a426b77:default",
+  "author": "claude-code:ca9873c6-0b54-57d5-8d0e-f09f2fed19f4:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/ratchet.rs:177:39: replace match guard of > 0.0 && total > 0.0 with true in Kept::keeps",
+        "why": "The changed test covers positive suite totals and a missing stored total, leaving the fallback for a recorded zero untested.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:354:40: replace > with >= in redundant",
+        "why": "The replaced test checks task kinds, so it would miss a change in which comparison test wins an overlap tie.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:357:80: replace < with <= in redundant",
+        "why": "This changes only the equality case in overlap selection, which the task-kind assertions do not distinguish.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:378:16: replace += with *= in redundant",
+        "why": "The redundant-test task can still appear with the wrong aggregate CPU seconds, which neither version of the slow-test case checks.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "removed_tests": {
+    "rust": [
+      "src/tasks.rs:946: a_test_kept_as_slow_returns_once_its_text_changes_or_it_slows_down"
+    ]
+  }
+}
