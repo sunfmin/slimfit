@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7417,
-      "test_lines": 5476,
-      "tests": 133,
+      "prod_lines": 7419,
+      "test_lines": 5460,
+      "tests": 132,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5131,
+      "covered_lines": 5133,
       "uncovered_lines": 39
     }
   },
@@ -59,18 +59,6 @@
       "test": "slimfit::bin/slimfit::answer_tests::a_sampled_survivor_is_a_task_and_never_a_bound",
       "hash": "d3eefaa2375efc62",
       "reason": "No assertion maps: it checks the sample (drawn names, sampled tasks, check green, report's sampled tally); the other checks a pick's first outcome. Setups conflict: the other swaps the mutation tool's outcomes file, which the sample's survivors are read from."
-    },
-    {
-      "suite": "rust",
-      "test": "slimfit::bin/slimfit::answer_tests::code_from_before_the_rule_is_not_charged",
-      "hash": "d74cc9716bc35685",
-      "reason": "No assertion maps: it checks the baseline's mutants_from cut moving landing.from; the other checks uncovered new_spans. Setups conflict: different samples (sample_repo vs covered_sample) and different target branches."
-    },
-    {
-      "suite": "rust",
-      "test": "slimfit::bin/slimfit::answer_tests::a_kept_span_returns_once_a_line_of_it_changes",
-      "hash": "08d73d60894ebbff",
-      "reason": "No assertion maps: it checks kept_spans verdicts and their return on edit; the other checks a fresh repo's first and empty ratchet and next counts. Setups conflict: the other needs a repo with nothing to ratchet and only a slow-test task, this one a covered sample with uncovered tasks and edited kept_spans."
     },
     {
       "suite": "rust",
@@ -127,7 +115,7 @@
   "measured": {
     "rust": {
       "uncovered_lines": 44,
-      "test_seconds": 29.717
+      "test_seconds": 32.165
     }
   }
 }
