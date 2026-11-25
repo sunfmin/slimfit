@@ -23,6 +23,26 @@ pub const DIR: &str = ".slimfit/mutants";
 /// The branch a change lands on when `slimfit.toml` names none.
 pub const DEFAULT_TARGET: &str = "origin/HEAD";
 
+/// The branch factorium merges a change onto before it lands, promoted to
+/// [`DEFAULT_TARGET`] once its slow gate is green (slimfit#115).
+pub const PROVING: &str = "origin/proving";
+
+/// The branch HEAD lands on and where it forks from it: `[check] target`
+/// when set; otherwise, of [`DEFAULT_TARGET`] and [`PROVING`], the one HEAD
+/// forks from last, so what proving holds and the base does not yet is not
+/// the change's. `None` when no such branch shares a commit with HEAD.
+pub fn fork(repo: &Path, check: &CheckConfig) -> Option<(String, String)> {
+    if let Some(t) = &check.target {
+        return git::merge_base(repo, t).map(|from| (t.clone(), from));
+    }
+    let base = git::merge_base(repo, DEFAULT_TARGET).map(|from| (DEFAULT_TARGET.to_string(), from));
+    let proving = git::merge_base(repo, PROVING).map(|from| (PROVING.to_string(), from));
+    match (base, proving) {
+        (Some(b), Some(p)) if !git::is_ancestor(repo, &b.1, &p.1) => Some(b),
+        (b, p) => p.or(b),
+    }
+}
+
 /// Lines by file (repository relative): number → text.
 pub type Lines = BTreeMap<String, BTreeMap<u32, String>>;
 
@@ -381,15 +401,15 @@ impl Tree {
     }
 }
 
-/// The landing of the working tree, or `None` when there is no target to
-/// take it from: `[check] target` unset and no `origin/HEAD`. A target set
-/// in `slimfit.toml` that is not found is refused.
+/// The landing of the working tree, from its [`fork`], or `None` when there
+/// is no target to take it from: `[check] target` unset and neither
+/// `origin/HEAD` nor `origin/proving`. A target set in `slimfit.toml` that
+/// is not found is refused.
 fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Landing>> {
-    let target = check.target.clone().unwrap_or_else(|| DEFAULT_TARGET.into());
-    let Some(from) = git::merge_base(repo, &target) else {
-        if check.target.is_none() {
+    let Some((target, from)) = fork(repo, check) else {
+        let Some(target) = &check.target else {
             return Ok(None);
-        }
+        };
         return Err(fault(
             format!("slimfit.toml's [check] target {target} shares no commit with HEAD (or is not in this repository)"),
             "fetch it (`git fetch`), or set `target` to the branch changes land on",

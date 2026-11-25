@@ -128,8 +128,9 @@ none is worth one. Mutants never run in a gate (ADR 0006).
   source line and removes no test, and needs no record. A test removed
   from one module of a file while another module there keeps its name is
   taken as kept.
-- In a proving branch that collects several landings, one record naming a
-  second picker anywhere in the change against `origin/HEAD` passes all of
-  them; each landing was held on its own branch before it got there.
+- In a proving branch that collects several landings, the change is taken
+  against `origin/proving` (slimfit#115): a landing merged onto it is held
+  to its own lines, and proving's own gate holds none; each landing was
+  held on its own branch before it got there.
 - Without `origin/HEAD` the gate holds nothing until `[check] target` is
   set; `doctor` says so (`no_target`).

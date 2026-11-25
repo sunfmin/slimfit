@@ -26,7 +26,7 @@ pub struct CheckConfig {
     /// by timing (docs/adr/0001). `uncovered_lines` bounds nothing.
     pub coverage_slack: u64,
     /// The branch changes land on: a change's lines are those added since
-    /// HEAD's merge base with it (`landing::DEFAULT_TARGET` when unset).
+    /// HEAD's merge base with it (`landing::fork` when unset).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// The source lines a change may add net, in all suites, without a
