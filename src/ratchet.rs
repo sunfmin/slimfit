@@ -4,8 +4,9 @@
 
 use crate::config::CheckConfig;
 use crate::fault::{Fault, Faults, fault};
+use crate::keep::{Kept, KeptFile, KeptMutant, KeptSpan};
 use crate::landing::Held;
-use crate::model::{Measurement, Metrics, ReachTest, Span, SuiteMeasurement};
+use crate::model::{Measurement, Metrics, Span, SuiteMeasurement};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -121,160 +122,6 @@ impl Measured {
         m.suites.iter().map(|s| (s.suite.clone(), of(s))).collect()
     }
 }
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct Kept {
-    pub suite: String,
-    pub test: String,
-    /// The kind of task it answers; a baseline from before kinds holds
-    /// only redundant-test verdicts.
-    #[serde(default, skip_serializing_if = "KeepKind::is_redundant")]
-    pub kind: KeepKind,
-    /// The hash of the test's text when it was kept (`TestSource::hash`).
-    pub hash: String,
-    /// Its CPU seconds when kept: a slow-test verdict's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seconds: Option<f64>,
-    /// Its suite's CPU seconds (`test_seconds`) when kept: a slow-test
-    /// verdict's, absent before verdicts kept it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suite_seconds: Option<f64>,
-    pub reason: String,
-}
-
-/// The kinds of task a test's keep answers.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum KeepKind {
-    #[default]
-    RedundantTest,
-    SlowTest,
-}
-
-impl KeepKind {
-    fn is_redundant(&self) -> bool {
-        *self == KeepKind::RedundantTest
-    }
-}
-
-/// How much a slow test kept may grow, as a share of its suite's CPU
-/// seconds, before it is proposed again: half as much again. Load moves
-/// every test's seconds together, so the share holds where seconds swing.
-pub const KEPT_SLOWDOWN: f64 = 0.5;
-
-impl Kept {
-    /// Whether this verdict's test is `test` of `suite`, its text unchanged.
-    pub fn holds(&self, suite: &str, test: &ReachTest) -> bool {
-        self.suite == suite && self.test == test.id() && test.source.as_ref().is_some_and(|s| s.hash == self.hash)
-    }
-
-    /// Whether it keeps `test` of `suite`, now taking `cpu` of the suite's
-    /// `total` CPU seconds, from `kind`'s tasks: by its share of the suite,
-    /// or by its seconds alone when kept without the suite's.
-    pub fn keeps(&self, kind: KeepKind, suite: &str, test: &ReachTest, cpu: f64, total: f64) -> bool {
-        let within = |now: f64, kept: f64| now <= kept * (1.0 + KEPT_SLOWDOWN);
-        let time = match (self.seconds, self.suite_seconds) {
-            (Some(kept), Some(of)) if of > 0.0 && total > 0.0 => within(cpu / total, kept / of),
-            (Some(kept), _) => within(cpu, kept),
-            (None, _) => true,
-        };
-        self.kind == kind && self.holds(suite, test) && time
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct KeptFile {
-    pub suite: String,
-    pub file: String,
-    /// Its prod lines when it was kept.
-    pub prod_lines: u64,
-    /// The commits that changed it in the `DEEPEN_DAYS` before it was kept.
-    pub commits_90d: u64,
-    /// The commits that ever changed it, when it was kept.
-    pub commits_total: u64,
-    pub reason: String,
-}
-
-/// How much a kept file's prod lines may grow before it is proposed again:
-/// half as many again.
-pub const KEPT_GROWTH: f64 = 0.5;
-/// How many commits may change a kept file before it is proposed again, as
-/// a share of the commits that made it a candidate: as many again.
-pub const KEPT_CHURN: f64 = 1.0;
-
-impl KeptFile {
-    /// Whether this verdict still holds for `file` of `suite`, now
-    /// `prod_lines` long and changed by `commits_total` commits in all.
-    pub fn holds(&self, suite: &str, file: &str, prod_lines: u64, commits_total: u64) -> bool {
-        let since = commits_total.saturating_sub(self.commits_total) as f64;
-        self.suite == suite
-            && self.file == file
-            && (prod_lines as f64) < self.prod_lines as f64 * (1.0 + KEPT_GROWTH)
-            && since < self.commits_90d as f64 * KEPT_CHURN
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct KeptSpan {
-    pub suite: String,
-    pub file: String,
-    pub start: u32,
-    pub end: u32,
-    /// The function it starts in, when the coverage report names one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub function: Option<String>,
-    /// The hash of its lines' text when it was kept (`Span::hash`).
-    pub hash: String,
-    pub reason: String,
-}
-
-impl KeptSpan {
-    /// Whether this verdict still holds for uncovered span `sp` of `suite`:
-    /// the same lines of the same function, their text unchanged.
-    pub fn holds(&self, suite: &str, sp: &Span) -> bool {
-        self.suite == suite
-            && (self.file.as_str(), self.start, self.end, &self.function)
-                == (sp.file.as_str(), sp.start, sp.end, &sp.function)
-            && sp.hash.as_ref() == Some(&self.hash)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct KeptMutant {
-    pub suite: String,
-    /// Its name without its line and column (`model::unplaced`): an edit
-    /// above it moves it, and the verdict stands.
-    pub mutant: String,
-    /// The hash of its function's text when it was kept
-    /// (`measure::function_hash`).
-    pub hash: String,
-    pub reason: String,
-}
-
-impl KeptMutant {
-    /// Whether it names mutant `name` of `suite`, wherever it is now.
-    pub fn names(&self, suite: &str, name: &str) -> bool {
-        self.suite == suite && self.mutant == crate::model::unplaced(name)
-    }
-
-    /// Whether it still keeps mutant `name` of `suite`, whose function's
-    /// text now hashes to `hash`.
-    pub fn holds(&self, suite: &str, name: &str, hash: &str) -> bool {
-        self.names(suite, name) && self.hash == hash
-    }
-}
-
-/// What a [`KeptMutant`] prints, as the command pages name it.
-pub const KEPT_MUTANT_HELP: &str = "each with `suite`, `mutant` (its name without its line and column), `hash` (of its function's text when kept) and `reason`";
-
-/// What a [`KeptSpan`] prints, as the command pages name it.
-pub const KEPT_SPAN_HELP: &str = "each with `suite`, `file`, `start`, `end`, `function` (when known), `hash` (of its lines' text when kept) and `reason`";
-
-/// What a [`KeptFile`] prints, as the command pages name it.
-pub const KEPT_FILE_HELP: &str = "each with `suite`, `file`, its `prod_lines`, `commits_90d` and `commits_total` (every commit that changed it) when kept, and `reason`";
-
-/// What a [`Kept`] prints, as the command pages name it.
-pub const KEPT_HELP: &str = "each with `suite`, `test`, `kind` (`slow-test`; absent for `redundant-test`), `hash` (of the test's text when kept), `seconds` and `suite_seconds` (its and its suite's CPU seconds when kept, for `slow-test`) and `reason`";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Loosening {
@@ -799,58 +646,13 @@ mod t {
         assert_eq!(m.suites[0].mutants.len(), 1);
     }
 
-    /// A kept file holds up to its thresholds and not at them: 100 prod
-    /// lines hold at 149, not 150; 4 commits since its 4 in 90 days
-    /// hold at 3, not 4.
-    #[test]
-    fn a_kept_file_holds_below_its_thresholds_only() {
-        let k = KeptFile {
-            suite: "s".into(),
-            file: "f.rs".into(),
-            prod_lines: 100,
-            commits_90d: 4,
-            commits_total: 10,
-            reason: "r".into(),
-        };
-        let holds = |lines, total| k.holds("s", "f.rs", lines, total);
-        assert_eq!((holds(149, 13), holds(150, 13), holds(149, 14)), (true, false, false));
-    }
-
-    /// A kept span holds for the same lines of the same function, their text
-    /// unchanged, in its own suite: grown past its lines, it does not.
-    #[test]
-    fn a_kept_span_holds_for_its_lines_as_kept_only() {
-        let k = KeptSpan {
-            suite: "s".into(),
-            file: "a.rs".into(),
-            start: 3,
-            end: 6,
-            function: Some("f".into()),
-            hash: "h".into(),
-            reason: "r".into(),
-        };
-        let sp = Span {
-            file: "a.rs".into(),
-            start: 3,
-            end: 6,
-            lines: 4,
-            function: Some("f".into()),
-            hash: Some("h".into()),
-        };
-        assert!(k.holds("s", &sp) && !k.holds("t", &sp));
-        let grown = Span { end: 7, lines: 5, ..sp.clone() };
-        let renamed = Span { function: Some("g".into()), ..sp.clone() };
-        let unhashed = Span { hash: None, ..sp.clone() };
-        assert_eq!([&grown, &renamed, &unhashed].map(|s| k.holds("s", s)), [false; 3]);
-    }
-
     /// The next baseline carries the old one's verdicts over (a keep verdict
     /// only while its test's, or its span's, text is unchanged, or its suite
     /// was not seen)
     /// and takes the bounds it is given and the trends of the measurement.
     #[test]
     fn next_carries_the_verdicts_over_and_takes_the_measurements_trends() {
-        use crate::model::{Reach, TestSource};
+        use crate::model::{Reach, ReachTest, TestSource};
         let test = |name: &str, hash: &str| ReachTest {
             binary: "b".into(),
             name: name.into(),

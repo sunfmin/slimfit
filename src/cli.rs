@@ -1,7 +1,7 @@
 //! The command line, read against the manual: its commands and flags, the
 //! manual's pages and topics, and what slimfit exits with.
 
-use crate::{config, doctor, fault, growth, landing, measure, model, ratchet, report, select, tasks};
+use crate::{config, doctor, fault, growth, keep, landing, measure, model, ratchet, report, select, tasks};
 use agent_help::{Help, Topic};
 use anyhow::Result;
 use clap::{FromArgMatches, Parser, Subcommand};
@@ -365,7 +365,7 @@ pub(crate) enum Cmd {
         mutant: Option<String>,
         /// The kind of task a test's keep answers.
         #[arg(long, value_enum, default_value = "redundant-test", conflicts_with = "mutant", verbatim_doc_comment)]
-        kind: ratchet::KeepKind,
+        kind: keep::KeepKind,
         /// Why it stays: what the test checks that the other does not, what its time checks, why the module is deep enough, what the span runs against that no fast test can, or why no input tells the mutant from the original; kept in the baseline. Once per test, file or span, in their order.
         #[arg(long, verbatim_doc_comment)]
         reason: Vec<String>,
@@ -561,13 +561,13 @@ fn help() -> Help {
         .constant("EXPAND", crate::listing::EXPAND)
         .constant("PICK", model::PICK_HELP)
         .constant("LOOSENING", ratchet::LOOSENING_HELP)
-        .constant("KEPT", ratchet::KEPT_HELP)
-        .constant("KEPT_SLOWDOWN_TIMES", 1.0 + ratchet::KEPT_SLOWDOWN)
-        .constant("KEPT_FILE", ratchet::KEPT_FILE_HELP)
-        .constant("KEPT_SPAN", ratchet::KEPT_SPAN_HELP)
-        .constant("KEPT_MUTANT", ratchet::KEPT_MUTANT_HELP)
-        .constant("KEPT_GROWTH", format!("{:.0}%", ratchet::KEPT_GROWTH * 100.0))
-        .constant("KEPT_CHURN", ratchet::KEPT_CHURN)
+        .constant("KEPT", keep::KEPT_HELP)
+        .constant("KEPT_SLOWDOWN_TIMES", 1.0 + keep::KEPT_SLOWDOWN)
+        .constant("KEPT_FILE", keep::KEPT_FILE_HELP)
+        .constant("KEPT_SPAN", keep::KEPT_SPAN_HELP)
+        .constant("KEPT_MUTANT", keep::KEPT_MUTANT_HELP)
+        .constant("KEPT_GROWTH", format!("{:.0}%", keep::KEPT_GROWTH * 100.0))
+        .constant("KEPT_CHURN", keep::KEPT_CHURN)
         .constant("MEASURE_REFUSALS", measure::refusals_help())
         .constant("CACHE_PITFALL", measure::CACHE_HELP)
         .constant("RUST_TESTS", prose_list(config::RUST_TESTS.iter().map(|g| format!("`{g}`")), "and"))
