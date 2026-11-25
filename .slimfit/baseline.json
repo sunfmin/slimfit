@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7403,
-      "test_lines": 5558,
-      "tests": 133,
+      "prod_lines": 7444,
+      "test_lines": 5532,
+      "tests": 134,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5106,
+      "covered_lines": 5153,
       "uncovered_lines": 39
     }
   },
@@ -62,14 +62,6 @@
     },
     {
       "suite": "rust",
-      "test": "slimfit::standins::every_preset_through_its_standins",
-      "kind": "slow-test",
-      "hash": "4943b269c3b43557",
-      "seconds": 10.774,
-      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; uninstrumented it is 10.8s CPU, 6.2 of it sys (spawns). A cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105) at 10.49s on this same tree; refiled at 29.57s (slimfit#111) by host load alone: its share of the suite's CPU held at 46-47%"
-    },
-    {
-      "suite": "rust",
       "test": "slimfit::bin/slimfit::tasks::t::lines_most_tests_run_are_left_out_of_overlap",
       "hash": "51ee561b3c7bd846",
       "reason": "Its assertion is the pair set past shared setup (COMMON_LINES); the other test asserts the steps' text order, no pairs: nothing maps, and a merge of two 7ms tests would hide which behaviour failed"
@@ -109,6 +101,27 @@
       "test": "slimfit::bin/slimfit::tasks::t::cap_keeps_the_first_few_of_each_kind_in_each_suite",
       "hash": "fe0476c8d46fde50",
       "reason": "It asserts cap()'s per-kind per-suite limit; the other test asserts the empty answer of main: nothing maps"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::standins::every_preset_through_its_standins",
+      "kind": "slow-test",
+      "hash": "4943b269c3b43557",
+      "seconds": 10.725999999999999,
+      "suite_seconds": 29.409,
+      "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105, #111) on this same test text; refiled (slimfit#120) only because that verdict had no suite_seconds, so absolute seconds under host load were compared: its share of the suite's CPU held at 44-47%"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::growth_is_taken_against_the_proving_tip",
+      "hash": "e86e334b2a1510e1",
+      "reason": "asserts growth against origin/proving with no check.target; code_from_before_the_rule_is_not_charged sets check.target and asserts the mutants_from cut, no assertion maps, and folding one config into the other changes what each checks"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::code_from_before_the_rule_is_not_charged",
+      "hash": "571275658262f693",
+      "reason": "asserts the mutants_from cut's landing.from/lines on a target of the adopt commit; new_uncovered_lines_are_named_not_failed asserts uncovered_lines/new_spans on a target lacking unused's body, the 3/6 line counts depend on the target's tree, so the setups conflict"
     }
   ],
   "kept_files": [
@@ -135,8 +148,8 @@
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 48,
-      "test_seconds": 31.437
+      "uncovered_lines": 42,
+      "test_seconds": 28.641
     }
   }
 }

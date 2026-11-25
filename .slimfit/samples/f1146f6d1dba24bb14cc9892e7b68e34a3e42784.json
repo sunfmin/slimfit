@@ -1,0 +1,29 @@
+{
+  "tip": "f1146f6d1dba24bb14cc9892e7b68e34a3e42784",
+  "from": "f37fe61ea619f684020e3f49c1fafa3aea03585d",
+  "pool": 49,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/ratchet.rs:175:56: replace * with / in Kept::keeps",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:177:39: replace match guard of > 0.0 && total > 0.0 with false in Kept::keeps",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:155:63: replace && with || in keep",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:177:77: replace / with % in Kept::keeps",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/ratchet.rs:177:42: replace > with < in Kept::keeps",
+        "outcome": "killed"
+      }
+    ]
+  }
+}

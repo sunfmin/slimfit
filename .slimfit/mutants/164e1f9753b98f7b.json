@@ -1,0 +1,21 @@
+{
+  "tree": "54614003a9221710fb3daee2cf5851c50770e18f+d1fba762150c532c",
+  "picker": "codex:01a21508-2b38-7c32-b438-d8de6e81925f:default",
+  "author": "claude-code:da6d5bf1-ddd0-58d7-bf1e-bc1564f3b4df:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/git.rs:146:5: replace write_tree -> Result<String> with Ok(\"xyzzy\".into())",
+        "why": "The added test calls fresh_scratch directly, so callers that only check for success or a nonempty value could accept a bogus tree ID.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/git.rs:146:5: replace write_tree -> Result<String> with Ok(String::new())",
+        "why": "A caller that only compares successive snapshots for equality could accept two empty IDs without detecting that Git wrote no tree.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

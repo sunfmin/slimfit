@@ -143,14 +143,23 @@ fn differing(repo: &Path, commit: &str, untracked: &[String]) -> Result<Vec<Stri
 /// as a tree object, through a copy of the index kept in the git directory:
 /// the real index is not touched.
 pub fn write_tree(repo: &Path, head: &Head) -> Result<String> {
-    match std::fs::copy(&head.index, &head.scratch) {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => _ = std::fs::remove_file(&head.scratch),
-        Err(e) => return Err(e.into()),
-    }
+    fresh_scratch(head)?;
     // slimfit's own files are not the code: writing the baseline moves no tree.
     run_with_index(repo, Some(&head.scratch), &["add", "-A", "--", ".", ":(exclude).slimfit"])?;
     Ok(run_with_index(repo, Some(&head.scratch), &["write-tree"])?.trim().to_string())
+}
+
+/// The scratch index made a copy of the real one; with no real index (before
+/// the first `git add`), no scratch either, so a stale one adds nothing.
+fn fresh_scratch(head: &Head) -> std::io::Result<()> {
+    match std::fs::copy(&head.index, &head.scratch) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            _ = std::fs::remove_file(&head.scratch);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// A repository by its HEAD, and where git keeps the index and slimfit its
@@ -253,4 +262,24 @@ fn cat_file(repo: &Path, specs: Vec<String>) -> Result<Vec<Option<String>>> {
     writer.join().expect("writer thread")?;
     child.wait()?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn head(dir: &Path) -> Head {
+        Head { top: dir.into(), commit: None, index: dir.join("index"), scratch: dir.join("scratch") }
+    }
+
+    #[test]
+    fn fresh_scratch_drops_a_stale_copy_when_there_is_no_index_and_fails_when_it_cannot_read_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let head = head(dir.path());
+        std::fs::write(&head.scratch, "stale").unwrap();
+        fresh_scratch(&head).unwrap();
+        assert!(!head.scratch.exists());
+        std::fs::create_dir(&head.index).unwrap();
+        assert!(fresh_scratch(&head).is_err());
+    }
 }
