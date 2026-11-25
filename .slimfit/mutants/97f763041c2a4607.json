@@ -1,0 +1,39 @@
+{
+  "tree": "d6cbe7ab8003cc7887cf211b5b74980aac1ae009+d1fba762150c532c",
+  "picker": "codex:01a2150a-bb73-7010-a058-11779152d93f:default",
+  "author": "claude-code:62cdbd74-8cef-5f50-adf4-19a9a45c7053:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/keep.rs:133:57: replace && with || in keep",
+        "why": "A first-time keep can pass while re-keeping a file silently deletes verdicts for other files in the same suite.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:222:39: replace match guard of > 0.0 && total > 0.0 with true in Kept::keeps",
+        "why": "Positive suite totals exercise the same branch, so detecting this requires a zero-total case where the absolute CPU-time fallback changes the verdict.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:302:29: replace && with || in KeptMutant::names",
+        "why": "Matching one survivor after it moves can pass even if its verdict also matches a different mutant in the same suite and function.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:213:29: replace && with || in Kept::holds",
+        "why": "A changed-hash case can still fail as expected while a different test in the same suite and with the same source hash inherits the verdict.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:201:9: replace KeepKind::is_redundant -> bool with false",
+        "why": "Round-trip tests can pass even when serialization emits the redundant-test kind that the baseline format normally omits.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
