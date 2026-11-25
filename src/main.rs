@@ -869,6 +869,63 @@ mod answer_tests {
         assert_eq!(report["history"][0]["growth_records"], json!({ "as_is": 1, "cut": 0 }), "{report:#}");
     }
 
+    /// A landing is charged only its own lines while proving is ahead of the
+    /// default branch (slimfit#115): base B, proving P = B + 45 lines of
+    /// other changes, a branch of +9 on P. Without proving it is charged
+    /// all 54; once proving holds it (promotion's gate), nothing.
+    #[test]
+    fn growth_is_taken_against_the_proving_tip() {
+        let (dir, cfg) = sample_repo();
+        let repo = dir.path();
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        let lib = repo.join("src/lib.rs");
+        let commit = |fns: std::ops::Range<u32>, msg: &str| {
+            let mut text = std::fs::read_to_string(&lib).unwrap();
+            fns.for_each(|i| text += &format!("pub fn f{i}() -> u32 {{\n    {i}\n}}\n"));
+            std::fs::write(&lib, text).unwrap();
+            git(repo, &["add", "-A"]);
+            git(repo, &["commit", "-qm", msg]);
+        };
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "B"]);
+        git(repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(repo, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        commit(0..15, "P: 45 lines of other landings");
+        git(repo, &["update-ref", "refs/remotes/origin/proving", "HEAD"]);
+        let p = String::from_utf8(
+            std::process::Command::new("git").arg("-C").arg(repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout,
+        )
+        .unwrap();
+        commit(15..18, "the change: 9 lines");
+        let landing = || {
+            let (out, _) = slimfit(repo, "check").unwrap();
+            let v = out["verdict"]["violations"].as_array().unwrap();
+            let due = v.iter().any(|v| v["metric"] == "unrecorded_growth");
+            (out["landing"]["growth"].as_i64().unwrap(), due, out["landing"].clone())
+        };
+        let (growth, due, l) = landing();
+        assert_eq!((growth, due), (9, false), "{l:#}");
+        assert_eq!((l["target"].as_str(), l["from"].as_str()), (Some("origin/proving"), Some(p.trim())), "{l:#}");
+        // Merged onto P, as factorium's gate on proving runs it: the same.
+        git(repo, &["checkout", "-q", "--detach", "origin/proving"]);
+        git(repo, &["merge", "-q", "--no-ff", "--no-edit", "@{-1}"]);
+        assert_eq!(landing().0, 9);
+        // Promoted: proving holds it, and what it adds is out of the change.
+        git(repo, &["update-ref", "refs/remotes/origin/proving", "HEAD"]);
+        assert_eq!(landing().0, 0);
+        // Proving behind the base, or none: taken against origin/HEAD, as ever.
+        for stale in [
+            &["update-ref", "refs/remotes/origin/proving", "origin/main~1"][..],
+            &["update-ref", "-d", "refs/remotes/origin/proving"],
+        ] {
+            git(repo, stale);
+            let (growth, due, l) = landing();
+            assert_eq!((growth, due, l["target"].as_str()), (54, true, Some("origin/HEAD")), "{l:#}");
+        }
+    }
+
     /// Code from before the rule is not charged (slimfit#37): the baseline's
     /// `mutants_from` moves where a landing starts while the target is
     /// behind it, and a line added after it is held as ever. A cut that is
