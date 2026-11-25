@@ -915,10 +915,15 @@ mod answer_tests {
         // Promoted: proving holds it, and what it adds is out of the change.
         git(repo, &["update-ref", "refs/remotes/origin/proving", "HEAD"]);
         assert_eq!(landing().0, 0);
-        // No proving: taken against origin/HEAD, as ever.
-        git(repo, &["update-ref", "-d", "refs/remotes/origin/proving"]);
-        let (growth, due, l) = landing();
-        assert_eq!((growth, due, l["target"].as_str()), (54, true, Some("origin/HEAD")), "{l:#}");
+        // Proving behind the base, or none: taken against origin/HEAD, as ever.
+        for stale in [
+            &["update-ref", "refs/remotes/origin/proving", "origin/main~1"][..],
+            &["update-ref", "-d", "refs/remotes/origin/proving"],
+        ] {
+            git(repo, stale);
+            let (growth, due, l) = landing();
+            assert_eq!((growth, due, l["target"].as_str()), (54, true, Some("origin/HEAD")), "{l:#}");
+        }
     }
 
     /// Code from before the rule is not charged (slimfit#37): the baseline's
