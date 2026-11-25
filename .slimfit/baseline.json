@@ -110,6 +110,18 @@
       "seconds": 10.725999999999999,
       "suite_seconds": 29.409,
       "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105, #111) on this same test text; refiled (slimfit#120) only because that verdict had no suite_seconds, so absolute seconds under host load were compared: its share of the suite's CPU held at 44-47%"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::growth_is_taken_against_the_proving_tip",
+      "hash": "e86e334b2a1510e1",
+      "reason": "asserts growth against origin/proving with no check.target; code_from_before_the_rule_is_not_charged sets check.target and asserts the mutants_from cut, no assertion maps, and folding one config into the other changes what each checks"
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::code_from_before_the_rule_is_not_charged",
+      "hash": "571275658262f693",
+      "reason": "asserts the mutants_from cut's landing.from/lines on a target of the adopt commit; new_uncovered_lines_are_named_not_failed asserts uncovered_lines/new_spans on a target lacking unused's body, the 3/6 line counts depend on the target's tree, so the setups conflict"
     }
   ],
   "kept_files": [
