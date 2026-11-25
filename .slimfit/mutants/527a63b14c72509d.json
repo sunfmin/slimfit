@@ -1,0 +1,21 @@
+{
+  "tree": "8208b6220413f106f738c4eebe5c8b5ded08dfa0+d1fba762150c532c",
+  "picker": "codex:01a211d3-29ae-79b3-8750-1fb6d471c0bb:default",
+  "author": "claude-code:f707eff8-4192-5a69-8db3-0aab04b9db16:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/doctor.rs:344:17: replace || with && in no_target",
+        "why": "Doctor would report a missing target in a Git repository with mutation testing disabled, a case the new growth test never exercises.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:344:48: replace || with && in no_target",
+        "why": "Doctor would report a missing target even when origin/proving resolves, while the new test checks target selection through check alone.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}
