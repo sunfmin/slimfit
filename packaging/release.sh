@@ -15,7 +15,10 @@
 #   release.sh cut <vX.Y.Z>   build, push the tag to origin, run the tap's
 #                             release.yml on it and wait for that run, bounded
 #                             (RELEASE_WAIT_LIMIT seconds from its start, default 2400);
-#                             publishes nothing from this host
+#                             a failing `gh run list` / `gh run view` is asked
+#                             again until then, and a run still unfinished when
+#                             the cut fails is cancelled. Publishes nothing from
+#                             this host
 #   release.sh check-tag <vX.Y.Z>  exit 0 if cut would take the version, 2 if not
 #   release.sh dry            what the gate runs: build at the development form
 #                             X.Y.Z+<commits>.g<commit>[.dirty], check the
@@ -95,16 +98,29 @@ FORMULA
     ruby -c "$2/slimfit.rb" >/dev/null
 }
 
+# finish: what the cut leaves when it ends, however it ends. A run it
+# dispatched and did not see finish is cancelled first, so it does not go on
+# to fail on a tag taken away; then a tag this cut pushed is taken away.
+pending=
+pushed=
+finish() {
+    if [ -n "$pending" ]; then
+        echo "release: cancelling run $pending" >&2
+        gh run cancel "$pending" -R "$TAP" >&2 || true
+    fi
+    [ -z "$pushed" ] || git push --quiet origin ":refs/tags/$tag"
+}
+
 # push_tag <tag>: origin has <tag> on HEAD. factorium's own tag step tags
 # HEAD after the cut and fails on a tag origin already holds, so a tag this
-# cut pushed is taken away again when the cut ends, however it ends.
+# cut pushed is taken away again when the cut ends (finish).
 push_tag() {
     head=$(git rev-parse HEAD)
     # An annotated tag's peeled line (^{}) comes after it: the last line is the commit.
     there=$(git ls-remote origin "refs/tags/$1" "refs/tags/$1^{}" | tail -n1 | cut -f1)
     if [ -z "$there" ]; then
         git push --quiet origin "$head:refs/tags/$1"
-        trap 'git push --quiet origin ":refs/tags/$tag"' EXIT
+        pushed=yes
     elif [ "$there" != "$head" ]; then
         echo "release: origin's $1 is on $there, not HEAD ($head)" >&2
         exit 1
@@ -158,12 +174,14 @@ limit=${RELEASE_WAIT_LIMIT:-2400}
 # Built here first: a tag goes out only on a commit that builds at its version.
 build "${tag#v}" "$DIST"
 before=$(latest_run "$tag")
+trap finish EXIT
 push_tag "$tag"
 gh workflow run release.yml -R "$TAP" -f repo=slimfit -f "tag=$tag"
 
 run=
 while :; do
-    run=$(latest_run "$tag")
+    # A failing gh (seen: HTTP 500) is asked again, within the limit.
+    run=$(latest_run "$tag") || run=
     [ -n "$run" ] && [ "$run" != "$before" ] && break
     [ $(($(date +%s) - started)) -lt "$limit" ] || {
         echo "release: no release.yml run of slimfit $tag in $TAP after ${limit}s" >&2
@@ -171,12 +189,18 @@ while :; do
     }
     sleep 5
 done
+pending=$run
 echo "release: waiting for https://github.com/$TAP/actions/runs/$run"
 while :; do
-    state=$(gh run view "$run" -R "$TAP" --json status,conclusion --jq '.status + " " + .conclusion')
+    state=$(gh run view "$run" -R "$TAP" --json status,conclusion --jq '.status + " " + .conclusion') ||
+        state="unknown (gh run view failed)"
     case "$state" in
-    "completed success") break ;;
+    "completed success")
+        pending=
+        break
+        ;;
     completed*)
+        pending=
         echo "release: run $run of slimfit $tag ended '$state'" >&2
         gh run view "$run" -R "$TAP" --log-failed >&2 || true
         exit 1
