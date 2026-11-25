@@ -3,10 +3,11 @@
 
 use crate::config::Config;
 use crate::git;
+use crate::keep::{KeepKind, Kept, KeptFile, KeptSpan};
 use crate::landing::{SuiteTree, Tree};
 use crate::loc::Kind;
 use crate::model::{Measurement, MutantStatus, ReachTest, Source, SuiteMeasurement, TestSource};
-use crate::ratchet::{Baseline, KeepKind, Kept, KeptFile, KeptSpan, Measured};
+use crate::ratchet::{Baseline, Measured};
 use crate::test_shape::Shape;
 use anyhow::Result;
 use serde::Serialize;
@@ -870,7 +871,7 @@ mod t {
         assert_eq!(proposed(&[verdict("s")]), 0);
         assert_eq!(proposed(&[verdict("other suite")]), 1);
         // Growth just short of the threshold, in one commit: still kept.
-        let short = (prod_lines as f64 * (1.0 + crate::ratchet::KEPT_GROWTH)) as usize - 2;
+        let short = (prod_lines as f64 * (1.0 + crate::keep::KEPT_GROWTH)) as usize - 2;
         commit(short, "grown");
         assert_eq!(proposed(&[verdict("s")]), 0);
         // Past it: proposed again.
@@ -977,7 +978,7 @@ mod t {
         let text = "fn f(x: u8) -> bool {\n    x < 255\n}\n\nfn g() {}\n";
         let name = |line: u32| format!("src/a.rs:{line}:7: replace < with <= in f");
         let hash = |text: &str, line| crate::measure::function_hash(crate::config::Preset::Rust, text, line);
-        let kept = [crate::ratchet::KeptMutant {
+        let kept = [crate::keep::KeptMutant {
             suite: "rust".into(),
             mutant: crate::model::unplaced(&name(2)),
             hash: hash(text, 2),

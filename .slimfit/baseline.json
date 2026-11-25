@@ -1,12 +1,12 @@
 {
   "suites": {
     "rust": {
-      "prod_lines": 7444,
-      "test_lines": 5532,
+      "prod_lines": 7409,
+      "test_lines": 5575,
       "tests": 134,
       "failures": 0,
       "test_seconds": 8.816,
-      "covered_lines": 5153,
+      "covered_lines": 5113,
       "uncovered_lines": 39
     }
   },
@@ -107,7 +107,7 @@
       "test": "slimfit::standins::every_preset_through_its_standins",
       "kind": "slow-test",
       "hash": "4943b269c3b43557",
-      "seconds": 10.725999999999999,
+      "seconds": 10.726,
       "suite_seconds": 29.409,
       "reason": "its time is what it checks: the real slimfit binary run ~110 times on a git copy of each of the six samples, each run driving the preset's real shell lines, git (~750 calls) and the stand-in processes on PATH; a cheaper run would drop a command, a fault or a sample. Kept before (slimfit#105, #111) on this same test text; refiled (slimfit#120) only because that verdict had no suite_seconds, so absolute seconds under host load were compared: its share of the suite's CPU held at 44-47%"
     },
@@ -148,8 +148,8 @@
   "mutants_from": "5cb0e9930d771d9148e5ee0092dcfb45543afa8f",
   "measured": {
     "rust": {
-      "uncovered_lines": 42,
-      "test_seconds": 28.641
+      "uncovered_lines": 46,
+      "test_seconds": 27.906
     }
   }
 }

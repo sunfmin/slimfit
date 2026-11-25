@@ -104,7 +104,7 @@ impl Sampled {
 /// now) unchanged since.
 pub fn equivalent(
     candidates: &[(String, Candidate)],
-    kept: &[crate::ratchet::KeptMutant],
+    kept: &[crate::keep::KeptMutant],
     hash: impl Fn(&str, &Candidate) -> String,
 ) -> BTreeSet<(String, String)> {
     (candidates.iter())
@@ -191,7 +191,7 @@ pub fn sample(
     cfg: &Config,
     m: &Measurement,
     n: usize,
-    kept: &[crate::ratchet::KeptMutant],
+    kept: &[crate::keep::KeptMutant],
 ) -> Result<Sampled> {
     let head = git::run(repo, &["rev-parse", "HEAD"])?.trim().to_string();
     let cache = repo.join(OUT).join("sample.json");

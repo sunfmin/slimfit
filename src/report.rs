@@ -89,7 +89,7 @@ impl Rate {
 /// survivor `kept` (the baseline's, then) names is equivalent, counted apart.
 fn survival<'a>(
     files: impl Iterator<Item = (&'a str, &'a str)>,
-    kept: &[ratchet::KeptMutant],
+    kept: &[crate::keep::KeptMutant],
 ) -> Option<BTreeMap<Source, Rate>> {
     let (records, samples) = (format!("{}/", landing::DIR), format!("{}/", sample::DIR));
     let mut out: BTreeMap<Source, Rate> = BTreeMap::new();
@@ -292,7 +292,7 @@ pub fn history(repo: &Path, cfg: &Config, commits: usize, points: usize, by: &By
             suites.insert(name, lines);
         }
         let mutants_records = records(texts.iter().map(|(p, t)| (*p, *t)));
-        let kept: Vec<ratchet::KeptMutant> =
+        let kept: Vec<crate::keep::KeptMutant> =
             baseline.as_ref().and_then(|b| serde_json::from_value(b["kept_mutants"].clone()).ok()).unwrap_or_default();
         let mutants_survival = survival(texts.iter().map(|(p, t)| (*p, *t)), &kept);
         let growth_records = crate::growth::Records::of(texts.iter().map(|(p, t)| (*p, *t)));
