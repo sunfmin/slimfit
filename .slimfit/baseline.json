@@ -2,8 +2,8 @@
   "suites": {
     "rust": {
       "prod_lines": 7409,
-      "test_lines": 5564,
-      "tests": 133,
+      "test_lines": 5617,
+      "tests": 134,
       "failures": 0,
       "test_seconds": 8.816,
       "covered_lines": 5117,
@@ -48,12 +48,6 @@
     }
   ],
   "kept": [
-    {
-      "suite": "rust",
-      "test": "slimfit::bin/slimfit::answer_tests::a_landing_passes_only_with_a_record_of_its_mutants",
-      "hash": "dd9eb7e94fccd020",
-      "reason": "No assertion maps: it checks the mutants record (ADR 0008: unrecorded_mutants, picks, --why, picker/author, --no-mutants, merge of two records, report's mutants_records, a target gone), the other checks the growth record (ADR 0012: growth_allowance, deletions paying, justify-growth, reviewer/author, report's growth_records). The setups conflict: the other's growth_allowance = 4 makes this test's merged landing (6 lines net) fail as unrecorded_growth where it must pass, and this one's mutants_tests = All changes what the other measures; only sample_repo and the adopt commit are shared."
-    },
     {
       "suite": "rust",
       "test": "slimfit::bin/slimfit::answer_tests::a_sampled_survivor_is_a_task_and_never_a_bound",
@@ -187,7 +181,7 @@
   "measured": {
     "rust": {
       "uncovered_lines": 42,
-      "test_seconds": 28.323
+      "test_seconds": 33.593
     }
   }
 }
