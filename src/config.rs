@@ -37,14 +37,12 @@ pub struct CheckConfig {
     /// against it owes one, for all HEAD adds since their merge base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_target: Option<String>,
-    /// The most mutants one record picks.
-    pub picks_max: usize,
 }
 
 impl Default for CheckConfig {
     fn default() -> Self {
         // 50: of slimfit's first 73 landings, the median added 22 source lines net and 21 added more than 50 (ADR 0012).
-        Self { coverage_slack: 1, target: None, growth_allowance: 50, mutants_target: None, picks_max: 5 }
+        Self { coverage_slack: 1, target: None, growth_allowance: 50, mutants_target: None }
     }
 }
 

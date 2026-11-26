@@ -81,6 +81,12 @@ pub struct Record {
     /// starts): the picks are over the lines they ran too (slimfit#87).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub removed_tests: BTreeMap<String, Vec<String>>,
+    /// The source lines the change adds whose mutants can be picked: what
+    /// `slimfit report` sets its picks against. Absent in records from
+    /// before it was kept, or written with no branch to land on. Not
+    /// `lines`: per-line records from before picks used that name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_lines: Option<usize>,
 }
 
 impl Record {
@@ -93,13 +99,14 @@ impl Record {
     /// The record `ratchet` writes of `m`: its picks, or, with
     /// `no_mutants`, why none was picked; `None` when there is neither.
     /// Either names its picker and the change's author, who differ
-    /// (slimfit#58), and the tests the change removes (`removed_tests`).
+    /// (slimfit#58), and from the landing `held`, the source lines it adds
+    /// (`added_lines`) and the tests it removes (`removed_tests`).
     pub fn of(
         m: &Measurement,
         no_mutants: Option<String>,
         picker: Option<String>,
         author: Option<String>,
-        removed_tests: BTreeMap<String, Vec<String>>,
+        held: Option<Held>,
     ) -> Result<Option<Record>> {
         let picks: BTreeMap<String, Vec<Pick>> = m
             .suites
@@ -139,7 +146,8 @@ impl Record {
             author: id(author).unwrap_or_default(),
             picks,
             none,
-            removed_tests,
+            added_lines: held.as_ref().map(|h| h.lines),
+            removed_tests: held.map(|h| h.removed_tests).unwrap_or_default(),
         };
         if !record.picked_by_another() {
             let what = if record.picker.is_empty() || record.author.is_empty() {
@@ -270,16 +278,38 @@ pub struct Records {
     pub with_picks: usize,
     pub without_picks: usize,
     pub older: usize,
+    /// Per record of the working copy, its picks against its change's
+    /// lines; history's points count records only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub picked: Vec<Picked>,
 }
 
 /// What [`Records`] prints, as the command pages name it.
 pub const RECORDS_HELP: &str = "`with_picks` (records of picked mutants run), `without_picks` (records of none \
-     picked, with a reason) and `older` (records from before picks, of lines measured)";
+     picked, with a reason), `older` (records from before picks, of lines measured) and, of the working copy's, \
+     `picked`";
 
-/// Counts the records in `.slimfit/mutants/`.
+/// One record's picks against the lines of the change it records.
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct Picked {
+    pub record: String,
+    pub picks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_lines: Option<usize>,
+}
+
+/// What a [`Picked`] prints, as the command pages name it.
+pub const PICKED_HELP: &str = "`record` (its path), `picks` (the mutants it picked, in all suites; 0 for none \
+     picked) and `added_lines` (the source lines its change adds whose mutants could be picked; absent in records from \
+     before it was kept)";
+
+/// Counts the records in `.slimfit/mutants/`, and lists each one's picks
+/// against its lines, by path.
 pub fn records(repo: &Path) -> Result<Records> {
     let mut n = Records::default();
-    for (p, text) in json_files(repo, DIR)? {
+    let mut files = json_files(repo, DIR)?;
+    files.sort();
+    for (p, text) in files {
         let r: Record = serde_json::from_str(&text).map_err(|e| {
             fault(
                 format!("{} is not a record of picked mutants: {e}", repo.join(&p).display()),
@@ -287,6 +317,10 @@ pub fn records(repo: &Path) -> Result<Records> {
             )
         })?;
         n.add(&r);
+        let picks = r.picks.values().map(Vec::len).sum();
+        if picks > 0 || r.none.is_some() {
+            n.picked.push(Picked { record: p, picks, added_lines: r.added_lines });
+        }
     }
     Ok(n)
 }
@@ -696,7 +730,7 @@ mod t {
             Measurement { tree: "t".into(), with_mutants: picked, suites: vec![s] }
         };
         let of = |picked, none: Option<&str>, picker: Option<&str>, author: Option<&str>| {
-            Record::of(&m(picked), none.map(Into::into), picker.map(Into::into), author.map(Into::into), [].into())
+            Record::of(&m(picked), none.map(Into::into), picker.map(Into::into), author.map(Into::into), None)
         };
         let refused = |r: Result<Option<Record>>| crate::fault::of(r.unwrap_err()).remove(0).fault;
         assert!(refused(of(true, Some("x"), Some("p"), Some("a"))).contains("ran picked mutants"));
@@ -718,9 +752,19 @@ mod t {
                 ("p", "a", !picked, picked as usize)
             );
         }
-        // A record that does not parse is refused by name.
+        // From the landing, the lines it adds; the working copy's records list picks against them, by path.
+        let held = Held { lines: 40, ..Default::default() };
+        let r = Record::of(&m(true), None, Some("p".into()), Some("a".into()), Some(held)).unwrap().unwrap();
+        assert_eq!(r.added_lines, Some(40));
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join(DIR)).unwrap();
+        for (name, text) in [("b", serde_json::to_string(&r).unwrap()), ("a", r#"{"none":"docs"}"#.into())] {
+            std::fs::write(d.path().join(DIR).join(format!("{name}.json")), text).unwrap();
+        }
+        let picked =
+            |record: &str, picks, added_lines| Picked { record: format!("{DIR}/{record}.json"), picks, added_lines };
+        assert_eq!(records(d.path()).unwrap().picked, [picked("a", 0, None), picked("b", 1, Some(40))]);
+        // A record that does not parse is refused by name.
         std::fs::write(d.path().join(DIR).join("x.json"), "{").unwrap();
         let f = crate::fault::of(records(d.path()).unwrap_err());
         assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");

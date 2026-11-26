@@ -28,28 +28,15 @@ pub enum Mutants {
 }
 
 impl Mutants {
-    /// The picks `check --mutants <name>... --why <why>...` names: at most
-    /// `max` (`[check] picks_max`, ADR 0008), each with its own one-line
-    /// reason; none names `None`.
-    pub fn of(names: Vec<String>, why: Vec<String>, max: usize) -> Result<Mutants> {
-        let mut faults = Vec::new();
-        if names.len() > max {
-            faults.push(fault::Fault {
-                fault: format!("{} mutants picked, more than {max} (`[check] picks_max`)", names.len()),
-                fix: format!(
-                    "pick at most {max}: those on the decisions the change makes (comparisons, boolean logic, \
-                     match guards, a return value that matters)"
-                ),
-            });
-        }
+    /// The picks `check --mutants <name>... --why <why>...` names, as many
+    /// as the picker sized to the change (ADR 0008), each with its own
+    /// one-line reason; none names `None`.
+    pub fn of(names: Vec<String>, why: Vec<String>) -> Result<Mutants> {
         if names.len() != why.len() || why.iter().any(|w| w.trim().is_empty() || w.contains('\n')) {
-            faults.push(fault::Fault {
-                fault: format!("{} mutant(s) picked, with {} `--why`", names.len(), why.len()),
-                fix: "give each pick one `--why` of one line, in the order of the names".into(),
-            });
-        }
-        if !faults.is_empty() {
-            return Err(Faults(faults).into());
+            return Err(fault(
+                format!("{} mutant(s) picked, with {} `--why`", names.len(), why.len()),
+                "give each pick one `--why` of one line, in the order of the names",
+            ));
         }
         if names.is_empty() {
             return Ok(Mutants::None);
@@ -525,6 +512,17 @@ impl From<Vec<Mutant>> for Mutation {
 #[cfg(test)]
 mod t {
     use super::*;
+
+    /// Picks have no cap: as many as the picker sized to the change, each
+    /// with its own why.
+    #[test]
+    fn picks_are_as_many_as_named_each_with_its_why() {
+        let names: Vec<String> = (0..12).map(|i| format!("n{i}")).collect();
+        let Mutants::Picks(p) = Mutants::of(names.clone(), vec!["w".into(); 12]).unwrap() else { panic!() };
+        assert_eq!(p.iter().map(|p| &p.name).collect::<Vec<_>>(), names.iter().collect::<Vec<_>>());
+        assert!(Mutants::of(names, vec!["w".into(); 11]).is_err());
+        assert_eq!(Mutants::of(vec![], vec![]).unwrap(), Mutants::None);
+    }
 
     /// The real list of a crate whose struct literals cargo-mutants lists
     /// field deletions of (`testdata/rust-fields`), the whole file a change.

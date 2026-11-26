@@ -15,6 +15,8 @@ pub enum Kind {
     NoConfig,
     /// `slimfit.toml` cannot be read: every command refuses until it can. Fix: correct it as the finding says.
     BadConfig,
+    /// `slimfit.toml` sets a setting slimfit no longer reads, such as `[check] picks_max` (the picker now sizes its picks to the diff, see [the picker](help:picker)): it is accepted and ignored for one release, then refused. Fix: delete the line the finding names.
+    RetiredSetting,
     /// There is no `.slimfit/baseline.json`: `slimfit check` has nothing to hold. Fix: `slimfit init` (it keeps `slimfit.toml`).
     NoBaseline,
     /// A gate runs the project's own tests and also `slimfit check`, which is a test run: the tests run twice. Fix: take the project's test command out of that gate.
@@ -211,6 +213,7 @@ pub fn diagnose(repo: &Path, host: &Host) -> Vec<Finding> {
     } else {
         match config::load(repo) {
             Ok(c) => {
+                out.extend(retired(repo));
                 out.extend(no_target(repo, &c));
                 c.suites.iter().map(|s| s.resolve()).collect()
             }
@@ -337,6 +340,30 @@ fn mutation(lines: &[(String, String)], how: &str) -> Vec<Finding> {
 }
 
 /// A finding when a suite runs mutants but no branch to land on is found.
+/// Settings slimfit no longer reads, by table and key, each with why.
+const RETIRED: &[(&str, &str, &str)] =
+    &[("check", "picks_max", "picks have no cap: the picker sizes them to the diff (`slimfit help picker`)")];
+
+/// A finding per retired setting `slimfit.toml` still sets, naming its line.
+fn retired(repo: &Path) -> Vec<Finding> {
+    let text = std::fs::read_to_string(repo.join(config::FILE)).unwrap_or_default();
+    let Ok(toml) = text.parse::<toml::Table>() else { return vec![] };
+    let set = |table: &str, key: &str| toml.get(table).and_then(|t| t.get(key)).is_some();
+    let line = |key: &str| text.lines().position(|l| l.trim_start().starts_with(key)).map_or(0, |i| i + 1);
+    RETIRED
+        .iter()
+        .filter(|(table, key, _)| set(table, key))
+        .map(|(table, key, why)| {
+            finding(
+                Kind::RetiredSetting,
+                None,
+                format!("{}:{}: [{table}] {key} is no longer read: {why}", config::FILE, line(key)),
+                format!("delete that line from {}", config::FILE),
+            )
+        })
+        .collect()
+}
+
 fn no_target(repo: &Path, cfg: &config::Config) -> Vec<Finding> {
     let mutates = cfg.suites.iter().any(|s| s.resolve().mutates());
     let target = crate::landing::DEFAULT_TARGET;
@@ -560,6 +587,20 @@ mod tests {
         std::fs::write(r.path().join(config::FILE), toml.replace("HEAD", "nope")).unwrap();
         let f = diagnose(r.path(), &host(&every_tool()));
         assert!(f[0].what.starts_with("slimfit.toml's [check] target nope shares no commit"), "{f:#?}");
+    }
+
+    /// A retired setting, `[check] picks_max`, is accepted (the config
+    /// loads and `check --mutants` runs any number of picks) and named by
+    /// its line, to delete.
+    #[test]
+    fn a_retired_setting_is_accepted_and_named_by_its_line() {
+        let toml = "[[suite]]\nname = \"rust\"\npreset = \"rust\"\n[check]\ntarget = \"HEAD\"\npicks_max = 5\n";
+        let r = repo(&[(ratchet::FILE, &measured()), (config::FILE, toml)]);
+        assert!(config::load(r.path()).is_ok());
+        let f = diagnose(r.path(), &host(&every_tool()));
+        assert_eq!(kinds(&f), vec![Kind::RetiredSetting], "{f:#?}");
+        assert!(f[0].what.starts_with("slimfit.toml:6: [check] picks_max is no longer read"), "{f:#?}");
+        assert_eq!(f[0].fix, "delete that line from slimfit.toml");
     }
 
     /// This host: its cores, PATH and cargo's bin directory searched; a

@@ -14,5 +14,5 @@ A CLI that keeps a codebase small and its tests few, fast and strong, used by AI
 ## Checks
 
 - `./gate.sh` is the only gate; `./e2e.sh` runs the real toolchains (`E2E_MUTANTS=1`).
-- No gate runs mutation testing on slimfit itself (ADR 0006, 0008). Every change to source picks at most 5 mutants on its decisions from `slimfit check --mutants`, runs them with `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`, then `slimfit ratchet` (or `slimfit ratchet --no-mutants "<why>"`), and the commit carries the record in `.slimfit/mutants/`.
+- No gate runs mutation testing on slimfit itself (ADR 0006, 0008). Every change to source has a second agent pick mutants on its decisions, sized to the diff, from `slimfit check --mutants`, runs them with `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`, then `slimfit ratchet` (or `slimfit ratchet --no-mutants "<why>"`), and the commit carries the record in `.slimfit/mutants/`.
 - A surviving pick is killed, or loosened with a reason; that commit carries the ratcheted `.slimfit/baseline.json`.

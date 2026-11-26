@@ -2,7 +2,7 @@
 
 **Run** (of a suite): where a suite's commands run and what they leave. Each command runs with `sh -c` in the suite's root and writes its log in the suite's scratch directory (`$SLIMFIT_OUT`); the suite's reports are found, cleared and read there, and a missing or unreadable one is a fault with its fix. The test run, a change's mutants and the sample all run a suite's commands through one (`measure::Run`). _Avoid_: workdir, invocation.
 
-**Picks** (of a change): the mutants of a change a second agent chose, each by the name its suite's tool lists it under and with a one-line why, at most `PICKS_MAX` (ADR 0008). `measure::Mutants::of` is the one place `--mutants`/`--why` become picks; no name means no mutants run. _Avoid_: selection, chosen mutants.
+**Picks** (of a change): the mutants of a change a second agent chose, each by the name its suite's tool lists it under and with a one-line why, as many as the picker sizes to the diff (ADR 0008, 0015). `measure::Mutants::of` is the one place `--mutants`/`--why` become picks; no name means no mutants run. _Avoid_: selection, chosen mutants.
 
 **Removed test** (of a change): a Rust test function where the change starts that it no longer has, by name, unless its body is there under a name new to it (a rename or a move). Its source lines, from the measurement of the tree the change starts from, are the change's lines too: picks over them run against the tests left (ADR 0008, slimfit#87). `landing::removed::of` is the one place they are found. _Avoid_: deleted test, dropped test.
 
