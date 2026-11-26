@@ -90,29 +90,43 @@ fn is(t: &crate::model::ReachTest, g: &Removed) -> bool {
 /// is taken, and kept in `.slimfit/out/before.json` while `from` and the
 /// suites are the same.
 fn before(repo: &Path, cfg: &Config, from: &str) -> Result<Measurement> {
-    let cache = repo.join(OUT).join("before.json");
     let key = serde_json::to_value((from, &cfg.suites))?;
-    let kept: Option<(serde_json::Value, Measurement)> =
-        std::fs::read_to_string(&cache).ok().and_then(|t| serde_json::from_str(&t).ok());
-    if let Some((_, m)) = kept.filter(|(k, _)| *k == key) {
-        return Ok(m);
+    kept(&repo.join(OUT).join("before.json"), key, || {
+        eprintln!(
+            "slimfit: the change removes tests: measuring the tree it starts from, {from}, for the lines they ran"
+        );
+        let head = git::run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+        let change = match head.trim() {
+            "HEAD" | "" => {
+                format!("HEAD {}", git::run(repo, &["rev-parse", "--short", "HEAD"]).unwrap_or_default().trim())
+            }
+            b => b.to_string(),
+        };
+        let what = format!(
+            "slimfit: the tree {change} starts from, to measure the tests it removes; removed when the measurement is taken"
+        );
+        let commands = cfg.check.before_tree(|v| std::env::var(v).ok());
+        in_tree(repo, from, &what, &commands, |dir| {
+            let tree = Tree::read(&git::open(dir)?)?;
+            super::current(dir, &tree, cfg, &Options::default())
+        })
+    })
+}
+
+/// What `cache` holds for `key`, or else `make`'s, written there with it.
+fn kept<T: serde::Serialize + serde::de::DeserializeOwned>(
+    cache: &Path,
+    key: serde_json::Value,
+    make: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let held: Option<(serde_json::Value, T)> =
+        std::fs::read_to_string(cache).ok().and_then(|t| serde_json::from_str(&t).ok());
+    if let Some((_, v)) = held.filter(|(k, _)| *k == key) {
+        return Ok(v);
     }
-    eprintln!("slimfit: the change removes tests: measuring the tree it starts from, {from}, for the lines they ran");
-    let head = git::run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
-    let change = match head.trim() {
-        "HEAD" | "" => format!("HEAD {}", git::run(repo, &["rev-parse", "--short", "HEAD"]).unwrap_or_default().trim()),
-        b => b.to_string(),
-    };
-    let what = format!(
-        "slimfit: the tree {change} starts from, to measure the tests it removes; removed when the measurement is taken"
-    );
-    let commands = cfg.check.before_tree(|v| std::env::var(v).ok());
-    let m = in_tree(repo, from, &what, &commands, |dir| {
-        let tree = Tree::read(&git::open(dir)?)?;
-        super::current(dir, &tree, cfg, &Options::default())
-    })?;
-    std::fs::write(&cache, serde_json::to_string(&(key, &m))?)?;
-    Ok(m)
+    let v = make()?;
+    std::fs::write(cache, serde_json::to_string(&(key, &v))?)?;
+    Ok(v)
 }
 
 /// `f` of the tree at `rev`, made by the first of `commands` and removed by
@@ -298,6 +312,18 @@ mod t {
         assert_eq!(std::fs::read_to_string(log).unwrap(), want);
         assert!(!made.exists());
         assert_eq!(git::run(repo, &["worktree", "list"]).unwrap().lines().count(), 1);
+    }
+
+    /// The measurement is kept while its key is the same, and taken again
+    /// when it changes.
+    #[test]
+    fn the_measurement_is_kept_while_its_key_is_the_same() {
+        let d = tempfile::tempdir().unwrap();
+        let cache = d.path().join("before.json");
+        let k = |s: &str| serde_json::json!([s]);
+        assert_eq!(kept(&cache, k("a"), || Ok(1)).unwrap(), 1);
+        assert_eq!(kept(&cache, k("a"), || -> Result<u32> { anyhow::bail!("measured again") }).unwrap(), 1);
+        assert_eq!(kept(&cache, k("b"), || Ok(2)).unwrap(), 2);
     }
 
     /// Each command is taken from its environment variable, then
