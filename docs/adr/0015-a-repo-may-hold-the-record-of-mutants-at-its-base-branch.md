@@ -26,7 +26,8 @@ Diff 做一次可以让 worker 多挑一些」.
   again, as each landing in it held its own.
 - **The cap is a setting**, `picks_max` under `[check]`, five by default,
   so a range may be given more; the picker spreads them over its files and
-  functions.
+  functions. (Superseded by ADR 0016: no cap; the picker sizes its picks
+  to the diff.)
 - `--loosen survived_mutants --reason` and `--no-mutants` mean the same of
   the range.
 
