@@ -1,10 +1,13 @@
 # How factorium gates slimfit.
 
+# No `slow`: a promotion of a tip a green landing pushed runs only the slow
+# steps (factorium#379), and slimfit has none the fast gate lacks. Every
+# preset runs end to end in the fast gate against stand-ins for its tools
+# (tests/standins.rs); mutants are never in a gate (`slimfit --help`). The
+# real toolchains (`./e2e.sh`) run only when asked for (slimfit#136).
 [gate]
 fast = "./gate.sh"
 fast_limit = 600
-slow = "./slow.sh"
-slow_limit = 1800
 regenerated = [".docfit/baseline.json"]
 
 [cut]
