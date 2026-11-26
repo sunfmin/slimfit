@@ -4,7 +4,7 @@
 # steps (factorium#379), and slimfit has none the fast gate lacks. Every
 # preset runs end to end in the fast gate against stand-ins for its tools
 # (tests/standins.rs); mutants are never in a gate (`slimfit --help`). The
-# real toolchains (`./e2e.sh`) run only when asked for (slimfit#136).
+# real toolchains (`./e2e.sh`) run only when asked for.
 [gate]
 fast = "./gate.sh"
 fast_limit = 600
