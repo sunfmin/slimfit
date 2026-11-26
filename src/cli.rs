@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// You (the agent) change code; slimfit measures each change and ratchets the result. Never argue with a number: change the code until `slimfit check` passes. Run `slimfit <command> --help` before a command's first run. Your judgment calls are yours; slimfit checks that you made them, not that they were right. What matters most, first:
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
-/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker picks at most `[check] picks_max` (by default {const:PICKS_MAX}); you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). A repo may hold the record at its base branch instead (`[check] mutants_target`): one record per promotion, over every landing since, picked by the promotion's worker with `--target`. Not as idle work: it commits nothing, so nothing it measures is recorded.
+/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THOSE A SECOND AGENT PICKS. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker sizes its picks to the diff, with no fixed number, each with its own why; you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). A repo may hold the record at its base branch instead (`[check] mutants_target`): one record per promotion, over every landing since, picked by the promotion's worker with `--target`. Not as idle work: it commits nothing, so nothing it measures is recorded.
 /// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike. A test that covers a line asserts what the line decides: one that only runs it is no fix, and no bound asks for it (`check` fails on no coverage number).
 /// 4. CODE GROWS ONLY FOR A REASON A SECOND AGENT ACCEPTED. A change that adds more than `growth_allowance` source lines net (by default {const:GROWTH_ALLOWANCE}; code it deletes counts against them) carries a growth record in `.slimfit/growth/`: the issue it serves, the existing code you weighed reusing or deleting, and the verdict of a second agent, never you, given only [the reviewer's goal](help:reviewer) and your diff: `as-is` with its why, or what to cut, which you then do or answer. `slimfit ratchet --serves ... --considered ... --as-is "<its why>" --reviewer <its id> --author <yours>` writes it. The gate's plain `slimfit check` fails without one (`unrecorded_growth`), never on the number alone.
 ///
@@ -226,7 +226,7 @@ pub(crate) enum Cmd {
     Check {
         #[command(flatten)]
         at: At,
-        /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (at most `[check] picks_max`, by default {const:PICKS_MAX}, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
+        /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (the picks, as many as the picker chose, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
         #[arg(long, num_args = 0.., value_name = "NAME", verbatim_doc_comment)]
         mutants: Option<Vec<String>>,
         /// With `--mutants` and no name: list only the candidates of this function (`<file>: <function>`, as a grouped listing's `functions` names it), in full (repeatable).
@@ -391,7 +391,7 @@ pub(crate) enum Cmd {
     /// - `baseline`: per suite, {const:METRICS}.
     /// - `loosened`: every loosening kept in the baseline, {const:LOOSENING}.
     /// - `history`: oldest first, each point's `commit`, `date`, `suites` (per suite, {const:HISTORY_SUITE}), `by` (with `--by`: as above, at that commit), `mutants_records` (the records `.slimfit/mutants/` held then, counted as below), `growth_records` (the growth records `.slimfit/growth/` held then, by verdict, as below; absent when none) and `mutants_survival` (per source of the mutants that ran by then, by who picked: `picker` for a second agent's picks in records, `author` for picks in records that name no other picker, and `sampled` for the samples in `.slimfit/samples/`: {const:RATE}; see [the sample](help:sample)). Read from git, no test run: whether the agents' judgments move the codebase the right way shows as a trend here, not in any one verdict. The trend: `measured` shows each landing's `uncovered_lines` and `test_seconds` as measured, so a run of rises the ratcheted numbers hide shows here (and as a `rising-trend` task of `slimfit next`). The tally: `first_survived` per source is how many gaps its picks found, survivors since killed included, where `survived` counts only those still alive when recorded; a `picker` count above the `author` one is what a second agent buys. A number from before the baseline held it (or before any record) is absent, not zero.
-    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is a `picker` rate far below the `sampled` one in `mutants_survival`.
+    /// - `mutants_records`: how many records `.slimfit/mutants/` holds: {const:RECORDS}; `picked` lists, per record by path, {const:PICKED}. Many without picks, or picks that are all trivial, is a rule kept in form only; so is a `picker` rate far below the `sampled` one in `mutants_survival`. The picker sizes its picks to the diff, with no fixed number (see [the picker](help:picker)): `picks` against `added_lines` is where a picker that picks too few for a large change, or too many for a small one, shows.
     /// - `growth_records`: how many growth records `.slimfit/growth/` holds: {const:GROWTH_RECORDS}. Beside `history`'s `prod` lines: lines that keep climbing while every record says `as_is` is a review kept in form only (see [the reviewer](help:reviewer)).
     /// - `next`: `slimfit next`.
     ///
@@ -538,7 +538,6 @@ fn help() -> Help {
                 "and",
             ),
         )
-        .constant("PICKS_MAX", check.picks_max)
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
@@ -560,6 +559,7 @@ fn help() -> Help {
         .constant("NEW_SPANS", ratchet::NEW_SPANS_HELP)
         .constant("LANDING", landing::HELD_HELP)
         .constant("RECORDS", landing::RECORDS_HELP)
+        .constant("PICKED", landing::PICKED_HELP)
         .constant("HISTORY_SUITE", report::LINES_HELP)
         .constant("RATE", report::RATE_HELP)
         .constant("SAMPLE", measure::sample::SAMPLE_HELP)
@@ -733,7 +733,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
-        assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
+        let picked = crate::landing::Picked { added_lines: Some(1), ..Default::default() };
+        assert_eq!(named(crate::landing::PICKED_HELP), keys(&picked));
+        let records = crate::landing::Records { picked: vec![picked], ..Default::default() };
+        assert_eq!(named(crate::landing::RECORDS_HELP), keys(&records));
         assert_eq!(named(crate::report::RATE_HELP), keys(&crate::report::Rate::default()));
         assert_eq!(
             named(crate::measure::sample::SAMPLE_HELP)[..4],

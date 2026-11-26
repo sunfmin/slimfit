@@ -367,7 +367,10 @@ mod t {
         let measured = Some(ratchet::Measured { uncovered_lines: 6, test_seconds: Some(2.0), untimed: None });
         assert_eq!(rust.iter().map(|l| l.measured.clone()).collect::<Vec<_>>(), [None, None, measured]);
         let records: Vec<_> = h.iter().map(|p| p.mutants_records.as_ref()).collect();
-        assert_eq!(records, [None, None, Some(&Records { with_picks: 2, without_picks: 1, older: 1 })]);
+        assert_eq!(
+            records,
+            [None, None, Some(&Records { with_picks: 2, without_picks: 1, older: 1, ..Default::default() })]
+        );
         // Survival by who chose the mutants, side by side: a second agent's picks, the author's and the sample;
         // and on the first run, a survivor since killed counted, unknown in records from before it was kept.
         let survival = serde_json::to_value(&h[2].mutants_survival).unwrap();

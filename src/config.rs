@@ -37,8 +37,6 @@ pub struct CheckConfig {
     /// against it owes one, for all HEAD adds since their merge base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_target: Option<String>,
-    /// The most mutants one record picks.
-    pub picks_max: usize,
     /// The shell command that makes the tree a change starts from, when it
     /// removes tests (`$SLIMFIT_BEFORE_MAKE` overrides it; unset, `git
     /// worktree add`).
@@ -58,7 +56,6 @@ impl Default for CheckConfig {
             target: None,
             growth_allowance: 50,
             mutants_target: None,
-            picks_max: 5,
             before_make: None,
             before_remove: None,
         }
