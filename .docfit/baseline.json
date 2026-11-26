@@ -1,9 +1,4 @@
 {
-  "CLAUDE.md": {
-    "bytes": 5551,
-    "local_refs": 1,
-    "paragraph": 849
-  },
   "Cargo.toml": {
     "local_refs": 1
   },
@@ -45,11 +40,7 @@
   "docs/adr/0008-a-second-agent-picks-the-mutants-the-gate-holds-a-record.md": {
     "bytes": 8419,
     "local_refs": 12,
-    "paragraph": 910,
-    "pointers": [
-      ".slimfit/out/",
-      ".slimfit/out/before/"
-    ]
+    "paragraph": 910
   },
   "docs/adr/0009-hard-bounds-only-for-what-is-cheap-and-objective.md": {
     "bytes": 5933,
