@@ -1,0 +1,151 @@
+{
+  "CLAUDE.md": {
+    "bytes": 5551,
+    "local_refs": 1,
+    "paragraph": 849
+  },
+  "Cargo.toml": {
+    "local_refs": 1
+  },
+  "GLOSSARY.md": {
+    "local_refs": 2
+  },
+  "README.md": {
+    "bytes": 5651,
+    "local_refs": 1,
+    "measurements": 2,
+    "paragraph": 936
+  },
+  "docs/adr/0001-coverage-slack.md": {
+    "bytes": 3573,
+    "local_refs": 3,
+    "paragraph": 686
+  },
+  "docs/adr/0003-test-seconds-normalised-by-load.md": {
+    "bytes": 7257,
+    "local_refs": 7,
+    "pointers": [
+      ".config/nextest.toml",
+      "load.rs"
+    ]
+  },
+  "docs/adr/0006-mutants-only-on-a-change.md": {
+    "bytes": 9527,
+    "local_refs": 11,
+    "paragraph": 806
+  },
+  "docs/adr/0007-each-mutant-runs-the-tests-of-its-function.md": {
+    "bytes": 7122,
+    "local_refs": 6,
+    "paragraph": 1265,
+    "pointers": [
+      "reach.txt"
+    ]
+  },
+  "docs/adr/0008-a-second-agent-picks-the-mutants-the-gate-holds-a-record.md": {
+    "bytes": 8419,
+    "local_refs": 12,
+    "paragraph": 910,
+    "pointers": [
+      ".slimfit/out/",
+      ".slimfit/out/before/"
+    ]
+  },
+  "docs/adr/0009-hard-bounds-only-for-what-is-cheap-and-objective.md": {
+    "bytes": 5933,
+    "local_refs": 9,
+    "paragraph": 942
+  },
+  "docs/adr/0010-test-seconds-is-cpu-time.md": {
+    "bytes": 4814,
+    "local_refs": 7,
+    "paragraph": 991
+  },
+  "docs/adr/0011-an-unbiased-sample-out-of-the-loop.md": {
+    "bytes": 3661,
+    "local_refs": 5,
+    "paragraph": 642
+  },
+  "docs/adr/0012-growth-past-an-allowance-carries-a-reviewed-record.md": {
+    "bytes": 4984,
+    "local_refs": 3
+  },
+  "docs/adr/0013-releases-are-signed-and-notarized-by-the-taps-workflow.md": {
+    "bytes": 3374,
+    "local_refs": 1,
+    "pointers": [
+      ".github/workflows/README.md",
+      ".github/workflows/release.yml",
+      "ADR-0017"
+    ]
+  },
+  "examples/treecount/hook.c": {
+    "local_refs": 1
+  },
+  "examples/treecount/main.rs": {
+    "local_refs": 1
+  },
+  "factorium.toml": {
+    "local_refs": 1
+  },
+  "rust-toolchain.toml": {
+    "local_refs": 1
+  },
+  "src/cli.rs": {
+    "local_refs": 1
+  },
+  "src/config.rs": {
+    "local_refs": 1
+  },
+  "src/fixtures.rs": {
+    "local_refs": 3
+  },
+  "src/formats/reach.rs": {
+    "local_refs": 1
+  },
+  "src/landing.rs": {
+    "local_refs": 5
+  },
+  "src/landing/removed.rs": {
+    "local_refs": 1
+  },
+  "src/listing.rs": {
+    "local_refs": 3
+  },
+  "src/main.rs": {
+    "local_refs": 11
+  },
+  "src/measure/mutants.rs": {
+    "local_refs": 1
+  },
+  "src/measure/removed.rs": {
+    "local_refs": 1
+  },
+  "src/measure/sample.rs": {
+    "local_refs": 1
+  },
+  "src/model.rs": {
+    "local_refs": 3
+  },
+  "src/presets/rust-test.sh": {
+    "local_refs": 1
+  },
+  "src/ratchet.rs": {
+    "local_refs": 3
+  },
+  "src/tasks.rs": {
+    "local_refs": 3
+  },
+  "src/test_shape.rs": {
+    "local_refs": 1
+  },
+  "src/workspace.rs": {
+    "local_refs": 1
+  },
+  "tests/standins.rs": {
+    "local_refs": 3
+  },
+  "tests/treecount.rs": {
+    "local_refs": 1
+  }
+}

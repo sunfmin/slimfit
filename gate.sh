@@ -10,6 +10,8 @@ cargo build --release --quiet
 mkdir -p .slimfit/out
 # slimfit checks itself: tests pass and the change carries its mutants record; coverage and test time are answered as trends.
 ./target/release/slimfit check --fresh > .slimfit/out/gate.json || { cat .slimfit/out/gate.json; exit 1; }
+# The documents: each in its one home, within its budget, citing no local tracker (`docfit --help`).
+docfit check > .slimfit/out/docfit.json || { cat .slimfit/out/docfit.json; exit 1; }
 # The release script, as far as it goes without publishing.
 sh -n packaging/release.sh
 for good in v0.1.0 v1.22.333; do packaging/release.sh check-tag "$good"; done

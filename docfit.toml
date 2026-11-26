@@ -1,0 +1,18 @@
+ignore = ["src/help/**"]
+
+# This repo's documents, each under its kind (`docfit check --help`).
+[documents]
+"CLAUDE.md" = "agent"
+"GLOSSARY.md" = "glossary"
+"README.md" = "readme"
+"docs/adr/0001-coverage-slack.md" = "adr"
+"docs/adr/0003-test-seconds-normalised-by-load.md" = "adr"
+"docs/adr/0006-mutants-only-on-a-change.md" = "adr"
+"docs/adr/0007-each-mutant-runs-the-tests-of-its-function.md" = "adr"
+"docs/adr/0008-a-second-agent-picks-the-mutants-the-gate-holds-a-record.md" = "adr"
+"docs/adr/0009-hard-bounds-only-for-what-is-cheap-and-objective.md" = "adr"
+"docs/adr/0010-test-seconds-is-cpu-time.md" = "adr"
+"docs/adr/0011-an-unbiased-sample-out-of-the-loop.md" = "adr"
+"docs/adr/0012-growth-past-an-allowance-carries-a-reviewed-record.md" = "adr"
+"docs/adr/0013-releases-are-signed-and-notarized-by-the-taps-workflow.md" = "adr"
+"docs/adr/0014-an-adr-holds-the-decision-the-evidence-lives-in-the-issue.md" = "adr"
