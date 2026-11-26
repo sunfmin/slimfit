@@ -11,7 +11,7 @@ use crate::landing::{self, Landing, Lines, Tree};
 use crate::model::Measurement;
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// The lines one suite's removed tests ran, as they are now, and which of
 /// those tests ran each.
@@ -85,33 +85,92 @@ fn is(t: &crate::model::ReachTest, g: &Removed) -> bool {
     }
 }
 
-/// Where the change starts, checked out in a worktree of its own: in
-/// `.slimfit/out/before/`, kept between commands so its build stays warm.
-fn checkout(repo: &Path, from: &str) -> Result<PathBuf> {
-    let dir = repo.join(OUT).join("before");
-    // Inside the repository, a directory that is no worktree of its own answers for the repository.
-    let at = dir.join(".git").is_file().then(|| git::run(&dir, &["rev-parse", "HEAD"]).ok()).flatten();
-    match at {
-        Some(c) if c.trim() == from => {}
-        Some(_) => {
-            git::run(&dir, &["checkout", "-q", "--detach", "--force", from])?;
-        }
-        None => {
-            let _ = std::fs::remove_dir_all(&dir);
-            git::run(repo, &["worktree", "prune"])?;
-            git::run(repo, &["worktree", "add", "-q", "--detach", &dir.to_string_lossy(), from])?;
-        }
-    }
-    Ok(dir)
+/// The measurement of the tree the change starts from, with `cfg`'s
+/// suites: measured once, in a tree made for it and removed as soon as it
+/// is taken, and kept in `.slimfit/out/before.json` while `from` and the
+/// suites are the same.
+fn before(repo: &Path, cfg: &Config, from: &str) -> Result<Measurement> {
+    let key = serde_json::to_value((from, &cfg.suites))?;
+    kept(&repo.join(OUT).join("before.json"), key, || {
+        eprintln!(
+            "slimfit: the change removes tests: measuring the tree it starts from, {from}, for the lines they ran"
+        );
+        let head = git::run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+        let change = match head.trim() {
+            "HEAD" | "" => {
+                format!("HEAD {}", git::run(repo, &["rev-parse", "--short", "HEAD"]).unwrap_or_default().trim())
+            }
+            b => b.to_string(),
+        };
+        let what = format!(
+            "slimfit: the tree {change} starts from, to measure the tests it removes; removed when the measurement is taken"
+        );
+        let commands = cfg.check.before_tree(|v| std::env::var(v).ok());
+        in_tree(repo, from, &what, &commands, |dir| {
+            let tree = Tree::read(&git::open(dir)?)?;
+            super::current(dir, &tree, cfg, &Options::default())
+        })
+    })
 }
 
-/// The measurement of the tree the change starts from, with `cfg`'s
-/// suites: cached in its worktree while it is the same.
-fn before(repo: &Path, cfg: &Config, from: &str) -> Result<Measurement> {
-    eprintln!("slimfit: the change removes tests: measuring the tree it starts from, {from}, for the lines they ran");
-    let dir = checkout(repo, from)?;
-    let tree = Tree::read(&git::open(&dir)?)?;
-    super::current(&dir, &tree, cfg, &Options::default())
+/// What `cache` holds for `key`, or else `make`'s, written there with it.
+fn kept<T: serde::Serialize + serde::de::DeserializeOwned>(
+    cache: &Path,
+    key: serde_json::Value,
+    make: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let held: Option<(serde_json::Value, T)> =
+        std::fs::read_to_string(cache).ok().and_then(|t| serde_json::from_str(&t).ok());
+    if let Some((_, v)) = held.filter(|(k, _)| *k == key) {
+        return Ok(v);
+    }
+    let v = make()?;
+    std::fs::write(cache, serde_json::to_string(&(key, &v))?)?;
+    Ok(v)
+}
+
+/// `f` of the tree at `rev`, made by the first of `commands` and removed by
+/// the second once `f` is done, however it ends. Each runs in `sh` in
+/// `repo`, given the tree's path (`$SLIMFIT_TREE`), `rev` (`$SLIMFIT_REV`)
+/// and `what` it is for (`$SLIMFIT_DESCRIPTION`); the path is
+/// `.slimfit/out/before/` unless the make command prints another, as its
+/// last line.
+fn in_tree<T>(
+    repo: &Path,
+    rev: &str,
+    what: &str,
+    commands: &(String, String),
+    f: impl FnOnce(&Path) -> Result<T>,
+) -> Result<T> {
+    let (make, remove) = commands;
+    // One of the tree's commands, given the tree at `tree`; its stdout.
+    let sh = |command: &str, tree: &Path, label: &str| -> Result<String> {
+        let out = std::process::Command::new("sh")
+            .args(["-c", command])
+            .current_dir(repo)
+            .env("SLIMFIT_TREE", tree)
+            .env("SLIMFIT_REV", rev)
+            .env("SLIMFIT_DESCRIPTION", what)
+            .stderr(std::process::Stdio::inherit())
+            .output()?;
+        if !out.status.success() {
+            return Err(crate::fault::fault(
+                format!("the command to {label} the tree the change starts from failed ({}): {command}", out.status),
+                "fix `[check] before_make`/`before_remove` in slimfit.toml (or $SLIMFIT_BEFORE_MAKE/$SLIMFIT_BEFORE_REMOVE), or unset them for git's worktree",
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let asked = repo.join(OUT).join("before");
+    let _ = std::fs::remove_dir_all(&asked);
+    std::fs::create_dir_all(repo.join(OUT))?;
+    let printed = sh(make, &asked, "make")?;
+    let dir = printed.lines().map(str::trim).rfind(|l| !l.is_empty()).map_or(asked, |p| repo.join(p));
+    let out = f(&dir);
+    if let Err(e) = sh(remove, &dir, "remove") {
+        eprintln!("slimfit: {e:#}");
+    }
+    out
 }
 
 /// Where a unified diff moves each line of the files it touches: per file
@@ -187,14 +246,10 @@ impl Moves {
 #[cfg(test)]
 mod t {
     use super::*;
+    use crate::config::CheckConfig;
 
-    /// The worktree of where the change starts follows it: made when there
-    /// is none (or a directory that is no worktree), checked out again when
-    /// the change starts elsewhere, kept as it is when it starts there still.
-    #[test]
-    fn the_tree_before_follows_where_the_change_starts() {
-        let d = tempfile::tempdir().unwrap();
-        let repo = d.path();
+    /// A repository of two commits of `a`, "1" then "2"; the first's rev.
+    fn two_commits(repo: &Path) -> String {
         let g = crate::measure::t::git;
         g(repo, &["init", "-q"]);
         std::fs::write(repo.join("a"), "1").unwrap();
@@ -203,14 +258,83 @@ mod t {
         let one = git::run(repo, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
         std::fs::write(repo.join("a"), "2").unwrap();
         g(repo, &["commit", "-qam", "two"]);
-        let two = git::run(repo, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        one
+    }
+
+    /// Unset, the tree is a worktree of git's own at the rev, made over a
+    /// directory left there, and removed once measured, even when the
+    /// measurement fails.
+    #[test]
+    fn unset_the_tree_is_a_git_worktree_removed_once_measured() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path();
+        let one = two_commits(repo);
         std::fs::create_dir_all(repo.join(OUT).join("before")).unwrap();
-        let read = |dir: &Path| std::fs::read_to_string(dir.join("a")).unwrap();
-        assert_eq!(read(&checkout(repo, &one).unwrap()), "1");
-        let dir = checkout(repo, &two).unwrap();
-        assert_eq!(read(&dir), "2");
-        std::fs::write(dir.join("kept"), "").unwrap();
-        assert!(checkout(repo, &two).unwrap().join("kept").exists());
+        let git_only = CheckConfig::default().before_tree(|_| None);
+        let mut at = None;
+        let read = in_tree(repo, &one, "w", &git_only, |dir| {
+            at = Some(dir.to_path_buf());
+            Ok(std::fs::read_to_string(dir.join("a"))?)
+        });
+        assert_eq!(read.unwrap(), "1");
+        assert!(!at.unwrap().exists());
+        let failed = in_tree(repo, &one, "w", &git_only, |_| -> Result<()> { anyhow::bail!("no") });
+        assert!(failed.is_err() && !repo.join(OUT).join("before").exists());
+        assert_eq!(git::run(repo, &["worktree", "list"]).unwrap().lines().count(), 1);
+    }
+
+    /// Set, the given commands make and remove the tree, each given its
+    /// path, rev and description, and the path the make command prints is
+    /// the tree; git makes no worktree.
+    #[test]
+    fn set_the_given_commands_make_and_remove_the_tree() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path();
+        let one = two_commits(repo);
+        let log = repo.join("calls");
+        let call = |what: &str| format!("echo \"{what} $SLIMFIT_TREE|$SLIMFIT_REV|$SLIMFIT_DESCRIPTION\" >> calls");
+        let make = format!(
+            "{} && mkdir -p elsewhere && git show \"$SLIMFIT_REV:a\" > elsewhere/a && echo elsewhere",
+            call("make")
+        );
+        let remove = format!("{} && rm -r \"$SLIMFIT_TREE\"", call("remove"));
+        let set = CheckConfig { before_make: Some(make), before_remove: Some(remove), ..Default::default() };
+        let read = in_tree(repo, &one, "the tree", &set.before_tree(|_| None), |dir| {
+            Ok(std::fs::read_to_string(dir.join("a"))?)
+        });
+        assert_eq!(read.unwrap(), "1");
+        let asked = repo.join(OUT).join("before");
+        let made = repo.join("elsewhere");
+        let want = format!("make {}|{one}|the tree\nremove {}|{one}|the tree\n", asked.display(), made.display());
+        assert_eq!(std::fs::read_to_string(log).unwrap(), want);
+        assert!(!made.exists());
+        assert_eq!(git::run(repo, &["worktree", "list"]).unwrap().lines().count(), 1);
+    }
+
+    /// The measurement is kept while its key is the same, and taken again
+    /// when it changes.
+    #[test]
+    fn the_measurement_is_kept_while_its_key_is_the_same() {
+        let d = tempfile::tempdir().unwrap();
+        let cache = d.path().join("before.json");
+        let k = |s: &str| serde_json::json!([s]);
+        assert_eq!(kept(&cache, k("a"), || Ok(1)).unwrap(), 1);
+        assert_eq!(kept(&cache, k("a"), || -> Result<u32> { anyhow::bail!("measured again") }).unwrap(), 1);
+        assert_eq!(kept(&cache, k("b"), || Ok(2)).unwrap(), 2);
+    }
+
+    /// Each command is taken from its environment variable, then
+    /// slimfit.toml, then git's worktree.
+    #[test]
+    fn the_commands_come_from_the_environment_then_the_file_then_git() {
+        let file = CheckConfig { before_make: Some("m".into()), ..Default::default() };
+        let env = |v: &str| (v == crate::tools::BEFORE_REMOVE_ENV).then(|| "r".to_string());
+        let (make, remove) = file.before_tree(env);
+        assert_eq!((make.as_str(), remove.as_str()), ("m", "r"));
+        let (make, remove) = CheckConfig::default().before_tree(|_| None);
+        assert!(make.contains("git worktree add") && remove.contains("git worktree remove"));
+        let (make, _) = file.before_tree(|_| Some("e".into()));
+        assert_eq!(make, "e");
     }
 
     /// A measured test is the removed one by its function's place; when the

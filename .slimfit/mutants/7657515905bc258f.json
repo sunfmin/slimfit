@@ -1,0 +1,20 @@
+{
+  "tree": "23e3ed4d2ef5acf157b8b2d9dcff1de77ace3479+d1fba762150c532c",
+  "picker": "codex:01a2176a-124f-7f71-b95e-3ce6b38e1c6c:default",
+  "author": "claude-code:9c4939c6-c9b5-5292-8dce-3c1bc5cfb307:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/removed.rs:124:51: replace == with != in kept",
+        "why": "The added tests exercise worktree creation and cleanup, leaving open whether a matching cache is reused and whether a changed revision or suite configuration triggers remeasurement.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "removed_tests": {
+    "rust": [
+      "src/measure/removed.rs:195: the_tree_before_follows_where_the_change_starts"
+    ]
+  }
+}

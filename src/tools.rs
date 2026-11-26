@@ -7,6 +7,11 @@
 /// commands; report paths may start with `$SLIMFIT_OUT`.
 pub const OUT_ENV: &str = "SLIMFIT_OUT";
 
+/// The environment variables that override `[check] before_make` and
+/// `before_remove`.
+pub const BEFORE_MAKE_ENV: &str = "SLIMFIT_BEFORE_MAKE";
+pub const BEFORE_REMOVE_ENV: &str = "SLIMFIT_BEFORE_REMOVE";
+
 /// The environment variable that gives a suite's commands its `test_args`.
 pub const TEST_ARGS_ENV: &str = "SLIMFIT_TEST_ARGS";
 /// nextest's store: a directory per profile, holding its JUnit report.

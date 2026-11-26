@@ -37,12 +37,28 @@ pub struct CheckConfig {
     /// against it owes one, for all HEAD adds since their merge base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mutants_target: Option<String>,
+    /// The shell command that makes the tree a change starts from, when it
+    /// removes tests (`$SLIMFIT_BEFORE_MAKE` overrides it; unset, `git
+    /// worktree add`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_make: Option<String>,
+    /// The shell command that removes it once measured
+    /// (`$SLIMFIT_BEFORE_REMOVE` overrides it; unset, `git worktree remove`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before_remove: Option<String>,
 }
 
 impl Default for CheckConfig {
     fn default() -> Self {
         // 50: of slimfit's first 73 landings, the median added 22 source lines net and 21 added more than 50 (ADR 0012).
-        Self { coverage_slack: 1, target: None, growth_allowance: 50, mutants_target: None }
+        Self {
+            coverage_slack: 1,
+            target: None,
+            growth_allowance: 50,
+            mutants_target: None,
+            before_make: None,
+            before_remove: None,
+        }
     }
 }
 
@@ -52,7 +68,24 @@ impl CheckConfig {
     pub fn holds_mutants(&self, target: &str) -> bool {
         self.mutants_target.as_deref().is_none_or(|t| t == target)
     }
+
+    /// The commands that make and remove the tree a change starts from:
+    /// each from its environment variable (looked up by `env`), else
+    /// slimfit.toml, else git's worktree.
+    pub fn before_tree(&self, env: impl Fn(&str) -> Option<String>) -> (String, String) {
+        let pick = |var: &str, set: &Option<String>, git: &str| {
+            env(var).filter(|c| !c.trim().is_empty()).or_else(|| set.clone()).unwrap_or_else(|| git.to_string())
+        };
+        (
+            pick(BEFORE_MAKE_ENV, &self.before_make, GIT_BEFORE_MAKE),
+            pick(BEFORE_REMOVE_ENV, &self.before_remove, GIT_BEFORE_REMOVE),
+        )
+    }
 }
+
+/// Where unset, the tree a change starts from is a worktree of git's own.
+const GIT_BEFORE_MAKE: &str = "git worktree prune && git worktree add -q --detach \"$SLIMFIT_TREE\" \"$SLIMFIT_REV\"";
+const GIT_BEFORE_REMOVE: &str = "git worktree remove --force \"$SLIMFIT_TREE\"";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
