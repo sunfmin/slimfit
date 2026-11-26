@@ -442,6 +442,7 @@ mod tests {
         // The shim's build of drawn mutant 1, of a sample of 1: made by the
         // real nextest and recorded until mutant 0 has built, then refused,
         // failing, without the real one.
+        assert_eq!(applied("    a + b", "    1 /* ~ changed by cargo-mutants ~ */"), Some(1));
         let plans = tempfile::tempdir().unwrap();
         let plan = plans.path().join("plan.json");
         let budget = Budget { viable: 1, ..b };
