@@ -6,8 +6,10 @@ ADR 0008 holds each change to a record of its mutants before it lands, so a
 landing waits for its picks as well as its fast gate. In factorium the
 owner wants a landing to wait for its fast gate only, and the mutants of
 everything that landed on proving picked once, at promotion, by a worker
-that wrote none of it, which can then pick more (Felix, 2026-11-26, on
-slimfit#133 in factorium's tracker).
+that wrote none of it, which can then pick more. Felix, 2026-11-26, in
+factorium's tracker: 「我还是想把快测试结束后就合并到 proving 上面，然后在
+proving 上面 promotion 的时候再去用 worker 做 mutant，统一对所有提交的
+Diff 做一次可以让 worker 多挑一些」.
 
 ## Decision
 
