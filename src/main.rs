@@ -546,17 +546,12 @@ mod answer_tests {
             out["verdict"]["violations"].as_array().unwrap().iter().filter_map(|v| v["metric"].as_str()).collect();
         assert_eq!((code, outcomes, metrics), (1, vec!["killed", "survived"], vec!["survived_mutants"]), "{out:#}");
         let loose = "ratchet --loosen survived_mutants --reason r";
-        let no = faults(repo, &format!("{loose} --no-mutants nothing"));
-        assert!(no[0].fault.contains("--no-mutants, but this tree's measurement ran picked mutants"), "{no:?}");
-        // The author does not pick (slimfit#58): a record without a picker, or with the author as its picker, is refused.
-        for (args, fault) in [
-            ("", "without `--picker` and `--author`"),
-            (" --picker me --author me", "--picker is the change's author"),
-            (" --picker p", "without `--picker` and `--author`"),
-        ] {
-            let f = faults(repo, &format!("{loose}{args}"));
-            assert!(f[0].fault.contains(fault) && f[0].fix.contains("`slimfit help picker`"), "{args}: {f:?}");
-        }
+        // The author does not pick (slimfit#58): a record without a picker is refused (`Record::of` holds the rest).
+        let f = faults(repo, loose);
+        assert!(
+            f[0].fault.contains("without `--picker` and `--author`") && f[0].fix.contains("`slimfit help picker`"),
+            "{f:?}"
+        );
         assert!(!repo.join(crate::landing::DIR).exists(), "a refused ratchet writes no record");
         let (out, _) = slimfit(repo, &format!("{loose} --picker p --author a")).unwrap();
         let record = out["record"].as_str().unwrap().to_string();
@@ -587,14 +582,9 @@ mod answer_tests {
             assert!(fix.as_str().unwrap().contains("no record of its mutants that names a picker other"), "{fix}");
         }
         git(repo, &["rm", "-qf", &unnamed.to_string_lossy()]);
-        // Either flag with no record to write is refused.
-        assert!(faults(repo, "ratchet --picker p --author a")[0].fault.contains("no record to name them in"));
         assert!(faults(repo, "ratchet --no-mutants")[0].fault.contains("a value is required"));
-        let blank = crate::fault::of(slimfit_args(repo, &["ratchet", "--no-mutants", " "]).unwrap_err());
-        assert_eq!(blank[0].fault, "--no-mutants without a reason");
         let no_mutants =
             ["ratchet", "--no-mutants", "a constant: no decision to mutate", "--picker", "p", "--author", "b"];
-        assert!(faults(repo, "ratchet --no-mutants x")[0].fault.contains("without `--picker` and `--author`"));
         let (out, _) = slimfit_args(repo, &no_mutants).unwrap();
         let none = std::fs::read_to_string(repo.join(out["record"].as_str().unwrap())).unwrap();
         assert!(none.contains("\"none\": \"a constant: no decision to mutate\"") && !none.contains("picks"), "{none}");
@@ -613,12 +603,7 @@ mod answer_tests {
         let (report, _) = slimfit(repo, "report --points 1").unwrap();
         let counts = serde_json::json!({ "with_picks": 1, "without_picks": 1, "older": 1 });
         assert_eq!(report["mutants_records"], counts, "{report:#}");
-        // A record that does not parse, and a target that is not there, are refused.
-        std::fs::write(repo.join(crate::landing::DIR).join("x.json"), "{").unwrap();
-        let f = faults(repo, "report");
-        assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");
-        assert_eq!(f[0].fix, "restore it from git: `git checkout -- .slimfit/mutants`");
-        std::fs::remove_file(repo.join(crate::landing::DIR).join("x.json")).unwrap();
+        // A target that is not there is refused.
         std::fs::remove_file(repo.join(crate::landing::DIR).join("old.json")).unwrap();
         cfg.check.target = Some("gone".into());
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();

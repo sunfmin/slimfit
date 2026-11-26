@@ -1,0 +1,38 @@
+{
+  "tree": "d30e7c7523b54974b607420082cfceb898818a5b+086067afb537e9bf",
+  "picker": "codex:01a216e9-e7d8-7660-88d0-cbad080ccf79:default",
+  "author": "claude-code:5838ce1e-a635-5afb-97c0-c29c925ef48e:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/doctor.rs:247:18: replace > with >= in diagnose",
+        "why": "Only a host load exactly at the busy threshold distinguishes the two comparisons.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:105:66: replace && with || in find",
+        "why": "A lookup tested with executable stand-ins can miss that a non-executable file or a directory now qualifies.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:231:22: replace match guard repo.join(ratchet::FILE).exists() with false in diagnose",
+        "why": "The mutation skips the guarded branch for an existing baseline, and the visible assertions do not exercise a finding from that branch.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/doctor.rs:246:34: replace * with + in diagnose",
+        "why": "Clearly idle and clearly busy hosts can keep the same classification even when the formula moves the cutoff.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "removed_tests": {
+    "rust": [
+      "src/doctor.rs:540: a_whole_codebase_mutants_run_is_replaced_by_the_changes"
+    ]
+  }
+}

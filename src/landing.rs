@@ -658,6 +658,60 @@ mod t {
         assert!(Firsts::load(d.path()).0.is_empty());
     }
 
+    /// `ratchet`'s record of a measurement: of its picks, or of a one-line
+    /// reason none was worth one, never both; naming a picker and an author
+    /// who differ; either name with no record to write is refused.
+    #[test]
+    fn a_record_names_its_picks_or_why_none_and_a_picker_other_than_its_author() {
+        use crate::model::{Mutated, SuiteMeasurement};
+        let m = |picked: bool| {
+            let pick = Pick { name: "n".into(), why: "w".into(), outcome: None, first_outcome: None };
+            let picks = if picked { vec![pick] } else { vec![] };
+            let s = SuiteMeasurement {
+                suite: "s".into(),
+                metrics: Default::default(),
+                tests: vec![],
+                uncovered: vec![],
+                mutants: vec![],
+                reach: None,
+                mutated: Some(Mutated { picks, change: Default::default() }),
+                command_seconds: 0.0,
+                untimed: false,
+            };
+            Measurement { tree: "t".into(), with_mutants: picked, suites: vec![s] }
+        };
+        let of = |picked, none: Option<&str>, picker: Option<&str>, author: Option<&str>| {
+            Record::of(&m(picked), none.map(Into::into), picker.map(Into::into), author.map(Into::into), [].into())
+        };
+        let refused = |r: Result<Option<Record>>| crate::fault::of(r.unwrap_err()).remove(0).fault;
+        assert!(refused(of(true, Some("x"), Some("p"), Some("a"))).contains("ran picked mutants"));
+        for blank in [" ", "a\nb"] {
+            assert_eq!(refused(of(false, Some(blank), Some("p"), Some("a"))), "--no-mutants without a reason");
+        }
+        for (picker, author) in [(Some("p"), Some("a")), (Some("p"), None), (None, Some("a"))] {
+            assert!(refused(of(false, None, picker, author)).contains("no record to name them in"));
+        }
+        assert_eq!(of(false, None, None, None).unwrap(), None);
+        for (picked, none) in [(true, None), (false, Some("x"))] {
+            for (picker, author) in [(None, None), (Some("p"), None), (None, Some("a")), (Some(" "), Some("a"))] {
+                assert!(refused(of(picked, none, picker, author)).contains("without `--picker` and `--author`"));
+            }
+            assert!(refused(of(picked, none, Some("me"), Some(" me "))).contains("--picker is the change's author"));
+            let r = of(picked, none, Some(" p "), Some("a")).unwrap().unwrap();
+            assert_eq!(
+                (r.picker.as_str(), r.author.as_str(), r.none.is_some(), r.picks.len()),
+                ("p", "a", !picked, picked as usize)
+            );
+        }
+        // A record that does not parse is refused by name.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(DIR)).unwrap();
+        std::fs::write(d.path().join(DIR).join("x.json"), "{").unwrap();
+        let f = crate::fault::of(records(d.path()).unwrap_err());
+        assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");
+        assert_eq!(f[0].fix, "restore it from git: `git checkout -- .slimfit/mutants`");
+    }
+
     /// FNV-1a 64, as published: a record's name is the hash of its text.
     #[test]
     fn a_text_hashes_as_fnv_1a() {
