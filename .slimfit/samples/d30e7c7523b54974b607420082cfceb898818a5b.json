@@ -1,0 +1,29 @@
+{
+  "tip": "d30e7c7523b54974b607420082cfceb898818a5b",
+  "from": "f1146f6d1dba24bb14cc9892e7b68e34a3e42784",
+  "pool": 77,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/cli.rs:565:46: replace + with - in help",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/cli.rs:565:46: replace + with * in help",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:308:46: replace == with != in KeptMutant::holds",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:256:26: replace == with != in KeptFile::holds",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/keep.rs:222:39: replace match guard of > 0.0 && total > 0.0 with false in Kept::keeps",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
