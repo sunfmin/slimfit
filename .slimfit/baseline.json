@@ -132,6 +132,14 @@
       "commits_90d": 59,
       "commits_total": 59,
       "reason": "Already deep: main reaches it through four calls (all, sampled, candidates, cap) and keep through two (source_suite, churn); behind them each task kind's finder and its steps are private and live together, so a new kind or a reworded recipe lands in one place. The churn is that: step texts and new kinds, not callers reaching in. Splitting per kind into submodules would spread the TaskKind/Task/cap contract without hiding more behind it; the redundant-test overlap and trend reading are already single private functions with their own tests through the same Task output."
+    },
+    {
+      "suite": "rust",
+      "file": "src/measure.rs",
+      "prod_lines": 581,
+      "commits_90d": 63,
+      "commits_total": 63,
+      "reason": "Already deep: callers reach it through current/cached (Session, keep), Options and the shared help texts; behind current the cache (measurement.json, timed.json, retimed), the scratch dir, each suite's Run of commands and reports, CPU timing and the reduction to SuiteMeasurement are private. Its other exits are seams with one job each: Resolver (landing builds it per suite), reduce+Timing (fixtures reduce real reports without running a command) and function_hash (keep and tasks hash a mutant's function). The churn is features landing where they belong (mutants, reach, CPU time ADR 0010, the Python preset), not callers reaching in; the per-preset dispatch to rust/go/python_source is three short matches, and a source facade over them would be a pass-through, not deeper. Moving Run or the cache into submodules would shrink the file without hiding more behind current."
     }
   ],
   "kept_spans": [
