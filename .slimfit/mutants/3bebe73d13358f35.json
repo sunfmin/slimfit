@@ -1,0 +1,22 @@
+{
+  "tree": "e93632a7dbdda0f9166a2e4e60a15ba1cc860fa5+d1fba762150c532c",
+  "picker": "codex:01a2179a-1137-7f83-ae1b-355325aa4d83:default",
+  "author": "claude-code:d37473d8-0ad5-5f02-b97c-15bcf3d24730:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/measure/mutants.rs:35:79: replace || with && in Mutants::of",
+        "why": "The shown tests cover missing reasons, so a whitespace-only or multiline reason may slip through when every pick has a matching reason argument.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/main.rs:241:88: replace || with && in run",
+        "why": "The shown tests may miss a ratchet that writes growth and mutant records together and drops the author when only one of --picker and --no-mutants is supplied.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "added_lines": 61
+}
