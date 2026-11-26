@@ -143,37 +143,34 @@ fn in_tree<T>(
     f: impl FnOnce(&Path) -> Result<T>,
 ) -> Result<T> {
     let (make, remove) = commands;
+    // One of the tree's commands, given the tree at `tree`; its stdout.
+    let sh = |command: &str, tree: &Path, label: &str| -> Result<String> {
+        let out = std::process::Command::new("sh")
+            .args(["-c", command])
+            .current_dir(repo)
+            .env("SLIMFIT_TREE", tree)
+            .env("SLIMFIT_REV", rev)
+            .env("SLIMFIT_DESCRIPTION", what)
+            .stderr(std::process::Stdio::inherit())
+            .output()?;
+        if !out.status.success() {
+            return Err(crate::fault::fault(
+                format!("the command to {label} the tree the change starts from failed ({}): {command}", out.status),
+                "fix `[check] before_make`/`before_remove` in slimfit.toml (or $SLIMFIT_BEFORE_MAKE/$SLIMFIT_BEFORE_REMOVE), or unset them for git's worktree",
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
     let asked = repo.join(OUT).join("before");
     let _ = std::fs::remove_dir_all(&asked);
     std::fs::create_dir_all(repo.join(OUT))?;
-    let printed = sh(repo, make, &asked, rev, what, "make")?;
+    let printed = sh(make, &asked, "make")?;
     let dir = printed.lines().map(str::trim).rfind(|l| !l.is_empty()).map_or(asked, |p| repo.join(p));
     let out = f(&dir);
-    if let Err(e) = sh(repo, remove, &dir, rev, what, "remove") {
+    if let Err(e) = sh(remove, &dir, "remove") {
         eprintln!("slimfit: {e:#}");
     }
     out
-}
-
-/// Runs one of the tree's commands; its stdout, or why it failed.
-fn sh(repo: &Path, command: &str, tree: &Path, rev: &str, what: &str, label: &str) -> Result<String> {
-    use crate::tools::{DESCRIPTION_ENV, REV_ENV, TREE_ENV};
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(repo)
-        .env(TREE_ENV, tree)
-        .env(REV_ENV, rev)
-        .env(DESCRIPTION_ENV, what)
-        .stderr(std::process::Stdio::inherit())
-        .output()?;
-    if !out.status.success() {
-        return Err(crate::fault::fault(
-            format!("the command to {label} the tree the change starts from failed ({}): {command}", out.status),
-            "fix `[check] before_make`/`before_remove` in slimfit.toml (or $SLIMFIT_BEFORE_MAKE/$SLIMFIT_BEFORE_REMOVE), or unset them for git's worktree",
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Where a unified diff moves each line of the files it touches: per file
