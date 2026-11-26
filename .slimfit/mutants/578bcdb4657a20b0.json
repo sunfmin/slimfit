@@ -1,0 +1,6 @@
+{
+  "tree": "ae6721cb8024b87bc74efa59fd6daa7819e435d1+d1fba762150c532c",
+  "picker": "codex:01a216fb-c316-75f3-9b09-5145d6d6dd96:default",
+  "author": "claude-code:7eca75b5-7caa-5c50-acc0-b2bb056f4f50:opus",
+  "none": "The new test checks both successful and refused builds and verifies that the real build runs on success, so all three constant replacements would fail."
+}
