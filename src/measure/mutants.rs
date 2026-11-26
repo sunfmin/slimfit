@@ -27,19 +27,17 @@ pub enum Mutants {
     Picks(Vec<Pick>),
 }
 
-/// The most mutants one change may pick (ADR 0008).
-pub const PICKS_MAX: usize = 5;
-
 impl Mutants {
     /// The picks `check --mutants <name>... --why <why>...` names: at most
-    /// `PICKS_MAX`, each with its own one-line reason; none names `None`.
-    pub fn of(names: Vec<String>, why: Vec<String>) -> Result<Mutants> {
+    /// `max` (`[check] picks_max`, ADR 0008), each with its own one-line
+    /// reason; none names `None`.
+    pub fn of(names: Vec<String>, why: Vec<String>, max: usize) -> Result<Mutants> {
         let mut faults = Vec::new();
-        if names.len() > PICKS_MAX {
+        if names.len() > max {
             faults.push(fault::Fault {
-                fault: format!("{} mutants picked, more than {PICKS_MAX}", names.len()),
+                fault: format!("{} mutants picked, more than {max} (`[check] picks_max`)", names.len()),
                 fix: format!(
-                    "pick at most {PICKS_MAX}: those on the decisions the change makes (comparisons, boolean logic, \
+                    "pick at most {max}: those on the decisions the change makes (comparisons, boolean logic, \
                      match guards, a return value that matters)"
                 ),
             });

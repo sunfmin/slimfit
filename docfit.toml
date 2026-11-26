@@ -16,3 +16,4 @@ ignore = ["src/help/**"]
 "docs/adr/0012-growth-past-an-allowance-carries-a-reviewed-record.md" = "adr"
 "docs/adr/0013-releases-are-signed-and-notarized-by-the-taps-workflow.md" = "adr"
 "docs/adr/0014-an-adr-holds-the-decision-the-evidence-lives-in-the-issue.md" = "adr"
+"docs/adr/0015-a-repo-may-hold-the-record-of-mutants-at-its-base-branch.md" = "adr"

@@ -20,7 +20,7 @@ mod removed;
 pub mod sample;
 
 use mutants::{Change, Mutation, Picked};
-pub use mutants::{Mutants, PICKS_MAX, candidates, refuse_unpickable};
+pub use mutants::{Mutants, candidates, refuse_unpickable};
 
 pub const OUT: &str = ".slimfit/out";
 
