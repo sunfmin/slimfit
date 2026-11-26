@@ -516,39 +516,27 @@ mod tests {
     }
 
     /// Mutants in a gate, written in its entry or its script, or in an
-    /// `[idle]` step: each goes to the agent's own change.
+    /// `[idle]` step: each goes to the agent's own change. `--all-mutants`,
+    /// or a mutation tool run on its own without a diff, mutates the whole
+    /// codebase; with `--in-diff` it runs mutants only.
     #[test]
     fn mutants_in_a_gate_or_idle_work_go_to_the_change() {
         let r = repo(&[
             (
                 "factorium.toml",
-                "[gate]\nfast = \"slimfit check --mutants\"\nslow = \"sh slow.sh\"\n[idle]\nsteps = [\"slimfit check --mutants\"]\n",
+                "[gate]\nfast = \"slimfit check --mutants\"\nslow = \"sh slow.sh\"\n[idle]\nsteps = [\"slimfit next --all-mutants\", \"slimfit check --mutants\"]\n",
             ),
-            ("slow.sh", "cargo mutants --in-diff d\n"),
+            ("slow.sh", "cargo mutants --in-diff d\ncargo mutants --workspace\n"),
         ]);
         let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::MutantsInGate; 3], "{f:#?}");
-        assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] runs mutation testing as idle work"), "{f:#?}");
-        assert!(f[1].what.contains("[gate] fast") && f[2].what.contains("slow.sh:1"), "{f:#?}");
+        use Kind::{MutantsInGate as Gate, WholeCodebaseMutants as Whole};
+        assert_eq!(kinds(&f), vec![Whole, Gate, Gate, Gate, Whole], "{f:#?}");
+        assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] mutates the whole codebase"), "{f:#?}");
+        assert!(f[1].what.starts_with("factorium.toml [idle] steps[1] runs mutation testing as idle work"), "{f:#?}");
+        assert!(f[2].what.contains("[gate] fast") && f[3].what.contains("slow.sh:1"), "{f:#?}");
+        assert!(f[4].what.starts_with("slow.sh:2") && f[4].fix.contains("`slimfit check --mutants`"), "{f:#?}");
         let fix = "--background -- slimfit check --mutants <name>... --why <why>...`), then `slimfit ratchet`";
         assert!(f.iter().all(|f| f.fix.contains(fix)), "{f:#?}");
-    }
-
-    /// `--all-mutants`, or a mutation tool run on its own without a diff,
-    /// mutates the whole codebase: found in idle work and in a gate's script.
-    #[test]
-    fn a_whole_codebase_mutants_run_is_replaced_by_the_changes() {
-        let r = repo(&[
-            (
-                "factorium.toml",
-                "[gate]\nslow = \"sh slow.sh\"\n[idle]\nsteps = [\"slimfit next --all-mutants\", \"slimfit check --mutants\"]\n",
-            ),
-            ("slow.sh", "cargo mutants --workspace\n"),
-        ]);
-        let f = diagnose(r.path(), &host(&every_tool()));
-        assert_eq!(kinds(&f), vec![Kind::WholeCodebaseMutants, Kind::MutantsInGate, Kind::WholeCodebaseMutants]);
-        assert!(f[0].what.starts_with("factorium.toml [idle] steps[0] mutates the whole codebase"), "{f:#?}");
-        assert!(f[2].what.starts_with("slow.sh:1") && f[2].fix.contains("`slimfit check --mutants`"), "{f:#?}");
     }
 
     /// No branch to land on: no change's lines are held to a measurement.
