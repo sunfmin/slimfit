@@ -280,7 +280,8 @@ pub fn shim(args: Vec<OsString>) -> ! {
         && !args.iter().any(|a| a == "--no-run");
     let build = args.first().is_some_and(|a| a == "nextest") && args.iter().any(|a| a == "--no-run");
     if build {
-        std::process::exit(budgeted(&args));
+        let (plan, here) = (std::env::var_os(PLAN_ENV).map(PathBuf::from), std::env::current_dir().ok());
+        std::process::exit(budgeted(plan, here, || real_or_fail(&args)));
     }
     test_run.then(|| narrow(&mut args));
     // Not exec: this process must exit to write its own coverage profile.
@@ -299,15 +300,15 @@ fn narrow(args: &mut Vec<OsString>) {
     }
 }
 
-/// A build (`--no-run`): not made, and failed, when the plan's budget is
-/// spent before the drawn mutant applied; else the real one, recording a
-/// drawn mutant that built.
-fn budgeted(args: &[OsString]) -> i32 {
-    let plan = std::env::var_os(PLAN_ENV).map(PathBuf::from);
+/// A build (`--no-run`) in build directory `here`, under the plan at
+/// `plan`: not made, and failed, when the plan's budget is spent before the
+/// drawn mutant applied; else the `real` one, recording a drawn mutant that
+/// built.
+fn budgeted(plan: Option<PathBuf>, here: Option<PathBuf>, real: impl FnOnce() -> i32) -> i32 {
     let read = |p: &PathBuf| serde_json::from_str::<Plan>(&std::fs::read_to_string(p).ok()?).ok();
     let budget = plan.as_ref().and_then(|p| Some((p.parent()?.to_path_buf(), read(p)?.budget?)));
-    let rank = budget.as_ref().and_then(|(_, b)| b.applied(&std::env::current_dir().ok()?));
-    let (Some((dir, budget)), Some(rank)) = (budget, rank) else { return real_or_fail(args) };
+    let rank = budget.as_ref().and_then(|(_, b)| b.applied(here.as_ref()?));
+    let (Some((dir, budget)), Some(rank)) = (budget, rank) else { return real() };
     if budget.spent(rank, built(&dir)) {
         eprintln!(
             "slimfit: drawn mutant {rank}: {} drawn before it built: not built, and not in the sample",
@@ -316,7 +317,7 @@ fn budgeted(args: &[OsString]) -> i32 {
         return 1;
     }
     eprintln!("slimfit: drawn mutant {rank}: building");
-    let code = real_or_fail(args);
+    let code = real();
     let _ = (code == 0).then(|| std::fs::write(dir.join(format!("built-{rank}")), ""));
     code
 }
@@ -437,7 +438,27 @@ mod tests {
         assert_eq!(applied("    a + b", "    0 /* ~ changed by cargo-mutants ~ */"), None);
         assert!(!b.spent(1, [0, 3].into_iter()));
         assert!(b.spent(4, [0, 3].into_iter()));
-        assert!(Budget { known: vec![2], ..b }.spent(3, [0].into_iter()));
+        assert!(Budget { known: vec![2], ..b.clone() }.spent(3, [0].into_iter()));
+        // The shim's build of drawn mutant 1, of a sample of 1: made by the
+        // real nextest and recorded until mutant 0 has built, then refused,
+        // failing, without the real one.
+        let plans = tempfile::tempdir().unwrap();
+        let plan = plans.path().join("plan.json");
+        let budget = Budget { viable: 1, ..b };
+        let p = Plan { root: build.path().into(), tests: vec![], functions: vec![], budget: Some(budget) };
+        std::fs::write(&plan, serde_json::to_string(&p).unwrap()).unwrap();
+        let ran = std::cell::Cell::new(0);
+        let build_of = |plan: &Path| {
+            budgeted(Some(plan.into()), Some(build.path().into()), || {
+                ran.set(ran.get() + 1);
+                0
+            })
+        };
+        assert_eq!((build_of(&plan), ran.get()), (0, 1));
+        assert!(plans.path().join("built-1").exists());
+        std::fs::write(plans.path().join("built-0"), "").unwrap();
+        assert_eq!((build_of(&plan), ran.get()), (1, 1));
+        assert_eq!((build_of(&plans.path().join("none.json")), ran.get()), (0, 2), "no plan: the real build");
     }
 
     #[test]
