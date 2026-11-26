@@ -11,9 +11,8 @@
     "local_refs": 2
   },
   "README.md": {
-    "bytes": 5651,
+    "bytes": 5628,
     "local_refs": 1,
-    "measurements": 2,
     "paragraph": 936
   },
   "docs/adr/0001-coverage-slack.md": {
@@ -45,11 +44,7 @@
   "docs/adr/0008-a-second-agent-picks-the-mutants-the-gate-holds-a-record.md": {
     "bytes": 8419,
     "local_refs": 12,
-    "paragraph": 910,
-    "pointers": [
-      ".slimfit/out/",
-      ".slimfit/out/before/"
-    ]
+    "paragraph": 910
   },
   "docs/adr/0009-hard-bounds-only-for-what-is-cheap-and-objective.md": {
     "bytes": 5933,
