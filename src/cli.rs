@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// You (the agent) change code; slimfit measures each change and ratchets the result. Never argue with a number: change the code until `slimfit check` passes. Run `slimfit <command> --help` before a command's first run. Your judgment calls are yours; slimfit checks that you made them, not that they were right. What matters most, first:
 ///
 /// 1. FAST TESTS COME FIRST. slimfit must not slow the feedback loop. A gate runs the tests at most once. `slimfit check` IS a test run (instrumented, about 1.5× a plain run): it replaces the project's own test run in that gate, never adds to it.
-/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker picks at most {const:PICKS_MAX}; you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). Not as idle work: it commits nothing, so nothing it measures is recorded.
+/// 2. MUTANTS NEVER IN A GATE, ONLY ON A CHANGE, AND ONLY THE FEW YOU PICK. Mutation testing is expensive: never put it in a gate that holds up a landing or a promotion. slimfit never mutates the whole codebase, nor every mutant of a change: a second agent, never you who made the change, picks the few worth running, given only [the picker's goal](help:picker), your diff and the candidates. `slimfit check --mutants` lists the change's mutants (nothing builds); the picker picks at most `[check] picks_max` (by default {const:PICKS_MAX}); you run them at background priority (in factorium: `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`); then `slimfit ratchet --picker <its id> --author <yours>` records the picks, why, who picked and their outcomes in `.slimfit/mutants/`, and you commit that with the change. When the picker finds nothing worth a mutant, `slimfit ratchet --no-mutants "<its why>" --picker <its id> --author <yours>` records that instead. The guarantee is the picks, not every mutant: the gate holds only that a record exists and names a picker other than its author, without running a mutant: its plain `slimfit check` fails while the change adds source lines and no such record (see [what the gate holds](help:mutants-scope)). A repo may hold the record at its base branch instead (`[check] mutants_target`): one record per promotion, over every landing since, picked by the promotion's worker with `--target`. Not as idle work: it commits nothing, so nothing it measures is recorded.
 /// 3. A NEW TEST MUST BE FAST TOO. When goals conflict, cover a line with a fast test or delete the code; never with a slow test. This holds for uncovered and surviving-mutant tasks alike. A test that covers a line asserts what the line decides: one that only runs it is no fix, and no bound asks for it (`check` fails on no coverage number).
 /// 4. CODE GROWS ONLY FOR A REASON A SECOND AGENT ACCEPTED. A change that adds more than `growth_allowance` source lines net (by default {const:GROWTH_ALLOWANCE}; code it deletes counts against them) carries a growth record in `.slimfit/growth/`: the issue it serves, the existing code you weighed reusing or deleting, and the verdict of a second agent, never you, given only [the reviewer's goal](help:reviewer) and your diff: `as-is` with its why, or what to cut, which you then do or answer. `slimfit ratchet --serves ... --considered ... --as-is "<its why>" --reviewer <its id> --author <yours>` writes it. The gate's plain `slimfit check` fails without one (`unrecorded_growth`), never on the number alone.
 ///
@@ -184,7 +184,7 @@ pub(crate) enum Cmd {
     ///
     /// ## When to run it
     ///
-    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change: first with no name, to list the mutants a second agent picks from (see [the picker](help:picker)); then with its picks, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that the change adds a record of them: `unrecorded_mutants` (see [what the gate holds](help:mutants-scope)); and, when it adds more than `growth_allowance` source lines net, a growth record: `unrecorded_growth` (see [the reviewer](help:reviewer)).
+    /// After each change, and as a task's `accept` command. In a gate, in place of the project's own test run: `slimfit check` IS that test run, instrumented (see [setting up in factorium](help:factorium)). `--mutants` is run by the agent on its own change: first with no name, to list the mutants a second agent picks from (see [the picker](help:picker)); then with its picks, at background priority (in factorium, `factorium worker exclusive --background -- slimfit check --mutants <name>... --why <why>...`), before `slimfit ratchet`; never in a gate, not as idle work. The plain `check` in the gate holds that the change adds a record of them: `unrecorded_mutants` (see [what the gate holds](help:mutants-scope)), unless the repo holds it at its base branch (`mutants_target` under `[check]`: then only `check --target <that branch>` holds it, for every landing since); and, when it adds more than `growth_allowance` source lines net, a growth record: `unrecorded_growth` (see [the reviewer](help:reviewer)).
     ///
     /// ## What it reads and writes
     ///
@@ -226,7 +226,7 @@ pub(crate) enum Cmd {
     Check {
         #[command(flatten)]
         at: At,
-        /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (at most {const:PICKS_MAX}, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
+        /// Without a name: list the change's mutants to pick from (`candidates`); nothing builds or runs. With names (at most `[check] picks_max`, by default {const:PICKS_MAX}, as listed): also run those picks and check `survived_mutants`, none may survive (see [mutants scope](help:mutants-scope)). On your own change, at background priority; never in a gate.
         #[arg(long, num_args = 0.., value_name = "NAME", verbatim_doc_comment)]
         mutants: Option<Vec<String>>,
         /// With `--mutants` and no name: list only the candidates of this function (`<file>: <function>`, as a grouped listing's `functions` names it), in full (repeatable).
@@ -238,6 +238,8 @@ pub(crate) enum Cmd {
         /// Measure again even if the working tree is unchanged.
         #[arg(long, verbatim_doc_comment)]
         fresh: bool,
+        #[command(flatten)]
+        against: Against,
     },
     /// Moves the baseline to the current measurement; bounds only tighten.
     ///
@@ -304,6 +306,8 @@ pub(crate) enum Cmd {
         author: Option<String>,
         #[command(flatten)]
         growth: Box<GrowthArgs>,
+        #[command(flatten)]
+        against: Against,
     },
     /// Records that a candidate is kept as it is: a redundant test, a slow test, a file a deepen task proposed, an uncovered span, or a sampled survivor that is an equivalent mutant. It is not proposed again until it changes as below.
     ///
@@ -432,6 +436,14 @@ pub(crate) enum Cmd {
     },
 }
 
+/// The branch a command takes the change against, in place of `[check] target`.
+#[derive(clap::Args)]
+pub(crate) struct Against {
+    /// Take the change against this branch, in place of `[check] target`: all HEAD adds since their merge base. A repo that holds the record of mutants at its base branch (`[check] mutants_target`) lists, runs and records the picks of a promotion with it (see [what the gate holds](help:mutants-scope)).
+    #[arg(long, value_name = "REF", verbatim_doc_comment)]
+    pub target: Option<String>,
+}
+
 /// The growth record `ratchet` writes: any of these flags asks for one.
 #[derive(clap::Args, Default)]
 pub(crate) struct GrowthArgs {
@@ -526,7 +538,7 @@ fn help() -> Help {
                 "and",
             ),
         )
-        .constant("PICKS_MAX", measure::PICKS_MAX)
+        .constant("PICKS_MAX", check.picks_max)
         .constant("TIMEOUT_FLOOR", select::TIMEOUT_FLOOR)
         .constant("TIMEOUT_FACTOR", select::TIMEOUT_FACTOR)
         .table::<doctor::Kind>("finding")
@@ -715,7 +727,11 @@ mod tests {
         let violation = ratchet::Violation::example();
         assert_eq!(named(ratchet::VIOLATION_HELP), keys(&violation));
         let removed = [("rust".to_string(), vec!["t.rs:1: t".to_string()])];
-        let held = crate::landing::Held { removed_tests: removed.clone().into(), ..Default::default() };
+        let held = crate::landing::Held {
+            removed_tests: removed.clone().into(),
+            mutants_held_at: Some("base".into()),
+            ..Default::default()
+        };
         assert_eq!(named(crate::landing::HELD_HELP), keys(&held));
         assert_eq!(named(crate::landing::RECORDS_HELP), keys(&crate::landing::Records::default()));
         assert_eq!(named(crate::report::RATE_HELP), keys(&crate::report::Rate::default()));

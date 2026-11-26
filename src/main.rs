@@ -161,8 +161,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 EXIT_OK,
             ))
         }
-        Cmd::Check { mutants: Some(names), why, function, .. } if names.is_empty() => {
-            let s = Session::open(&head)?;
+        Cmd::Check { mutants: Some(names), why, function, against, .. } if names.is_empty() => {
+            let s = Session::open(&head)?.against(against.target);
             if !why.is_empty() {
                 return Err(fault::fault(
                     "--why without a mutant's name",
@@ -192,7 +192,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
             answer["next"] = next.into();
             Ok((answer, EXIT_OK))
         }
-        Cmd::Check { mutants, why, fresh, function, .. } => {
+        Cmd::Check { mutants, why, fresh, function, against, .. } => {
             if !function.is_empty() {
                 return Err(fault::fault(
                     "--function with a mutant's name",
@@ -202,8 +202,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                     ),
                 ));
             }
-            let s = Session::open(&head)?;
-            let scope = measure::Mutants::of(mutants.unwrap_or_default(), why)?;
+            let s = Session::open(&head)?.against(against.target);
+            let scope = measure::Mutants::of(mutants.unwrap_or_default(), why, s.cfg.check.picks_max)?;
             let with_mutants = scope != measure::Mutants::None;
             let m =
                 s.measure(measure::Options { mutants: scope, fresh, timed: !with_mutants, ..Default::default() })?;
@@ -225,8 +225,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
                 code,
             ))
         }
-        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, growth, .. } => {
-            let s = Session::open(&head)?;
+        Cmd::Ratchet { loosen, reason, fresh, dry_run, no_mutants, picker, author, growth, against, .. } => {
+            let s = Session::open(&head)?.against(against.target);
             let old = &s.base;
             // Timed as a gate times it: a test run inside `--mutants` takes the
             // time of one of the same files, or runs again (slimfit#74).
@@ -608,7 +608,86 @@ mod answer_tests {
         cfg.check.target = Some("gone".into());
         std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
         let f = faults(repo, "check");
-        assert!(f[0].fault.starts_with("slimfit.toml's [check] target gone shares no commit with HEAD"), "{f:?}");
+        assert!(
+            f[0].fault.starts_with("the target gone (`--target`, or slimfit.toml's [check] target) shares no commit"),
+            "{f:?}"
+        );
+    }
+
+    /// A repo that holds the record of mutants at its base branch
+    /// (`[check] mutants_target`): a landing's plain `check`
+    /// owes none, nor does `next` ask; `check --target <base>` owes one for
+    /// every landing since, until a promotion's picks over the whole range
+    /// are recorded with `ratchet --target <base>`. The range's growth is
+    /// its landings', not held again. The cap is `[check] picks_max`.
+    #[test]
+    fn a_record_held_at_the_base_covers_every_landing_since() {
+        let (dir, mut cfg) = sample_repo();
+        let repo = dir.path();
+        cfg.suites[0].overrides.mutants_tests = Some(crate::config::MutantTests::All);
+        cfg.check.target = Some("proving".into());
+        cfg.check.mutants_target = Some("base".into());
+        cfg.check.picks_max = 1;
+        cfg.check.growth_allowance = 4;
+        std::fs::write(repo.join("slimfit.toml"), toml::to_string(&cfg).unwrap()).unwrap();
+        std::fs::write(repo.join(".gitignore"), ".slimfit/out\n").unwrap();
+        slimfit(repo, "ratchet").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "adopt"]);
+        git(repo, &["branch", "base"]);
+        git(repo, &["branch", "proving"]);
+        let check = |args: &str, want: i32| {
+            let (out, code) = slimfit(repo, args).unwrap();
+            assert_eq!(code, want, "{out:#}");
+            out
+        };
+        let land = |branch: &str, f: &str| {
+            git(repo, &["checkout", "-qb", branch, "proving"]);
+            let lib = repo.join("src/lib.rs");
+            let text = std::fs::read_to_string(&lib).unwrap();
+            std::fs::write(&lib, text + &format!("\npub fn {f}() -> u8 {{\n    1\n}}\n")).unwrap();
+            git(repo, &["commit", "-qam", branch]);
+            // Its own landing: no record of mutants owed, and its growth (3, of 4 allowed) held.
+            let out = check("check", crate::EXIT_OK);
+            assert_eq!(
+                (out["landing"]["lines"].as_u64(), &out["landing"]["mutants_held_at"]),
+                (Some(3), &json!("base"))
+            );
+            git(repo, &["checkout", "-q", "proving"]);
+            git(repo, &["merge", "-q", "--ff-only", branch]);
+        };
+        land("a", "a_one");
+        land("b", "b_two");
+        let (next, _) = slimfit(repo, "next --all --kind pick-mutants").unwrap();
+        assert_eq!(next["tasks"], json!([]), "{next:#}");
+
+        // The promotion owes one record for the range: 6 lines, past the growth allowance and not held for it.
+        let out = check("check --target base", crate::EXIT_VIOLATION);
+        let v = &out["verdict"]["violations"];
+        assert_eq!(
+            (v.as_array().unwrap().len(), v[0]["metric"].as_str(), v[0]["current"].as_f64()),
+            (1, Some("unrecorded_mutants"), Some(6.0)),
+            "{out:#}"
+        );
+        assert_eq!((out["landing"]["target"].as_str(), out["landing"].get("mutants_held_at")), (Some("base"), None));
+        let (listed, _) = slimfit(repo, "check --mutants --target base").unwrap();
+        let names: Vec<&str> =
+            listed["candidates"]["rust"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+        // The sample's stand-in lists its own mutants, whatever the diff: the one that survives is picked.
+        let pick = "src/lib.rs:12:5: replace is_adult -> bool with true";
+        assert!(names.contains(&pick), "{names:?}");
+        let two = slimfit_args(repo, &["check", "--mutants", pick, pick, "--why", "w", "w", "--target", "base"]);
+        let two = crate::fault::of(two.unwrap_err());
+        assert!(two[0].fault.contains("2 mutants picked, more than 1"), "{two:?}");
+        let (out, _) = slimfit_args(repo, &["check", "--mutants", pick, "--why", "w", "--target", "base"]).unwrap();
+        assert_eq!(out["mutated"]["rust"]["picks"][0]["outcome"], "survived", "{out:#}");
+        let ratchet = "ratchet --target base --loosen survived_mutants --reason r --picker p --author a";
+        let (out, _) = slimfit(repo, ratchet).unwrap();
+        assert!(out["record"].as_str().unwrap().starts_with(".slimfit/mutants/"), "{out:#}");
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "the promotion's record"]);
+        check("check --target base", crate::EXIT_OK);
+        check("check", crate::EXIT_OK);
     }
 
     /// A change that removes tests owes a record of picks over the lines
