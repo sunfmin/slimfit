@@ -1,0 +1,10 @@
+{
+  "tree": "23e3ed4d2ef5acf157b8b2d9dcff1de77ace3479+d1fba762150c532c",
+  "lines": 76,
+  "serves": "slimfit#134",
+  "considered": "Reusing measure.rs's per-tree cache (lost when the tree is removed, so a small keyed cache in .slimfit/out/before.json instead), Suite::shell for running the commands (it is per suite, logs to a suite's out dir and takes no stdout), and making git's worktree the default command strings so one code path makes and removes the tree",
+  "reviewer": "codex:01a21797-15eb-7e42-b9a7-d8cd6867bedf:default",
+  "author": "claude-code:9c4939c6-c9b5-5292-8dce-3c1bc5cfb307:opus",
+  "cut": "In src/measure/removed.rs, read and write the before.json cache directly in before using the concrete (key, Measurement) pair and delete the one-caller generic kept helper. Make sh a local closure in in_tree so both hooks share the captured repo, revision, and description. Put the three hook argument names at their sole point of use in that closure and delete TREE_ENV, REV_ENV, and DESCRIPTION_ENV from src/tools.rs.",
+  "answer": "Made sh a closure in in_tree and inlined the three argument names, deleting TREE_ENV, REV_ENV and DESCRIPTION_ENV. Kept kept: it is the seam that lets a test hold the cache key without a real suite run (the picked mutant, == to != in it, is killed only by that test); inlined into before, the cache has no test."
+}
