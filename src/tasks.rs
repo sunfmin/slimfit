@@ -21,7 +21,7 @@ pub enum TaskKind {
     /// A test fails. Fix it first; nothing else is measured honestly.
     #[value(verbatim_doc_comment)]
     FailingTest,
-    /// The change adds source lines or removes tests and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most {const:PICKS_MAX} of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
+    /// The change adds source lines or removes tests and no record of its mutants: the gate's `check` fails until it does (see [what the gate holds](help:mutants-scope)). Ask a second agent to pick at most `[check] picks_max` (by default {const:PICKS_MAX}) of the listed mutants, never yourself (see [the picker](help:picker)), run its picks, and ratchet with who picked; or record its why when none is worth one.
     #[value(verbatim_doc_comment)]
     PickMutants,
     /// The change adds more than `growth_allowance` source lines net and no growth record: the gate's `check` fails until it does. Cut what you can, then ask a second agent, never yourself, whether it could be smaller (see [the reviewer](help:reviewer)), do or answer what it names, and ratchet with its verdict.
@@ -197,7 +197,7 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
                      Ask a second agent, giving it only the goal (`slimfit help picker`), the change's diff and \
                      the listing (`removed_tests`, `candidates` and, grouped past the budget, `functions`: what \
                      `slimfit check --mutants` lists); in factorium, as `slimfit help factorium` \
-                     says. It answers at most {} picks, each with a why, or why none is worth one. Run its picks at \
+                     says. It answers at most {} picks, spread over the files and functions of the change, each with a why, or why none is worth one. Run its picks at \
                      background priority: `factorium worker exclusive --background -- slimfit check --mutants \
                      <name>... --why <why>...` (outside factorium, `nice -n 19 slimfit check ...`). A survivor: assert \
                      what it changes with a fast test through the interface, or simplify the code; if it changes \
@@ -207,7 +207,7 @@ fn pick_mutants(repo: &Path, tree: &Tree, cfg: &Config, held: Option<&crate::lan
                      `slimfit ratchet --picker <its id> --author <yours>` writes the record; when it picked none, \
                      `slimfit ratchet --no-mutants \"<its why>\" --picker <its id> --author <yours>`. Commit \
                      .slimfit/ with the change.",
-                    crate::measure::PICKS_MAX
+                    cfg.check.picks_max
                 ),
                 accept: TaskKind::PickMutants.accept().into(),
             }

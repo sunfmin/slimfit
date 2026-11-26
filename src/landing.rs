@@ -411,8 +411,10 @@ fn find(repo: &Path, check: &CheckConfig, head: &git::Head) -> Result<Option<Lan
             return Ok(None);
         };
         return Err(fault(
-            format!("slimfit.toml's [check] target {target} shares no commit with HEAD (or is not in this repository)"),
-            "fetch it (`git fetch`), or set `target` to the branch changes land on",
+            format!(
+                "the target {target} (`--target`, or slimfit.toml's [check] target) shares no commit with HEAD (or is not in this repository)"
+            ),
+            "fetch it (`git fetch`), or name the branch changes land on",
         ));
     };
     // Code from before the rule is not the change: the baseline's
@@ -480,6 +482,14 @@ pub struct Held {
     pub growth: i64,
     /// The growth records it adds.
     pub growth_records: Vec<String>,
+    /// `[check] mutants_target`, when the change is not taken against it:
+    /// the record of its mutants is held there, not here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutants_held_at: Option<String>,
+    /// Whether its growth is held: of a landing, not of the range a
+    /// `mutants_target` holds (each landing in it held its own). Not printed.
+    #[serde(skip)]
+    pub growth_held: bool,
     /// Per suite whose source lines it changes, each file's net lines: what `next` names. Not printed.
     #[serde(skip)]
     pub grown: BTreeMap<String, BTreeMap<String, i64>>,
@@ -511,7 +521,7 @@ impl Held {
     /// `allowance` source lines net and no record a reviewer other than its
     /// author judged.
     pub fn growth_due(&self, allowance: u64) -> bool {
-        self.growth > allowance as i64 && !self.growth_reviewed
+        self.growth_held && self.growth > allowance as i64 && !self.growth_reviewed
     }
 }
 
@@ -521,8 +531,9 @@ pub const HELD_HELP: &str = "`target` (the branch it lands on), `from` (HEAD's m
      picked), `records` (the records of picked mutants it adds, in .slimfit/mutants/), `removed_tests` (per suite \
      whose mutants can be picked, the tests it removes, each as file:line: name where the change starts; absent when \
      none), `growth` (the source lines it \
-     adds net, in all suites: in the files it touches, their lines now less their lines where the change starts) and `growth_records` (the \
-     growth records it adds, in .slimfit/growth/)";
+     adds net, in all suites: in the files it touches, their lines now less their lines where the change starts), `growth_records` (the \
+     growth records it adds, in .slimfit/growth/) and `mutants_held_at` (the branch [check] mutants_target names, when the \
+     change is not taken against it: no record of its mutants is held here; absent otherwise)";
 
 /// Holds the landing to its records: its growth (ADR 0012), and its
 /// mutants: per suite that adds source lines or removes tests, it
@@ -547,7 +558,9 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
     let named = |f: &String| serde_json::from_str::<Record>(&text(f)).is_ok_and(|r| r.picked_by_another());
     let reviewed =
         |f: &String| serde_json::from_str::<crate::growth::Record>(&text(f)).is_ok_and(|r| r.reviewed_by_another());
-    let held = picked || records.iter().any(named);
+    let held = picked || records.iter().any(named) || !cfg.check.holds_mutants(&l.target);
+    // A range taken against `mutants_target` spans landings, each of which held its own growth.
+    let growth_held = cfg.check.mutants_target.as_ref().is_none_or(|t| *t != l.target);
     let grown = crate::growth::grown(repo, cfg, tree, l)?;
     let removed_tests: BTreeMap<String, Vec<String>> = removed::of(repo, cfg, tree, l)?
         .into_iter()
@@ -574,6 +587,8 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
         growth: grown.values().flat_map(|f| f.values()).sum(),
         growth_reviewed: growth_records.iter().any(reviewed),
         growth_records,
+        mutants_held_at: cfg.check.mutants_target.clone().filter(|t| *t != l.target),
+        growth_held,
         grown,
         added: l.added.clone(),
         unrecorded,

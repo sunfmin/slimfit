@@ -1,0 +1,27 @@
+{
+  "tree": "ffcc79eb1e138699ff2a7a0ec841ef5813060434+d1fba762150c532c",
+  "picker": "codex:01a21728-79e5-7af1-8451-aa07932ed9cf:default",
+  "author": "claude-code:76dafb01-0cf5-57fe-be5b-47f595cdc151:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/landing.rs:524:41: replace > with >= in Held::growth_due",
+        "why": "The promotion test exercises growth of 3 and 6 against an allowance of 4, leaving the exact-limit landing untested.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:168:5: replace pick_mutants -> Result<Vec<Task>> with Ok(vec![])",
+        "why": "The new `next` assertion expects an empty list, so it can pass even if ordinary landings that owe a record lose their pick task.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:524:9: replace Held::growth_due -> bool with false",
+        "why": "Every check in the promotion test expects no growth violation, leaving an over-limit landing that defers mutants untested.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  }
+}

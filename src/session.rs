@@ -35,6 +35,15 @@ impl Session {
         Ok(Session { repo: head.top.clone(), cfg, base, tree: landing::Tree::read(head)? })
     }
 
+    /// The session with its change taken against `target` (`--target`), in
+    /// place of `[check] target`, when given.
+    pub fn against(mut self, target: Option<String>) -> Session {
+        if target.is_some() {
+            self.cfg.check.target = target;
+        }
+        self
+    }
+
     /// The tree's measurement, as `opts` asks for it.
     pub fn measure(&self, opts: measure::Options) -> Result<Measurement> {
         measure::current(&self.repo, &self.tree, &self.cfg, &opts)
