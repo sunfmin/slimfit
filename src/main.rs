@@ -99,67 +99,16 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(serde_json
         }
         Cmd::Next { all, kind, fresh, sample, .. } => {
             let s = Session::open(&head)?;
-            let (cfg, tree) = (&s.cfg, &s.tree);
             let m = s.measure(measure::Options { fresh, ..Default::default() })?;
-            let mut list = tasks::all(&repo, tree, cfg, &m, &s.base)?;
-            let mut notes = Vec::new();
-            if let Some(n) = sample {
-                measure::refuse_unpickable(cfg)?;
-                let sampled = measure::sample::sample(&repo, tree, cfg, &m, n, &s.base.kept_mutants)?;
-                let c = sampled.counts();
-                notes.push(format!(
-                    "sampled at {} from the changes since {}: {} killed, {} survived, {} equivalent (kept), {} \
-                     unviable, of {} mutants no record picked; out of the loop: no `check` reads it",
-                    sampled.sample.tip,
-                    sampled.sample.from,
-                    c.killed,
-                    c.survived,
-                    c.equivalent,
-                    c.unviable,
-                    sampled.sample.pool
-                ));
-                list.extend(tasks::sampled(&sampled)?);
-                list.sort_by_key(|t| t.kind);
-            }
-            if let Some(k) = kind {
-                list.retain(|t| t.kind == k);
-            }
-            let mut counts = std::collections::BTreeMap::new();
-            for t in &list {
-                *counts.entry(serde_json::to_value(t.kind)?.as_str().unwrap_or("").to_string()).or_insert(0) += 1;
-            }
-            let candidates = tasks::candidates(&list);
-            let list = tasks::cap(list);
-            if !m.with_mutants {
-                notes.push(
-                    "mutants not measured: surviving-mutant tasks need `slimfit check --mutants <name>...` of this \
-                     tree first (your picks, at background priority); `slimfit next` then reads its survivors"
-                        .to_string(),
-                );
-            }
-            for s in m.suites.iter().filter(|s| s.reach.as_ref().is_none_or(|r| r.lines.is_none())) {
-                notes.push(format!(
-                    "{}: its test run records no coverage per test, so no redundant test can be proposed",
-                    s.suite
-                ));
-            }
-            let next = if list.is_empty() {
-                if m.with_mutants {
-                    "nothing left to do: the codebase is at its fittest by these measures"
-                } else {
-                    "nothing left to do but what mutants would show: they run on a change, picked (`slimfit check --mutants`)"
+            let sampled = match sample {
+                Some(n) => {
+                    measure::refuse_unpickable(&s.cfg)?;
+                    Some(measure::sample::sample(&repo, &s.tree, &s.cfg, &m, n, &s.base.kept_mutants)?)
                 }
-            } else {
-                "do the task, then run its accept command, then `slimfit ratchet` and commit"
+                None => None,
             };
-            Ok((
-                if all {
-                    json!({ "tasks": list, "counts": counts, "candidates": candidates, "notes": notes, "next": next })
-                } else {
-                    json!({ "task": list.first(), "remaining": counts, "candidates": candidates, "notes": notes, "next": next })
-                },
-                EXIT_OK,
-            ))
+            let list = tasks::next(&repo, &s.tree, &s.cfg, &m, &s.base, sampled.as_ref(), kind)?;
+            Ok((list.answer(all), EXIT_OK))
         }
         Cmd::Check { mutants: Some(names), why, function, against, .. } if names.is_empty() => {
             let s = Session::open(&head)?.against(against.target);

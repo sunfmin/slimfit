@@ -112,7 +112,7 @@ fn per_kind(kind: TaskKind) -> usize {
 
 /// The tasks worth listing: the first few of each kind in each suite, in
 /// order. Count before capping: what is left is every task, not the list.
-pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
+fn cap(tasks: Vec<Task>) -> Vec<Task> {
     let mut seen: BTreeMap<(String, TaskKind), usize> = BTreeMap::new();
     tasks
         .into_iter()
@@ -124,7 +124,79 @@ pub fn cap(tasks: Vec<Task>) -> Vec<Task> {
         .collect()
 }
 
-pub fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
+/// What `slimfit next` answers (the GLOSSARY's task list).
+pub struct TaskList {
+    tasks: Vec<Task>,
+    counts: BTreeMap<TaskKind, usize>,
+    candidates: usize,
+    notes: Vec<String>,
+    next: &'static str,
+}
+
+/// The task list of measurement `m`, with `sampled`'s survivors when a
+/// sample was drawn, of `kind` alone when one is given.
+pub fn next(
+    repo: &Path,
+    tree: &Tree,
+    cfg: &Config,
+    m: &Measurement,
+    base: &Baseline,
+    sampled: Option<&crate::measure::sample::Sampled>,
+    kind: Option<TaskKind>,
+) -> Result<TaskList> {
+    let mut list = all(repo, tree, cfg, m, base)?;
+    let mut notes = Vec::new();
+    if let Some(s) = sampled {
+        let c = s.counts();
+        notes.push(format!(
+            "sampled at {} from the changes since {}: {} killed, {} survived, {} equivalent (kept), {} unviable, of \
+             {} mutants no record picked; out of the loop: no `check` reads it",
+            s.sample.tip, s.sample.from, c.killed, c.survived, c.equivalent, c.unviable, s.sample.pool
+        ));
+        list.extend(self::sampled(s)?);
+        list.sort_by_key(|t| t.kind);
+    }
+    list.retain(|t| kind.is_none_or(|k| t.kind == k));
+    let mut counts = BTreeMap::new();
+    for t in &list {
+        *counts.entry(t.kind).or_insert(0) += 1;
+    }
+    if !m.with_mutants {
+        notes.push(
+            "mutants not measured: surviving-mutant tasks need `slimfit check --mutants <name>...` of this tree \
+             first (your picks, at background priority); `slimfit next` then reads its survivors"
+                .to_string(),
+        );
+    }
+    for s in m.suites.iter().filter(|s| s.reach.as_ref().is_none_or(|r| r.lines.is_none())) {
+        notes.push(format!(
+            "{}: its test run records no coverage per test, so no redundant test can be proposed",
+            s.suite
+        ));
+    }
+    let next = match (list.is_empty(), m.with_mutants) {
+        (false, _) => "do the task, then run its accept command, then `slimfit ratchet` and commit",
+        (true, true) => "nothing left to do: the codebase is at its fittest by these measures",
+        (true, false) => {
+            "nothing left to do but what mutants would show: they run on a change, picked (`slimfit check --mutants`)"
+        }
+    };
+    Ok(TaskList { candidates: candidates(&list), tasks: cap(list), counts, notes, next })
+}
+
+impl TaskList {
+    /// Its JSON: every listed task (`all`), or the first and what remains.
+    pub fn answer(self, all: bool) -> Value {
+        let TaskList { tasks, counts, candidates, notes, next } = self;
+        if all {
+            json!({ "tasks": tasks, "counts": counts, "candidates": candidates, "notes": notes, "next": next })
+        } else {
+            json!({ "task": tasks.first(), "remaining": counts, "candidates": candidates, "notes": notes, "next": next })
+        }
+    }
+}
+
+fn all(repo: &Path, tree: &Tree, cfg: &Config, m: &Measurement, base: &Baseline) -> Result<Vec<Task>> {
     let held = crate::landing::hold(repo, cfg, tree, m.with_mutants)?;
     let mut out = pick_mutants(repo, tree, cfg, held.as_ref())?;
     out.extend(held.as_ref().and_then(|h| justify_growth(h, cfg.check.growth_allowance)));
@@ -490,7 +562,7 @@ fn classify<'a>(file: &str, candidates: &mut [Value], source: impl Fn(&str) -> O
 }
 
 /// How many redundant-test candidates `tasks` hold, over all their files.
-pub fn candidates(tasks: &[Task]) -> usize {
+fn candidates(tasks: &[Task]) -> usize {
     let of = |t: &Task| t.evidence["candidates"].as_array().map_or(0, Vec::len);
     tasks.iter().filter(|t| t.kind == TaskKind::RedundantTest).map(of).sum()
 }
@@ -682,7 +754,7 @@ fn survivors(suite: &str, by_file: BTreeMap<&str, Vec<Value>>, source: Source) -
 /// A sample's tasks: its survivors, less those kept as equivalent, as
 /// `sampled` surviving-mutant tasks, and, when it drew any, its record to
 /// commit. No `check` reads either.
-pub fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
+fn sampled(s: &crate::measure::sample::Sampled) -> Result<Vec<Task>> {
     let (path, text) = s.sample.file()?;
     let mut out = Vec::new();
     for (suite, drawn) in &s.sample.drawn {
