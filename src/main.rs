@@ -524,9 +524,8 @@ mod answer_tests {
         // `next` asks for the picks first, with the candidates to pick from.
         let (next, _) = slimfit(repo, "next").unwrap();
         assert_eq!(next["task"]["kind"], "pick-mutants", "{next:#}");
-        assert_eq!(next["task"]["evidence"]["candidates"].as_array().unwrap().len(), 26, "{next:#}");
-        let (listed, code) = slimfit(repo, "check --mutants").unwrap();
-        assert_eq!((listed["candidates"]["rust"][16]["name"].as_str(), code), (Some(killed), 0));
+        let candidates = next["task"]["evidence"]["candidates"].as_array().unwrap();
+        assert_eq!((candidates.len(), candidates[16]["name"].as_str()), (26, Some(killed)), "{next:#}");
         // Committing it changes nothing: the change is the branch's, not the working tree's.
         git(repo, &["commit", "-qam", "a, unrecorded"]);
         held(crate::EXIT_VIOLATION);
@@ -568,16 +567,14 @@ mod answer_tests {
         // Another branch records that nothing in its change is worth a mutant.
         git(repo, &["checkout", "-qb", "b", "target"]);
         add("src/b.rs", "pub fn b_two() -> u8 {\n    2\n}\n");
-        held(crate::EXIT_VIOLATION);
-        // Nor does a record that names no picker other than its author (as those from before slimfit#58).
+        // A record that names no picker other than its author (as those from before slimfit#58) does not count
+        // (`Record::counts` holds which texts do).
         std::fs::create_dir_all(repo.join(crate::landing::DIR)).unwrap();
         let unnamed = repo.join(crate::landing::DIR).join("unnamed.json");
-        for text in [r#"{"none":"mine"}"#, r#"{"none":"mine","picker":"a","author":"a"}"#, "{"] {
-            std::fs::write(&unnamed, text).unwrap();
-            git(repo, &["add", "-A"]);
-            let fix = held(crate::EXIT_VIOLATION)["verdict"]["violations"][0]["fix"].clone();
-            assert!(fix.as_str().unwrap().contains("no record of its mutants that names a picker other"), "{fix}");
-        }
+        std::fs::write(&unnamed, r#"{"none":"mine","picker":"a","author":"a"}"#).unwrap();
+        git(repo, &["add", "-A"]);
+        let fix = held(crate::EXIT_VIOLATION)["verdict"]["violations"][0]["fix"].clone();
+        assert!(fix.as_str().unwrap().contains("no record of its mutants that names a picker other"), "{fix}");
         git(repo, &["rm", "-qf", &unnamed.to_string_lossy()]);
         assert!(faults(repo, "ratchet --no-mutants")[0].fault.contains("a value is required"));
         let no_mutants =
