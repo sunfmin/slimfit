@@ -18,3 +18,4 @@ ignore = ["src/help/**"]
 "docs/adr/0014-an-adr-holds-the-decision-the-evidence-lives-in-the-issue.md" = "adr"
 "docs/adr/0015-a-repo-may-hold-the-record-of-mutants-at-its-base-branch.md" = "adr"
 "docs/adr/0016-the-picker-sizes-its-picks-to-the-diff.md" = "adr"
+"docs/adr/0017-python-mutants-are-mutmuts-driven-as-cargo-mutants.md" = "adr"

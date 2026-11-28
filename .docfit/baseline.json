@@ -5,11 +5,6 @@
   "GLOSSARY.md": {
     "local_refs": 2
   },
-  "README.md": {
-    "bytes": 5628,
-    "local_refs": 1,
-    "paragraph": 936
-  },
   "docs/adr/0001-coverage-slack.md": {
     "bytes": 3573,
     "local_refs": 3,
@@ -65,8 +60,7 @@
     "local_refs": 1,
     "pointers": [
       ".github/workflows/README.md",
-      ".github/workflows/release.yml",
-      "ADR-0017"
+      ".github/workflows/release.yml"
     ]
   },
   "examples/treecount/hook.c": {
