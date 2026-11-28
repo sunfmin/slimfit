@@ -1,0 +1,29 @@
+{
+  "tip": "1f1411431fe3e0751db0ea76f8359fd6b93e185f",
+  "from": "d30e7c7523b54974b607420082cfceb898818a5b",
+  "pool": 54,
+  "drawn": {
+    "rust": [
+      {
+        "name": "src/measure/removed.rs:156:12: delete ! in in_tree",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/config.rs:69:9: replace CheckConfig::holds_mutants -> bool with false",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:309:5: replace records -> Result<Records> with Ok(Default::default())",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/config.rs:76:9: replace CheckConfig::before_tree -> (String, String) with (String::new(), String::new())",
+        "outcome": "killed"
+      },
+      {
+        "name": "src/landing.rs:443:5: replace find -> Result<Option<Landing>> with Ok(None)",
+        "outcome": "killed"
+      }
+    ]
+  }
+}
