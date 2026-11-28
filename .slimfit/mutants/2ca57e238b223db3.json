@@ -1,0 +1,7 @@
+{
+  "tree": "ffe8b6d5b7bb9ac9e0ecbf06b9e93bad1d835279+d1fba762150c532c",
+  "picker": "codex:01a22050-596e-7910-ab6a-5dbd859ca25b:default",
+  "author": "claude-code:da90c0f2-2d6d-5e4e-b6f0-d9a1feb50754:opus",
+  "none": "The new assertions kill both constant Record::counts replacements, the retained gate check kills hold returning Ok(None), and Held has no Default for the remaining replacement.",
+  "added_lines": 4
+}
