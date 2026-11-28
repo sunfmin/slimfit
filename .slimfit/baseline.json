@@ -146,6 +146,30 @@
       "test": "slimfit::bin/slimfit::doctor::tests::the_host_is_read_from_the_environment",
       "hash": "9c6af3e786ce03a3",
       "reason": "The only unit test of Host::current and jdk(); the standins test runs the binary and asserts none of the host's cores, load, PATH or java detection."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_landing_passes_only_with_a_record_of_its_mutants",
+      "hash": "04da74844ec7a446",
+      "reason": "No assertion maps: it checks the record of mutants (unrecorded_mutants, picks, survivors, picker, merge of records, report's mutants_records, target refusal), the growth test checks unrecorded_growth and growth records. Setups conflict: mutants_tests=All here would make every check of the growth test also owe a record of mutants, and growth_allowance=4 would fail this test's 6-line merge as unrecorded_growth."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_landing_recorded_after_mutants_keeps_its_time",
+      "hash": "bd2a516880a73055",
+      "reason": "No assertion maps: it checks test_seconds kept across a --mutants run and the test_seconds rising-trend, driven by a clock in the test command; the other checks mutants_target at a base. Setups conflict: mutants_target=base removes the per-landing record this test's ratchet makes, and growth_allowance=4 fails its three landings."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::a_kept_span_returns_once_a_line_of_it_changes",
+      "hash": "327e1b31d50049d9",
+      "reason": "No assertion maps: it checks keep of an uncovered span, its refusal, its replacement, its return on an edit and the ratchet dropping it; the other checks empty answers on an uninitialised repo. Setups conflict: this one needs covered_sample's coverage paths and an init commit, under which the other's next --all counts (only slow-test) no longer hold."
+    },
+    {
+      "suite": "rust",
+      "test": "slimfit::bin/slimfit::answer_tests::new_uncovered_lines_are_named_not_failed",
+      "hash": "243284a356cfe7b1",
+      "reason": "No assertion maps: it checks uncovered_lines rising without failing check, new_spans, the ratchet keeping the low bound and refusing to loosen it; the other checks the no-name --mutants listing with mutants_command=true and that nothing is measured. Setups conflict: this one measures (covered_sample, a target lacking unused's body), the other must measure nothing."
     }
   ],
   "kept_files": [
