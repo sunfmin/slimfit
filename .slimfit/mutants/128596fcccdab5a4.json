@@ -1,0 +1,34 @@
+{
+  "tree": "f96f392905bda92feb7242a535a05ff4f25974f8+d1fba762150c532c",
+  "picker": "codex:01a2204c-707f-7f72-8c81-b88c44855089:default",
+  "author": "claude-code:2a3d1ad9-e1d0-55c6-b1f6-ad1c333e917b:opus",
+  "picks": {
+    "rust": [
+      {
+        "name": "src/main.rs:102:50: delete field fresh from struct measure::Options expression in run",
+        "why": "Losing --fresh only shows up when a cached measurement is available and the test verifies that it was bypassed.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:159:48: replace == with != in next",
+        "why": "Unfiltered calls are unaffected, so a test needs to request a kind and verify which tasks or counts remain.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:162:44: replace += with *= in next",
+        "why": "The count for each kind becomes zero even when the task payload is correct, so tests that only inspect tasks can miss it.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      },
+      {
+        "name": "src/tasks.rs:164:8: delete ! in next",
+        "why": "Reverses when the missing-mutants note appears while leaving the tasks and counts intact.",
+        "outcome": "killed",
+        "first_outcome": "killed"
+      }
+    ]
+  },
+  "added_lines": 76
+}
