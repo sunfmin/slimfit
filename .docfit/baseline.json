@@ -1,12 +1,9 @@
 {
-  "Cargo.toml": {
-    "local_refs": 1
-  },
   "GLOSSARY.md": {
     "local_refs": 2
   },
   "README.md": {
-    "bytes": 5628,
+    "bytes": 5461,
     "local_refs": 1,
     "paragraph": 936
   },
