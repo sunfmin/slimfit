@@ -96,6 +96,13 @@ impl Record {
         by_another(&self.picker, &self.author)
     }
 
+    /// Whether a record file's `text` counts for the gate: it reads as a
+    /// record that names a picker other than its author. One that does not
+    /// read is not refused, it just does not count.
+    pub fn counts(text: &str) -> bool {
+        serde_json::from_str::<Record>(text).is_ok_and(|r| r.picked_by_another())
+    }
+
     /// The record `ratchet` writes of `m`: its picks, or, with
     /// `no_mutants`, why none was picked; `None` when there is neither.
     /// Either names its picker and the change's author, who differ
@@ -589,7 +596,7 @@ pub fn hold(repo: &Path, cfg: &Config, tree: &Tree, picked: bool) -> Result<Opti
     let (records, growth_records) = (added_in(DIR), added_in(crate::growth::DIR));
     // A record that does not read names no picker (nor reviewer): the gate does not refuse it, it just does not count.
     let text = |f: &String| std::fs::read_to_string(repo.join(f)).unwrap_or_default();
-    let named = |f: &String| serde_json::from_str::<Record>(&text(f)).is_ok_and(|r| r.picked_by_another());
+    let named = |f: &String| Record::counts(&text(f));
     let reviewed =
         |f: &String| serde_json::from_str::<crate::growth::Record>(&text(f)).is_ok_and(|r| r.reviewed_by_another());
     let held = picked || records.iter().any(named) || !cfg.check.holds_mutants(&l.target);
@@ -769,6 +776,18 @@ mod t {
         let f = crate::fault::of(records(d.path()).unwrap_err());
         assert!(f[0].fault.contains("x.json is not a record of picked mutants"), "{f:?}");
         assert_eq!(f[0].fix, "restore it from git: `git checkout -- .slimfit/mutants`");
+    }
+
+    /// A record file counts for the gate only when it reads and names a
+    /// picker other than its author: one without a picker (as those written
+    /// before picks were named), one picked by its author, or one that does
+    /// not read, does not.
+    #[test]
+    fn a_record_counts_only_when_it_names_a_picker_other_than_its_author() {
+        assert!(Record::counts(r#"{"none":"mine","picker":"p","author":"a"}"#));
+        for text in [r#"{"none":"mine"}"#, r#"{"none":"mine","picker":"a","author":" a "}"#, "{"] {
+            assert!(!Record::counts(text), "{text}");
+        }
     }
 
     /// FNV-1a 64, as published: a record's name is the hash of its text.
