@@ -309,6 +309,14 @@ mod t {
         assert_eq!(std::fs::read_to_string(log).unwrap(), want);
         assert!(!made.exists());
         assert_eq!(git::run(repo, &["worktree", "list"]).unwrap().lines().count(), 1);
+        // A make command that fails is a fault naming it, and nothing is measured.
+        let failing = CheckConfig { before_make: Some("exit 3".into()), ..set };
+        let failed = in_tree(repo, &one, "w", &failing.before_tree(|_| None), |_| -> Result<()> {
+            panic!("measured a tree never made")
+        });
+        let f = crate::fault::of(failed.unwrap_err());
+        assert!(f[0].fault.starts_with("the command to make the tree") && f[0].fault.ends_with(": exit 3"));
+        assert!(f[0].fix.contains("before_make"));
     }
 
     /// The measurement is kept while its key is the same, and taken again
